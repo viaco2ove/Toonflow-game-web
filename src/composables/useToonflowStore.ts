@@ -106,6 +106,7 @@ function createToonflowStore() {
     userAvatarBgPath: "",
     projects: [] as ProjectItem[],
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
+    selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
     worlds: [] as WorldItem[],
     hallKeyword: "",
     hallCategory: "all",
@@ -187,28 +188,33 @@ function createToonflowStore() {
   }
 
   function isWorldPublished(world: WorldItem): boolean {
-    return String(world?.settings?.publishStatus || state.worldPublishStatus || "draft") === "published";
+    return String(world?.publishStatus || world?.settings?.publishStatus || "draft") === "published";
   }
 
   function worldCoverPath(world: WorldItem | null | undefined): string {
     if (!world) return "";
-    return String(world.settings?.coverPath || "").trim();
+    return String(world.coverPath || world.settings?.coverPath || "").trim();
   }
 
   function selectedProjectName(): string {
-    return state.projects.find((item) => item.id === state.selectedProjectId)?.name || "未选择项目";
+    const current = state.projects.find((item) => item.id === state.selectedProjectId);
+    if (current?.name) return current.name;
+    if (state.selectedProjectNameCache.trim()) return state.selectedProjectNameCache.trim();
+    return state.projects[0]?.name || "";
   }
 
   function selectedProjectIntro(): string {
-    return state.projects.find((item) => item.id === state.selectedProjectId)?.intro || "";
+    const current = state.projects.find((item) => item.id === state.selectedProjectId);
+    return current?.intro || state.projects[0]?.intro || "";
   }
 
   function worldsForSelectedProject(): WorldItem[] {
+    if (state.selectedProjectId <= 0) return state.worlds;
     return state.worlds.filter((item) => item.projectId === state.selectedProjectId);
   }
 
   function publishedWorldsForSelectedProject(): WorldItem[] {
-    return worldsForSelectedProject().filter((item) => isWorldPublished(item) && (item.chapterCount || 0) > 0);
+    return worldsForSelectedProject().filter((item) => isWorldPublished(item));
   }
 
   function draftWorldsForSelectedProject(): WorldItem[] {
@@ -773,6 +779,13 @@ function createToonflowStore() {
       if (state.selectedProjectId <= 0 && state.projects.length) {
         state.selectedProjectId = state.projects[0].id;
       }
+      if (state.selectedProjectId > 0) {
+        const currentProject = state.projects.find((item) => item.id === state.selectedProjectId) || state.projects[0];
+        if (currentProject?.name) {
+          state.selectedProjectNameCache = currentProject.name;
+          storageSet("toonflow.selectedProjectNameCache", currentProject.name);
+        }
+      }
       state.worlds = worlds || [];
       state.sessions = sessions || [];
       if (!state.worldId && state.selectedProjectId > 0) {
@@ -826,6 +839,11 @@ function createToonflowStore() {
   function selectProject(projectId: number) {
     state.selectedProjectId = projectId;
     storageSet("toonflow.selectedProjectId", String(projectId));
+    const currentProject = state.projects.find((item) => item.id === projectId);
+    if (currentProject?.name) {
+      state.selectedProjectNameCache = currentProject.name;
+      storageSet("toonflow.selectedProjectNameCache", currentProject.name);
+    }
   }
 
   async function startNewStoryDraft() {
@@ -849,9 +867,9 @@ function createToonflowStore() {
       state.worldId = worldDetail.id;
       state.worldName = worldDetail.name || "";
       state.worldIntro = worldDetail.intro || "";
-      state.worldCoverPath = worldDetail.settings?.coverPath || "";
-      state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.settings?.coverPath || "";
-      state.worldPublishStatus = worldDetail.settings?.publishStatus || "draft";
+      state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || "";
+      state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.coverPath || worldDetail.settings?.coverPath || "";
+      state.worldPublishStatus = worldDetail.publishStatus || worldDetail.settings?.publishStatus || "draft";
       state.globalBackground = worldDetail.settings?.globalBackground || "";
       state.allowRoleView = worldDetail.settings?.allowRoleView ?? true;
       state.allowChatShare = worldDetail.settings?.allowChatShare ?? true;

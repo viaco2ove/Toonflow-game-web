@@ -110,6 +110,8 @@ export interface WorldItem {
   projectId: number;
   name: string;
   intro?: string;
+  coverPath?: string;
+  publishStatus?: string;
   chapterCount?: number;
   sessionCount?: number;
   settings?: WorldSettings | null;

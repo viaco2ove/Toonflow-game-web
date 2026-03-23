@@ -51,6 +51,7 @@ const roleCards = computed(() => {
 const roleDetail = ref<StoryRole | null>(null);
 const roleParameterRawOpen = ref(false);
 const chapterDetailOpen = ref(true);
+const roleCopyHint = ref("");
 const menuOpen = ref(false);
 const menuMessage = ref<MessageItem | null>(null);
 const menuX = ref(0);
@@ -230,11 +231,38 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
 function openRoleDetail(role: StoryRole) {
   roleDetail.value = role;
   roleParameterRawOpen.value = false;
+  roleCopyHint.value = "";
 }
 
 function closeRoleDetail() {
   roleDetail.value = null;
   roleParameterRawOpen.value = false;
+  roleCopyHint.value = "";
+}
+
+async function editCurrentWorld() {
+  if (!currentWorld.value) return;
+  await store.openWorldForEdit(currentWorld.value);
+}
+
+function buildRoleProfile(role: StoryRole): string {
+  const parts = [
+    `角色：${role.name || "未命名"}`,
+    `类型：${roleTypeLabel(role)}`,
+    `音色：${voiceModeLabel(role.voiceMode)}${role.voice ? ` / ${role.voice}` : ""}`,
+    `设定：${role.description || "暂无"}`,
+    `台词示例：${role.sample || "暂无"}`,
+  ];
+  if (role.parameterCardJson) {
+    parts.push(`参数卡：${JSON.stringify(role.parameterCardJson, null, 2)}`);
+  }
+  return parts.join("\n");
+}
+
+function copyRoleProfile() {
+  if (!roleDetail.value) return;
+  store.copyMessageText(buildRoleProfile(roleDetail.value));
+  roleCopyHint.value = "已复制角色资料";
 }
 
 function toggleChapterDetail() {
@@ -343,13 +371,13 @@ onBeforeUnmount(() => {
         <div class="row-between" style="margin-bottom:10px;">
           <div>
             <div class="tiny">章节状态</div>
-            <div class="subtle" style="margin-top:4px;">调试态与正式态的区别会直接显示在这里</div>
+            <div class="subtle" style="margin-top:4px;">正式会话由服务端推进，调试缓存由本地章节判定推进</div>
           </div>
           <div class="row">
             <span v-for="item in chapterStatusItems" :key="item.label" class="chip">{{ item.label }}：{{ item.value }}</span>
           </div>
         </div>
-        <div class="tiny">当前章节完成条件显示：{{ currentChapter?.showCompletionCondition === false ? "隐藏" : "可见" }}</div>
+        <div class="tiny">正式会话：保存后会由后端保存和推进章节。调试缓存：不落库，只按当前章节条件自动切章。</div>
         <pre class="detail-pre" style="margin-top:10px;">{{ chapterConditionHint }}</pre>
       </div>
 
@@ -542,8 +570,11 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
+        <div v-if="roleCopyHint" class="tiny" style="margin-top:10px;">{{ roleCopyHint }}</div>
       </div>
       <div class="modal-actions">
+        <button class="button" type="button" @click="copyRoleProfile">复制角色资料</button>
+        <button class="button" type="button" @click="editCurrentWorld">编辑当前故事</button>
         <button class="button primary" type="button" @click="closeRoleDetail">知道了</button>
       </div>
     </div>

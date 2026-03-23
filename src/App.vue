@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, watch } from "vue";
 import { useToonflowStore } from "./composables/useToonflowStore";
-import ProjectSwitcher from "./components/ProjectSwitcher.vue";
 import BottomNav from "./components/BottomNav.vue";
 import SceneHome from "./components/SceneHome.vue";
 import SceneHall from "./components/SceneHall.vue";
@@ -18,14 +17,20 @@ const bottomActive = computed(() => {
   return store.state.activeTab === "settings" ? "my" : store.state.activeTab;
 });
 
-const showProjectSwitcher = computed(() => !["play", "settings"].includes(store.state.activeTab));
-
 onMounted(async () => {
   if (!store.state.selectedProjectId && store.state.projects.length) {
     store.selectProject(store.state.projects[0].id);
   }
   await store.reloadAll();
+  window.scrollTo({ top: 0, behavior: "auto" });
 });
+
+watch(
+  () => store.state.activeTab,
+  () => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  },
+);
 
 function changeTab(tab: "home" | "create" | "history" | "my") {
   store.setTab(tab);
@@ -34,23 +39,7 @@ function changeTab(tab: "home" | "create" | "history" | "my") {
 
 <template>
   <div class="app-shell">
-    <header class="app-top">
-      <div class="brand-panel">
-        <div>
-          <h1 class="brand-title">Toonflow AI 剧场</h1>
-          <p class="brand-subtitle">Android 内容迁移到 Vue 的真功能版</p>
-        </div>
-        <div class="brand-actions">
-          <button class="button small" type="button" @click="store.setTab('settings')">设置</button>
-          <button class="button small" type="button" @click="store.reloadAll()">刷新</button>
-        </div>
-      </div>
-      <ProjectSwitcher v-if="showProjectSwitcher" />
-    </header>
-
     <main class="main-view">
-      <div v-if="store.state.notice" class="top-banner">{{ store.state.notice }}</div>
-
       <SceneHome v-if="store.state.activeTab === 'home'" />
       <SceneHall v-else-if="store.state.activeTab === 'hall'" />
       <SceneCreate v-else-if="store.state.activeTab === 'create'" />
