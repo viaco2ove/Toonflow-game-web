@@ -11,7 +11,11 @@ const currentWorld = computed(() => session.value?.world || null);
 const currentChapter = computed(() => session.value?.chapter || store.state.chapters.find((item) => item.id === debugChapterIndex.value) || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
-const chapterBackgroundPath = computed(() => currentChapter.value?.backgroundPath || store.state.chapterBackground || currentWorld.value?.settings?.coverBgPath || currentWorld.value?.settings?.coverPath || "");
+const chapterBackgroundPath = computed(() =>
+  store.resolveMediaPath(
+    currentChapter.value?.backgroundPath || store.state.chapterBackground || currentWorld.value?.settings?.coverBgPath || currentWorld.value?.settings?.coverPath || "",
+  ),
+);
 const chapterEntryText = computed(() => formatConditionText(currentChapter.value?.entryCondition));
 const chapterCompletionText = computed(() => {
   if (currentChapter.value?.showCompletionCondition === false) return "对用户隐藏";

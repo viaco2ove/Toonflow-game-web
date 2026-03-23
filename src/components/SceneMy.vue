@@ -1,104 +1,38 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import ImageGenerateDialog from "./ImageGenerateDialog.vue";
-import { useToonflowStore } from "../composables/useToonflowStore";
 import StoryCover from "./StoryCover.vue";
+import { useToonflowStore } from "../composables/useToonflowStore";
+import type { WorldItem } from "../types/toonflow";
 import { imageStyleForKey } from "../utils/imageStyles";
 
 const store = useToonflowStore();
-const projectDrafts = computed(() => store.draftWorldsForSelectedProject());
-const projectPublished = computed(() => store.publishedWorldsForSelectedProject());
-const drafts = computed(() => projectDrafts.value);
-const published = computed(() => projectPublished.value);
-const selectedProjectName = computed(() => {
-  const current = store.state.projects.find((item) => item.id === store.state.selectedProjectId);
-  return String(current?.name || store.state.selectedProjectNameCache || "").trim();
+
+const drafts = computed(() => store.draftWorldsForSelectedProject());
+const published = computed(() => store.publishedWorldsForSelectedProject());
+const projectNameSet = computed(() => {
+  const names = store.state.projects.map((item) => String(item.name || "").trim()).filter(Boolean);
+  const cached = String(store.state.selectedProjectNameCache || "").trim();
+  if (cached) names.push(cached);
+  return new Set(names);
 });
-const visibleDrafts = computed(() =>
-  drafts.value.filter((world) => String(world.name || "").trim() !== selectedProjectName.value),
-);
-const visiblePublished = computed(() =>
-  published.value.filter((world) => String(world.name || "").trim() !== selectedProjectName.value),
-);
-const works = computed(() => [...visibleDrafts.value, ...visiblePublished.value]);
-const workCards = computed(() => {
-  const cards: Array<
-    | {
-        key: string;
-        placeholder: true;
-        title: string;
-        meta: string;
-        caption: string;
-        mode: "draft" | "published";
-      }
-    | {
-        key: string;
-        placeholder: false;
-        title: string;
-        meta: string;
-        caption: string;
-        mode: "draft" | "published";
-        world: (typeof drafts.value)[number];
-      }
-  > = [];
-  if (visibleDrafts.value.length) {
-    visibleDrafts.value.forEach((world) => {
-      cards.push({
-        key: `draft-${world.id}`,
-        placeholder: false,
-        title: world.name || "未命名故事",
-        meta: `${world.name || "未命名故事"} · 草稿`,
-        caption: world.intro || "保存草稿后会显示在这里",
-        mode: "draft",
-        world,
-      });
-    });
-  } else {
-    cards.push({
-      key: "draft-empty",
-      placeholder: true,
-      title: "暂无草稿",
-      meta: "草稿箱",
-      caption: "保存草稿后会显示在这里",
-      mode: "draft",
-    });
-  }
-  if (visiblePublished.value.length) {
-    visiblePublished.value.forEach((world) => {
-      cards.push({
-        key: `published-${world.id}`,
-        placeholder: false,
-        title: world.name || "未命名故事",
-        meta: `${world.name || "未命名故事"} · 浏览 ${world.sessionCount || 0}`,
-        caption: world.intro || "发布后会在这里展示",
-        mode: "published",
-        world,
-      });
-    });
-  } else {
-    cards.push({
-      key: "published-empty",
-      placeholder: true,
-      title: "暂无已发布故事",
-      meta: "已发布",
-      caption: "发布后会在这里展示",
-      mode: "published",
-    });
-  }
-  return cards;
-});
+const visibleDrafts = computed(() => drafts.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
+const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
+const latestDraft = computed(() => visibleDrafts.value[0] || null);
+const latestPublished = computed(() => visiblePublished.value[0] || null);
+const worksCount = computed(() => visibleDrafts.value.length + visiblePublished.value.length);
 const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 3));
-const profileStats = computed(() => [
-  { label: "获赞", value: 0 },
-  { label: "关注", value: 1 },
-  { label: "粉丝", value: 0 },
-]);
+const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));
+const followCount = computed(() => (visiblePublished.value.length ? 1 : 0));
+const fanCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.chapterCount || 0), 0));
 const avatarInput = ref<HTMLInputElement | null>(null);
 const showAvatarActionDialog = ref(false);
 const accountImageDialogOpen = ref(false);
+const showDraftListPage = ref(false);
+const deletingDraft = ref<WorldItem | null>(null);
 
-const accountDialogTitle = computed(() => "账号头像");
-const accountDialogPrompt = computed(() => store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像");
+const accountDialogTitle = computed(() => "创建角色");
+const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
 
 function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -131,6 +65,37 @@ function closeAccountImageDialog() {
   accountImageDialogOpen.value = false;
 }
 
+function openDraftListDialog() {
+  showDraftListPage.value = true;
+}
+
+function closeDraftListDialog() {
+  showDraftListPage.value = false;
+}
+
+function askDeleteDraft(world: WorldItem) {
+  deletingDraft.value = world;
+}
+
+function cancelDeleteDraft() {
+  deletingDraft.value = null;
+}
+
+async function confirmDeleteDraft() {
+  const world = deletingDraft.value;
+  if (!world) return;
+  await store.deleteWorld(world);
+  deletingDraft.value = null;
+  if (!visibleDrafts.value.length) {
+    showDraftListPage.value = false;
+  }
+}
+
+async function editDraft(world: WorldItem) {
+  closeDraftListDialog();
+  await store.openWorldForEdit(world);
+}
+
 async function handleAccountImageConfirm(payload: { prompt: string; styleKey: string; references: string[] }) {
   const style = imageStyleForKey(payload.styleKey);
   const mergedPrompt = [`风格：${style.title}`, payload.prompt].filter(Boolean).join("，");
@@ -146,7 +111,8 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
 </script>
 
 <template>
-  <section class="card section my-profile-card">
+  <main v-if="!showDraftListPage" class="my-page">
+  <section class="my-profile-section">
     <div class="row-between my-profile-top">
       <div class="section-title" style="font-size:16px; margin:0;">我的</div>
       <button class="circle-ghost-btn my-settings-btn" type="button" aria-label="设置" @click="store.setTab('settings')">
@@ -170,18 +136,26 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
 
     <div class="my-profile-main">
       <div class="avatar my-profile-avatar" @click="openAvatarActionDialog">
-        <img v-if="store.state.accountAvatarPath" :src="store.state.accountAvatarPath" alt="账号头像" />
-        <div v-else class="placeholder">{{ (store.state.userName || 'A').slice(0,1).toUpperCase() }}</div>
+        <img v-if="store.state.accountAvatarPath" :src="store.resolveMediaPath(store.state.accountAvatarPath)" alt="账号头像" />
+        <div v-else class="placeholder">{{ (store.state.userName || "A").slice(0, 1).toUpperCase() }}</div>
         <div class="badge">+</div>
       </div>
       <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatarFile" />
       <div class="my-profile-meta">
-        <div class="my-profile-name">{{ store.state.userName || '未登录' }}</div>
+        <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>
         <div class="subtle">用户ID：{{ store.state.userId || 0 }}</div>
         <div class="my-profile-stats">
-          <div v-for="item in profileStats" :key="item.label" class="my-stat">
-            <strong>{{ item.value }}</strong>
-            <span>{{ item.label }}</span>
+          <div class="my-stat">
+            <strong>{{ likeCount }}</strong>
+            <span>获赞</span>
+          </div>
+          <div class="my-stat">
+            <strong>{{ followCount }}</strong>
+            <span>关注</span>
+          </div>
+          <div class="my-stat">
+            <strong>{{ fanCount }}</strong>
+            <span>粉丝</span>
           </div>
         </div>
       </div>
@@ -193,78 +167,136 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
     </div>
   </section>
 
-  <section class="card section my-works-card">
+  <section class="my-works-section">
     <div class="row-between my-work-head">
-      <div class="section-title" style="font-size:16px; margin:0;">{{ works.length }}作品</div>
+      <div class="section-title" style="font-size:16px; margin:0;">{{ worksCount }}作品</div>
     </div>
     <div v-if="workTags.length" class="tag-row my-work-tags">
-      <button v-for="world in workTags" :key="world.id" class="chip active" type="button">
-        {{ world.name }}
+      <button v-for="name in workTags" :key="name" class="chip active" type="button">
+        {{ name }}
       </button>
     </div>
-    <div class="my-work-grid">
-          <article
-        v-for="card in workCards"
-        :key="card.key"
-        class="card my-work-card"
-        :class="{ placeholder: card.placeholder }"
-      >
-        <button
-          v-if="!card.placeholder && card.mode === 'draft'"
-          class="my-work-cover-btn"
-          type="button"
-          @click="store.openWorldForEdit(card.world)"
-        >
-          <StoryCover :title="card.title" :cover-path="store.worldCoverPath(card.world)" height="128px" />
-        </button>
-        <button
-          v-else-if="!card.placeholder && card.mode === 'published'"
-          class="my-work-cover-btn"
-          type="button"
-          @click="store.startFromWorld(card.world)"
-        >
-          <StoryCover :title="card.title" :cover-path="store.worldCoverPath(card.world)" height="128px" />
-        </button>
-        <div v-else class="my-empty-card">{{ card.title }}</div>
+    <div v-else class="subtle">暂无标签</div>
 
+    <div class="my-work-grid">
+      <article class="my-work-card my-summary-card" @click="openDraftListDialog">
+        <div v-if="latestDraft" class="my-summary-cover">
+          <StoryCover
+            :title="latestDraft.name || '草稿箱'"
+            :cover-path="store.worldCoverPath(latestDraft)"
+            empty-text="草稿"
+            height="128px"
+            variant="plain"
+          />
+        </div>
+        <div v-else class="my-empty-card">暂无草稿</div>
         <div class="my-work-body">
           <div class="my-work-row">
-            <h3>{{ card.title }}</h3>
-            <span class="my-work-status" :class="{ published: card.mode === 'published' && !card.placeholder }">
-              {{ card.placeholder ? (card.mode === 'draft' ? '草稿' : '已发布') : (card.mode === 'draft' ? '草稿' : '已发布') }}
-            </span>
+            <h3>{{ latestDraft ? `${latestDraft.name || "未命名故事"} · 草稿` : "暂无草稿" }}</h3>
+            <span class="my-work-status">草稿箱</span>
           </div>
-          <p>{{ card.caption }}</p>
-          <div class="my-work-actions" v-if="!card.placeholder">
-            <template v-if="card.mode === 'draft'">
-              <button class="button primary small" type="button" @click="store.openWorldForEdit(card.world)">编辑</button>
-              <button class="button small" type="button" @click="store.startNewStoryDraft()">新开</button>
-            </template>
-            <template v-else>
-              <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(card.world)">编辑</button>
-            </template>
+          <p>{{ latestDraft ? `共 ${visibleDrafts.length} 个草稿` : "保存草稿后会显示在这里" }}</p>
+        </div>
+      </article>
+
+      <article class="my-work-card my-summary-card" :class="{ placeholder: !latestPublished }">
+        <button v-if="latestPublished" class="my-work-cover-btn" type="button" @click="store.startFromWorld(latestPublished)">
+          <StoryCover
+            :title="latestPublished.name || '故事'"
+            :cover-path="store.worldCoverPath(latestPublished)"
+            height="128px"
+            variant="plain"
+          />
+        </button>
+        <div v-else class="my-empty-card">暂无已发布故事</div>
+        <div class="my-work-body">
+          <div class="my-work-row">
+            <h3>{{ latestPublished ? `${latestPublished.name || "未命名故事"} · 浏览 ${latestPublished.sessionCount || 0}` : "暂无已发布故事" }}</h3>
+            <span class="my-work-status" :class="{ published: !!latestPublished }">已发布</span>
           </div>
-          <div v-else class="my-empty-caption">
-            {{ card.caption }}
+          <p>{{ latestPublished ? (latestPublished.intro || "") : "发布后会在这里展示" }}</p>
+          <div v-if="latestPublished" class="my-work-actions one">
+            <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(latestPublished)">编辑</button>
           </div>
         </div>
       </article>
     </div>
   </section>
+  </main>
+
+  <main v-else class="my-page draft-page">
+    <section class="draft-page-top">
+      <button class="draft-back-btn" type="button" @click="closeDraftListDialog">
+        <span aria-hidden="true">‹</span>
+        <span>草稿箱</span>
+      </button>
+      <button class="button small" type="button" @click="store.startNewStoryDraft(); closeDraftListDialog();">新建故事</button>
+    </section>
+
+    <div class="subtle draft-page-subtitle">{{ visibleDrafts.length }} 个草稿</div>
+
+    <section v-if="!visibleDrafts.length" class="draft-sheet-empty">
+      <div class="my-empty-card">暂无草稿</div>
+      <div class="my-empty-caption">保存草稿后会显示在这里</div>
+    </section>
+
+    <section v-else class="draft-sheet-list-page">
+      <article v-for="world in visibleDrafts" :key="world.id" class="draft-sheet-item">
+        <button class="draft-sheet-cover" type="button" @click="editDraft(world)">
+          <StoryCover
+            :title="world.name || '草稿'"
+            :cover-path="store.worldCoverPath(world)"
+            empty-text="草稿"
+            height="140px"
+            variant="plain"
+          />
+        </button>
+        <div class="draft-sheet-body">
+          <div class="my-work-row">
+            <h3>{{ world.name || "未命名故事" }}</h3>
+            <span class="my-work-status">草稿</span>
+          </div>
+          <p>{{ world.intro || "保存草稿后会显示在这里" }}</p>
+          <div class="draft-sheet-actions">
+            <button class="button primary small" type="button" @click="editDraft(world)">编辑</button>
+            <button class="button small danger-outline" type="button" @click="askDeleteDraft(world)">删除</button>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div v-if="deletingDraft" class="modal-backdrop" @click.self="cancelDeleteDraft">
+    <div class="modal-panel" style="width:min(100%,360px);">
+      <div class="modal-header">
+        <div style="font-weight:900;">删除草稿</div>
+      </div>
+      <div class="modal-body">
+        确认删除《{{ deletingDraft.name || "未命名故事" }}》？此操作会删除对应章节和调试会话。
+      </div>
+      <div class="modal-actions">
+        <button class="button" type="button" @click="cancelDeleteDraft">取消</button>
+        <button class="button small danger-solid" type="button" @click="confirmDeleteDraft">删除</button>
+      </div>
+    </div>
+  </div>
 
   <div v-if="showAvatarActionDialog" class="modal-backdrop" @click.self="closeAvatarActionDialog">
     <div class="modal-panel" style="width:min(100%,360px);">
       <div class="modal-header">
-        <div style="font-weight:900;">更换头像</div>
+        <div style="font-weight:900;">选择图片来源</div>
       </div>
       <div class="modal-body">
         <div class="dialog-stack">
-          <button class="button block" type="button" @click="triggerAvatarUpload">上传头像</button>
-          <button class="button primary block" type="button" @click="openAccountImageDialog">AI 生图</button>
+          <button class="button block" type="button" @click="triggerAvatarUpload">上传图片（支持 PNG / GIF）</button>
+          <button class="button primary block" type="button" @click="openAccountImageDialog">AI 生成图片</button>
+          <div class="subtle">
+            不选参考图就是文生图；选了参考图就是图生图。角色头像会标准化并立即刷新；封面和背景图会按场景比例保存。
+          </div>
         </div>
       </div>
       <div class="modal-actions">
-        <button class="button" type="button" @click="closeAvatarActionDialog">取消</button>
+        <button class="button" type="button" @click="closeAvatarActionDialog">关闭</button>
       </div>
     </div>
   </div>

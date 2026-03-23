@@ -1,14 +1,17 @@
 <script setup lang="ts">
-defineProps<{
+withDefaults(defineProps<{
   title: string;
   coverPath?: string | null;
   emptyText?: string;
   height?: string;
-}>();
+  variant?: "card" | "plain";
+}>(), {
+  variant: "card",
+});
 </script>
 
 <template>
-  <div class="card story-cover" :style="{ height: height || '100%' }">
+  <div :class="['story-cover', `story-cover--${variant}`]" :style="{ height: height || '100%' }">
     <img v-if="coverPath" :src="coverPath" :alt="title" />
     <div v-else class="placeholder">
       {{ emptyText || title || "无封面" }}

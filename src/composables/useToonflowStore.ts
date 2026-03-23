@@ -37,6 +37,20 @@ function storageSet(key: string, value: string): void {
   }
 }
 
+function normalizeBaseUrl(input: string): string {
+  return String(input || "").trim().replace(/\/+$/, "");
+}
+
+function resolveMediaUrl(baseUrl: string, input: string): string {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+  if (/^(https?:|data:|blob:|file:)/i.test(raw)) return raw;
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) return raw;
+  if (raw.startsWith("/")) return `${base}${raw}`;
+  return `${base}/${raw}`;
+}
+
 function safeJsonParse<T>(text: string, fallback: T): T {
   if (!text.trim()) return fallback;
   try {
@@ -193,7 +207,14 @@ function createToonflowStore() {
 
   function worldCoverPath(world: WorldItem | null | undefined): string {
     if (!world) return "";
-    return String(world.coverPath || world.settings?.coverPath || "").trim();
+    return resolveMediaUrl(
+      state.baseUrl,
+      String(world.coverPath || world.settings?.coverPath || world.settings?.coverBgPath || "").trim(),
+    );
+  }
+
+  function resolveMediaPath(path: string): string {
+    return resolveMediaUrl(state.baseUrl, path);
   }
 
   function selectedProjectName(): string {
@@ -867,7 +888,7 @@ function createToonflowStore() {
       state.worldId = worldDetail.id;
       state.worldName = worldDetail.name || "";
       state.worldIntro = worldDetail.intro || "";
-      state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || "";
+      state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || worldDetail.settings?.coverBgPath || "";
       state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.coverPath || worldDetail.settings?.coverPath || "";
       state.worldPublishStatus = worldDetail.publishStatus || worldDetail.settings?.publishStatus || "draft";
       state.globalBackground = worldDetail.settings?.globalBackground || "";
@@ -920,6 +941,15 @@ function createToonflowStore() {
     state.worldPublishStatus = "draft";
     await saveWorldOnly(false);
     state.notice = "已转回草稿，可继续编辑";
+  }
+
+  async function deleteWorld(world: WorldItem) {
+    await api.deleteWorld(Number(world.id));
+    if (Number(state.worldId || 0) === Number(world.id || 0)) {
+      resetStoryEditor();
+    }
+    await reloadAll();
+    state.notice = "草稿已删除";
   }
 
   function resetChapterDraft() {
@@ -1193,6 +1223,7 @@ function createToonflowStore() {
     startNewStoryDraft,
     openWorldForEdit,
     reopenPublishedWorldAsDraft,
+    deleteWorld,
     saveStoryEditor,
     saveWorldOnly,
     saveChapterDraft,
@@ -1240,6 +1271,7 @@ function createToonflowStore() {
     mentionRoleNames,
     appendGlobalMention,
     appendChapterMention,
+    resolveMediaPath,
   };
 
   return apiFacade;

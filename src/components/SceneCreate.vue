@@ -249,7 +249,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           <label>故事图标</label>
           <div class="row" style="align-items:flex-start;">
             <div class="story-cover" style="width:100%; max-width: 320px; height: 160px; border-radius: 18px; border:1px solid var(--line);">
-              <StoryCover :title="store.state.worldName || '故事'" :cover-path="store.state.worldCoverPath" empty-text="故事图标" />
+              <StoryCover :title="store.state.worldName || '故事'" :cover-path="store.resolveMediaPath(store.state.worldCoverPath)" empty-text="故事图标" />
             </div>
             <div class="dialog-stack" style="min-width: 160px;">
               <input ref="storyCoverInput" type="file" accept="image/*" hidden @change="onCoverFile" />
@@ -445,7 +445,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           <label>章节背景图</label>
           <div class="row" style="align-items:flex-start;">
             <div class="story-cover" style="width:100%; max-width: 320px; height: 140px; border:1px solid var(--line); border-radius: 18px;">
-              <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.state.chapterBackground" empty-text="上传 / AI 生成章节背景图" />
+              <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.resolveMediaPath(store.state.chapterBackground)" empty-text="上传 / AI 生成章节背景图" />
             </div>
             <div class="dialog-stack" style="min-width: 160px;">
               <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />

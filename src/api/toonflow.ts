@@ -99,6 +99,10 @@ export class ToonflowApi {
     return this.post<WorldItem>("/game/saveWorld", payload);
   }
 
+  deleteWorld(worldId: number) {
+    return this.post<boolean>("/game/deleteWorld", { worldId });
+  }
+
   getChapter(worldId: number) {
     return this.post<ChapterItem[]>("/game/getChapter", { worldId });
   }

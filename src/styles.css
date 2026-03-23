@@ -192,6 +192,17 @@ a {
   flex-wrap: wrap;
 }
 
+.my-page {
+  flex: 1;
+  min-height: calc(100vh - 72px);
+  margin: 0 -12px -16px;
+  padding: 16px 12px 16px;
+  background: #ffffff;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
 .my-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -204,7 +215,7 @@ a {
   border-radius: 14px;
 }
 
-.my-profile-card {
+.my-profile-section {
   display: grid;
   gap: 12px;
 }
@@ -299,19 +310,26 @@ a {
 }
 
 .my-work-tags {
-  margin-top: 10px;
+  margin-top: 2px;
 }
 
-.my-works-card {
-  margin-top: 2px;
+.my-works-section {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .my-work-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.my-summary-card {
+  cursor: pointer;
+}
+
+.my-summary-cover {
+  pointer-events: none;
 }
 
 .my-empty-card {
@@ -338,7 +356,15 @@ a {
 }
 
 .my-work-card {
+  border-radius: 16px;
+  border: 1px solid #dce3ef;
+  background: #ffffff;
+  box-shadow: none;
   overflow: hidden;
+}
+
+.my-work-card.placeholder {
+  cursor: default;
 }
 
 .my-work-cover-btn {
@@ -412,6 +438,87 @@ a {
   gap: 8px;
 }
 
+.my-work-actions.one {
+  grid-template-columns: 1fr;
+}
+
+.draft-sheet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.draft-sheet-list-page {
+  display: grid;
+  gap: 12px;
+}
+
+.draft-sheet-item {
+  border-radius: 16px;
+  border: 1px solid #dce3ef;
+  background: #ffffff;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.draft-sheet-cover {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.draft-sheet-body {
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.draft-sheet-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.draft-sheet-empty {
+  display: grid;
+  gap: 8px;
+}
+
+.draft-page {
+  gap: 10px;
+}
+
+.draft-page-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.draft-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.draft-back-btn span[aria-hidden="true"] {
+  font-size: 24px;
+  line-height: 1;
+  color: #5f7091;
+}
+
+.draft-page-subtitle {
+  margin-top: -2px;
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -471,6 +578,17 @@ a {
 .button.small {
   padding: 7px 10px;
   font-size: 13px;
+}
+
+.danger-outline {
+  border-color: rgba(203, 77, 77, 0.28);
+  color: #b33636;
+}
+
+.danger-solid {
+  background: linear-gradient(135deg, #d84d4d, #b93232);
+  border-color: transparent;
+  color: #fff;
 }
 
 .button.block {
@@ -540,6 +658,8 @@ a {
 .story-cover {
   position: relative;
   overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid #d6e1f0;
   background:
     linear-gradient(135deg, #dce8fb, #f2f5fb),
     radial-gradient(circle at top, rgba(36, 88, 216, 0.16), transparent 58%);
@@ -560,6 +680,17 @@ a {
   color: #90a4c1;
   font-weight: 800;
   letter-spacing: 0.3px;
+}
+
+.story-cover--card {
+  box-shadow: var(--shadow);
+  background-color: var(--card);
+}
+
+.story-cover--plain {
+  box-shadow: none;
+  background-color: #eef4ff;
+  border-color: #d6e1f0;
 }
 
 .avatar {
