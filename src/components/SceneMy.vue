@@ -20,7 +20,6 @@ const visibleDrafts = computed(() => drafts.value.filter((world) => !projectName
 const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
 const latestDraft = computed(() => visibleDrafts.value[0] || null);
 const worksCount = computed(() => visiblePublished.value.length);
-const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 3));
 const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));
 const followCount = computed(() => (visiblePublished.value.length ? 1 : 0));
 const fanCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.chapterCount || 0), 0));
@@ -190,12 +189,6 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
     <div class="row-between my-work-head">
       <div class="section-title" style="font-size:16px; margin:0;">{{ worksCount }}作品</div>
     </div>
-    <div v-if="workTags.length" class="tag-row my-work-tags">
-      <button v-for="name in workTags" :key="name" class="chip active" type="button">
-        {{ name }}
-      </button>
-    </div>
-    <div v-else class="subtle">暂无标签</div>
 
     <div class="my-work-grid">
       <article class="my-work-card my-summary-card my-draft-entry-card" @click="openDraftListDialog">

@@ -955,6 +955,11 @@ function createToonflowStore() {
     return result.audioUrl || "";
   }
 
+  async function polishVoicePrompt(text: string, style = ""): Promise<string> {
+    const result = await api.polishVoicePrompt(text, style);
+    return String(result.prompt || "").trim();
+  }
+
   async function generateImage(target: "role" | "scene", prompt: string, referenceList: string[], name: string): Promise<string> {
     const result = await api.generateImage({
       projectId: state.selectedProjectId,
@@ -1770,6 +1775,7 @@ function createToonflowStore() {
     currentStoryPromptValue,
     uploadVoiceReferenceAudio,
     previewVoice,
+    polishVoicePrompt,
     applyImageToTarget,
     updateAvatarFromFile,
     updateCoverFromFile,

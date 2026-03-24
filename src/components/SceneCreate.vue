@@ -27,6 +27,7 @@ const imageDialogTarget = ref<ImageTarget | null>(null);
 const imageDialogNpcIndex = ref<number | null>(null);
 const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
+const showDeleteNpcConfirm = ref(false);
 
 const coverAiPrompt = computed(() => store.state.worldIntro || store.state.worldName || "故事封面");
 const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
@@ -83,8 +84,8 @@ const voiceDialogState = computed(() => {
   switch (voiceDialogTarget.value) {
     case "player":
       return {
-        title: "用户角色音色",
-        initialLabel: store.state.playerName || "用户",
+        title: "选择用户音色",
+        initialLabel: store.state.playerVoice,
         initialConfigId: store.state.playerVoiceConfigId,
         initialPresetId: store.state.playerVoicePresetId,
         initialMode: store.state.playerVoiceMode,
@@ -96,8 +97,8 @@ const voiceDialogState = computed(() => {
       };
     case "narrator":
       return {
-        title: "旁白音色",
-        initialLabel: store.state.narratorName || "旁白",
+        title: "选择旁白音色",
+        initialLabel: store.state.narratorVoice,
         initialConfigId: store.state.narratorVoiceConfigId,
         initialPresetId: store.state.narratorVoicePresetId,
         initialMode: store.state.narratorVoiceMode,
@@ -110,8 +111,8 @@ const voiceDialogState = computed(() => {
     case "npc": {
       const role = typeof voiceDialogNpcIndex.value === "number" ? store.state.npcRoles[voiceDialogNpcIndex.value] : null;
       return {
-        title: role ? `${role.name || "角色"}音色` : "角色音色",
-        initialLabel: role?.name || "角色",
+        title: "选择角色音色",
+        initialLabel: role?.voice || "",
         initialConfigId: role?.voiceConfigId ?? null,
         initialPresetId: role?.voicePresetId || "",
         initialMode: role?.voiceMode || "text",
@@ -401,9 +402,19 @@ async function selectChapter(targetChapterId: number | null) {
 
 function removeCurrentNpc() {
   if (typeof editingNpcIndex.value !== "number") return;
+  showDeleteNpcConfirm.value = true;
+}
+
+function confirmRemoveCurrentNpc() {
+  if (typeof editingNpcIndex.value !== "number") return;
   store.removeNpcRole(editingNpcIndex.value);
+  showDeleteNpcConfirm.value = false;
   closeNpcEditor();
   store.scheduleStoryEditorAutoPersist(120);
+}
+
+function cancelRemoveCurrentNpc() {
+  showDeleteNpcConfirm.value = false;
 }
 </script>
 
@@ -476,6 +487,7 @@ function removeCurrentNpc() {
               <div class="avatar create-role-avatar">
                 <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" />
                 <div v-else class="placeholder">{{ role.name.slice(0, 1) || '角' }}</div>
+                <div class="badge">✎</div>
               </div>
               <span>{{ role.name || '新角色' }}</span>
             </button>
@@ -729,6 +741,20 @@ function removeCurrentNpc() {
           </div>
           <div class="create-note">参数卡会在保存角色后自动生成到 parameterCardJson。</div>
           <button class="create-remove-btn" type="button" @click="removeCurrentNpc">删除当前角色</button>
+          <div v-if="showDeleteNpcConfirm" class="modal-backdrop" @click.self="cancelRemoveCurrentNpc">
+            <div class="modal-panel create-delete-dialog">
+              <div class="modal-header">
+                <div style="font-weight:900;">确认删除角色</div>
+              </div>
+              <div class="modal-body">
+                <div class="subtle">删除后无法恢复，确认删除当前角色吗？</div>
+              </div>
+              <div class="modal-actions">
+                <button class="button" type="button" @click="cancelRemoveCurrentNpc">取消</button>
+                <button class="button danger-solid" type="button" @click="confirmRemoveCurrentNpc">删除</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -618,7 +618,7 @@ onBeforeUnmount(() => {
       </div>
 
       <section v-if="playMode === 'setting'" class="play-sheet play-sheet--setting">
-        <div class="play-sheet__head">
+        <div class="play-sheet__head play-sheet__head--center">
           <div>
             <div class="play-sheet__title">{{ playTitle }}</div>
             <div class="play-sheet__sub">故事简介：{{ currentWorld?.intro || store.state.worldIntro || "暂无简介" }}</div>
@@ -640,7 +640,7 @@ onBeforeUnmount(() => {
               <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" :alt="role.name" />
               <span v-else>{{ role.name.slice(0, 1) }}</span>
             </div>
-            <span>{{ role.name }}</span>
+            <span class="play-role-pill__name">{{ role.name }}</span>
           </button>
         </div>
 

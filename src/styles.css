@@ -1225,6 +1225,13 @@ a {
   padding: 0;
 }
 
+.create-delete-dialog {
+  width: min(calc(100vw - 32px), 320px);
+  max-height: none;
+  border-radius: 20px;
+  background: #fff;
+}
+
 .create-page .chip {
   padding: 6px 10px;
   border-radius: 999px;
@@ -2277,6 +2284,223 @@ textarea::-webkit-scrollbar-thumb {
   background: #fbfaff;
 }
 
+.voice-dialog-backdrop {
+  align-items: center;
+}
+
+.voice-dialog-panel {
+  width: min(calc(100vw - 24px), 424px);
+  max-height: calc(100vh - 40px);
+  border-radius: 28px;
+  background: #f8f4ff;
+}
+
+.voice-dialog-header {
+  position: sticky;
+  top: 0;
+  padding: 18px 20px 12px;
+  border-bottom: 0;
+  background: #f8f4ff;
+}
+
+.voice-dialog-title {
+  font-size: 16px;
+  font-weight: 900;
+  color: #27334a;
+}
+
+.voice-dialog-hint {
+  font-size: 12px;
+  color: #99a9c0;
+  font-weight: 700;
+}
+
+.voice-dialog-back {
+  border: 1px solid #cfd9ea;
+  background: #fff;
+  color: #5d6f8a;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.voice-dialog-body {
+  padding: 8px 20px 16px;
+}
+
+.voice-dialog-stack {
+  gap: 10px;
+}
+
+.voice-dialog-list {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-dialog-section {
+  border: 1px solid #d9e4f3;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 12px;
+}
+
+.voice-dialog-section__title {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 900;
+  color: #25324a;
+}
+
+.voice-dialog-section__title--sub {
+  margin-top: 12px;
+}
+
+.voice-dialog-select {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 10px;
+  border: 1px solid #d1dbec;
+  background: #fff;
+  color: #61738f;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  padding: 10px 14px;
+}
+
+.voice-dialog-select.is-active {
+  border-color: #b5cdf5;
+  background: #dce9ff;
+  color: #3d5b8f;
+}
+
+.voice-dialog-upload {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 10px;
+  border: 1px solid #d1dbec;
+  background: #fff;
+  color: #61738f;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.voice-dialog-textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #b8c7dc;
+  background: #fff;
+  padding: 12px 14px;
+  color: #28364e;
+  resize: none;
+  min-height: 84px;
+  outline: none;
+}
+
+.voice-dialog-textarea:focus {
+  border-color: #9fb9e8;
+  box-shadow: 0 0 0 3px rgba(86, 126, 204, 0.12);
+}
+
+.voice-dialog-textarea--short {
+  min-height: 64px;
+}
+
+.voice-dialog-textarea--preview {
+  min-height: 92px;
+}
+
+.voice-dialog-note {
+  font-size: 12px;
+  color: #6a7f9f;
+  line-height: 1.55;
+}
+
+.voice-dialog-mix-card {
+  border: 1px solid #d9e4f3;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.voice-dialog-mix-name {
+  color: #294a79;
+  font-weight: 700;
+}
+
+.voice-dialog-mix-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-dialog-mix-weight {
+  font-size: 12px;
+  color: #5e7395;
+}
+
+.voice-dialog-inline-btn {
+  border: 0;
+  background: transparent;
+  color: #567ecc;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0;
+}
+
+.voice-dialog-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.voice-dialog-preview-btn {
+  min-width: 56px;
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid #cfd9ea;
+  background: #fff;
+  color: #607390;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.voice-dialog-preview-btn--primary {
+  border-color: transparent;
+  background: #335fda;
+  color: #fff;
+}
+
+.voice-dialog-actions {
+  padding: 0 20px 18px;
+  align-items: center;
+}
+
+.voice-dialog-text-btn {
+  border: 0;
+  background: transparent;
+  color: #8a82b3;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.voice-dialog-confirm {
+  min-width: 56px;
+  min-height: 40px;
+  border-radius: 999px;
+  border: 0;
+  background: #ffd428;
+  color: #463400;
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .story-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
@@ -2819,9 +3043,9 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-entry-toast {
   position: absolute;
-  left: 50%;
+  right: 12px;
   top: 34px;
-  transform: translateX(-50%);
+  transform: none;
   padding: 7px 14px;
   border-radius: 999px;
   background: rgba(9, 20, 35, 0.48);
@@ -3001,10 +3225,20 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-sheet__head {
+  position: relative;
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.play-sheet__head--center {
+  display: block;
+  text-align: center;
+}
+
+.play-sheet__head--center .play-sheet__sub {
+  margin-top: 6px;
 }
 
 .play-sheet__title {
@@ -3020,6 +3254,9 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-sheet__close {
+  position: absolute;
+  right: 0;
+  top: 0;
   min-width: 52px;
   height: 30px;
   border-radius: 999px;
@@ -3031,35 +3268,36 @@ textarea::-webkit-scrollbar-thumb {
 .play-role-strip {
   display: flex;
   gap: 8px;
-  overflow: auto;
+  overflow: hidden;
   padding-bottom: 2px;
 }
 
 .play-role-pill {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 4px;
-  border-radius: 999px;
-  border: 1px solid rgba(188, 204, 226, 0.18);
-  background: rgba(255, 255, 255, 0.04);
+  width: 52px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: rgba(233, 241, 252, 0.92);
+  text-align: center;
 }
 
 .play-role-pill--active {
-  border-color: rgba(128, 170, 255, 0.7);
-  background: rgba(58, 123, 255, 0.22);
+  color: #ffffff;
 }
 
 .play-role-pill__avatar {
-  width: 24px;
-  height: 24px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
   overflow: hidden;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.14);
   color: #f4f8ff;
   font-size: 11px;
   font-weight: 900;
@@ -3069,6 +3307,11 @@ textarea::-webkit-scrollbar-thumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.play-role-pill__name {
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .play-inline-card {
@@ -3141,11 +3384,17 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-tip-back {
-  text-align: center;
-  background: rgba(255, 214, 73, 0.14);
-  border-color: rgba(255, 189, 92, 0.42);
-  color: #ffe8c4;
-  font-weight: 800;
+  width: auto;
+  justify-self: end;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #d6e9ff;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: right;
+  white-space: normal;
 }
 
 .play-debug-panel {

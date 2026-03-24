@@ -30,13 +30,19 @@ const referenceAudioPath = ref("");
 const referenceAudioName = ref("");
 const referenceText = ref("");
 const promptText = ref("");
-const previewText = ref("你好，我是一个故事角色。");
+const previewText = ref("你好，很高兴见到你。");
 const previewStatus = ref("");
 const previewLoading = ref(false);
 const audioUploading = ref(false);
 const mixVoices = ref<VoiceMixItem[]>([]);
 const audioElement = ref<HTMLAudioElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const modeOptions = [
+  { key: "text", label: "预设音色" },
+  { key: "clone", label: "克隆音色" },
+  { key: "mix", label: "混合音色" },
+  { key: "prompt_voice", label: "提示词音色" },
+];
 
 const presets = computed(() => store.voicePresetsForConfig(selectedConfigId.value));
 
@@ -55,7 +61,7 @@ watch(
     referenceText.value = props.initialReferenceText || "";
     promptText.value = props.initialPromptText || "";
     mixVoices.value = [...(props.initialMixVoices || [])];
-    previewText.value = props.initialLabel ? `你好，我是${props.initialLabel}` : "你好，我是一个故事角色。";
+    previewText.value = props.initialLabel ? `你好，我是${props.initialLabel}` : "你好，很高兴见到你。";
     previewStatus.value = "";
     await store.fetchVoiceModels();
     if (!selectedConfigId.value && store.state.voiceModels.length) {
@@ -219,52 +225,58 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="props.open" class="modal-backdrop">
-    <div class="modal-panel" style="width:min(100%,720px);">
-      <div class="modal-header">
-        <button class="button small" type="button" @click="emit('close')">返回</button>
-        <div style="font-weight:900;">{{ props.title }}</div>
-        <span class="tiny">可试听</span>
+  <div v-if="props.open" class="modal-backdrop voice-dialog-backdrop">
+    <div class="modal-panel voice-dialog-panel">
+      <div class="modal-header voice-dialog-header">
+        <button class="voice-dialog-back" type="button" @click="emit('close')">返回</button>
+        <div class="voice-dialog-title">{{ props.title }}</div>
+        <span class="voice-dialog-hint">可试听</span>
       </div>
-      <div class="modal-body">
-        <div class="dialog-stack">
-          <section class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">语音模型</div>
-            <div v-if="store.state.voiceModels.length" class="dialog-stack">
+      <div class="modal-body voice-dialog-body">
+        <div class="dialog-stack voice-dialog-stack">
+          <section class="voice-dialog-section">
+            <div class="voice-dialog-section__title">语音模型</div>
+            <div v-if="store.state.voiceModels.length" class="voice-dialog-list">
               <button
                 v-for="model in store.state.voiceModels"
                 :key="model.id"
-                class="button"
+                class="voice-dialog-select"
+                :class="{ 'is-active': selectedConfigId === model.id }"
                 type="button"
-                :class="{ primary: selectedConfigId === model.id }"
-                @click="selectedConfigId = model.id"
+                @click="selectedConfigId = model.id; selectedPresetId = ''"
               >
                 {{ model.model || "未命名模型" }} <span v-if="model.manufacturer">· {{ model.manufacturer }}</span>
               </button>
             </div>
-            <div v-else class="subtle">未加载到语音模型，请先在设置中配置 voice 模型。</div>
+            <div v-else class="voice-dialog-note">未加载到语音模型，请先在设置中配置 voice 模型。</div>
           </section>
 
-          <section class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">绑定模式</div>
-            <div class="tag-row">
-              <button class="chip" :class="{ active: selectedMode === 'text' }" type="button" @click="selectedMode = 'text'">预设音色</button>
-              <button class="chip" :class="{ active: selectedMode === 'clone' }" type="button" @click="selectedMode = 'clone'">克隆音色</button>
-              <button class="chip" :class="{ active: selectedMode === 'mix' }" type="button" @click="selectedMode = 'mix'">混合音色</button>
-              <button class="chip" :class="{ active: selectedMode === 'prompt_voice' }" type="button" @click="selectedMode = 'prompt_voice'">提示词音色</button>
+          <section class="voice-dialog-section">
+            <div class="voice-dialog-section__title">绑定模式</div>
+            <div class="voice-dialog-list">
+              <button
+                v-for="mode in modeOptions"
+                :key="mode.key"
+                class="voice-dialog-select"
+                :class="{ 'is-active': selectedMode === mode.key }"
+                type="button"
+                @click="selectedMode = mode.key"
+              >
+                {{ mode.label }}
+              </button>
             </div>
           </section>
 
-          <section v-if="selectedMode === 'text'" class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">音色预设</div>
-            <div v-if="!presets.length" class="subtle">当前模型还没有返回可用音色。</div>
-            <div v-else class="dialog-stack">
+          <section v-if="selectedMode === 'text'" class="voice-dialog-section">
+            <div class="voice-dialog-section__title">音色预设</div>
+            <div v-if="!presets.length" class="voice-dialog-note">当前模型还没有返回可用音色。</div>
+            <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"
                 :key="preset.voiceId"
-                class="button"
+                class="voice-dialog-select"
+                :class="{ 'is-active': selectedPresetId === preset.voiceId }"
                 type="button"
-                :class="{ primary: selectedPresetId === preset.voiceId }"
                 @click="selectedPresetId = preset.voiceId"
               >
                 {{ preset.name }}
@@ -272,63 +284,66 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else-if="selectedMode === 'clone'" class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">参考音频</div>
+          <section v-else-if="selectedMode === 'clone'" class="voice-dialog-section">
+            <div class="voice-dialog-section__title">参考音频</div>
             <input ref="fileInput" type="file" accept="audio/*" hidden @change="chooseAudio" />
-            <button class="button block" type="button" :disabled="audioUploading" @click="openAudioPicker">选择并上传音频</button>
-            <div class="subtle">{{ referenceAudioName || '未选择参考音频' }}</div>
-            <textarea v-model="referenceText" class="textarea" rows="2" placeholder="参考音频对应文本（可选）"></textarea>
+            <button class="voice-dialog-upload" type="button" :disabled="audioUploading" @click="openAudioPicker">
+              {{ audioUploading ? "上传中..." : "选择并上传音频" }}
+            </button>
+            <div class="voice-dialog-note">{{ referenceAudioName || '未选择参考音频' }}</div>
+            <textarea v-model="referenceText" class="voice-dialog-textarea voice-dialog-textarea--short" rows="2" placeholder="参考音频对应文本（可选）"></textarea>
           </section>
 
-          <section v-else-if="selectedMode === 'mix'" class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">混合音色</div>
-            <div class="dialog-stack">
-              <div v-for="(item, index) in mixVoices" :key="index" class="surface section-block">
-                <div class="row-between">
-                  <div>{{ presets.find((item2) => item2.voiceId === item.voiceId)?.name || item.voiceId || '未选择音色' }}</div>
-                  <div class="row">
-                    <button class="button small" type="button" @click="mixVoices[index].weight = Math.max(0.1, Number((mixVoices[index].weight - 0.1).toFixed(1)))">-</button>
-                    <span class="tiny">权重 {{ item.weight.toFixed(1) }}</span>
-                    <button class="button small" type="button" @click="mixVoices[index].weight = Math.min(1, Number((mixVoices[index].weight + 0.1).toFixed(1)))">+</button>
-                  </div>
+          <section v-else-if="selectedMode === 'mix'" class="voice-dialog-section">
+            <div class="voice-dialog-section__title">已选混合音色</div>
+            <div class="voice-dialog-stack">
+              <div v-for="(item, index) in mixVoices" :key="index" class="voice-dialog-mix-card">
+                <div class="voice-dialog-mix-name">
+                  {{ presets.find((item2) => item2.voiceId === item.voiceId)?.name || item.voiceId || '未选择音色' }}
+                </div>
+                <div class="voice-dialog-mix-actions">
+                  <span class="voice-dialog-mix-weight">权重 {{ item.weight.toFixed(1) }}</span>
+                  <button class="voice-dialog-inline-btn" type="button" @click="mixVoices[index].weight = Math.max(0.1, Number((mixVoices[index].weight - 0.1).toFixed(1)))">-</button>
+                  <button class="voice-dialog-inline-btn" type="button" @click="mixVoices[index].weight = Math.min(1, Number((mixVoices[index].weight + 0.1).toFixed(1)))">+</button>
+                  <button class="voice-dialog-inline-btn" type="button" @click="mixVoices.splice(index, 1); if (!mixVoices.length) mixVoices.push({ voiceId: '', weight: 0.7 });">删除</button>
                 </div>
               </div>
             </div>
-            <div class="section-title" style="font-size:16px; margin-top:12px;">可选预设</div>
-            <div v-if="!presets.length" class="subtle">当前模型还没有返回可用音色。</div>
-            <div v-else class="dialog-stack">
+            <div class="voice-dialog-section__title voice-dialog-section__title--sub">可选预设</div>
+            <div v-if="!presets.length" class="voice-dialog-note">当前模型还没有返回可用音色。</div>
+            <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"
                 :key="preset.voiceId"
-                class="button"
+                class="voice-dialog-select"
+                :class="{ 'is-active': mixVoices.some((item) => item.voiceId === preset.voiceId) }"
                 type="button"
-                :class="{ primary: mixVoices.some((item) => item.voiceId === preset.voiceId) }"
                 @click="toggleMixVoice(preset.voiceId)"
               >
-                {{ preset.name }}
+                {{ mixVoices.some((item) => item.voiceId === preset.voiceId) ? `${preset.name} · 已加入` : preset.name }}
               </button>
             </div>
           </section>
 
-          <section v-else class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">提示词音色</div>
-            <textarea v-model="promptText" class="textarea" rows="3" placeholder="例如：温柔、清亮、成熟、治愈、讲故事感"></textarea>
+          <section v-else class="voice-dialog-section">
+            <div class="voice-dialog-section__title">提示词</div>
+            <textarea v-model="promptText" class="voice-dialog-textarea voice-dialog-textarea--prompt" rows="3" placeholder="例如：温柔、清亮、成熟、治愈、讲故事感"></textarea>
           </section>
 
-          <section class="surface section-block surface-soft">
-            <div class="section-title" style="font-size:16px;">试听文本</div>
-            <textarea v-model="previewText" class="textarea" rows="2" placeholder="输入要试听的文本"></textarea>
-            <div class="row">
-              <button class="button primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
-              <button class="button" type="button" :disabled="!previewStatus && !audioElement" @click="stopPreview">停止</button>
+          <section class="voice-dialog-section">
+            <div class="voice-dialog-section__title">试听文本</div>
+            <textarea v-model="previewText" class="voice-dialog-textarea voice-dialog-textarea--preview" rows="2" placeholder="输入要试听的文本"></textarea>
+            <div class="voice-dialog-preview-actions">
+              <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
+              <button class="voice-dialog-preview-btn" type="button" :disabled="!previewStatus && !audioElement" @click="stopPreview">停止</button>
             </div>
-            <div v-if="previewStatus" class="subtle">{{ previewStatus }}</div>
+            <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
           </section>
         </div>
       </div>
-      <div class="modal-actions">
-        <button class="button" type="button" @click="emit('close')">取消</button>
-        <button class="button accent" type="button" @click="confirm">确定</button>
+      <div class="modal-actions voice-dialog-actions">
+        <button class="voice-dialog-text-btn" type="button" @click="emit('close')">取消</button>
+        <button class="voice-dialog-confirm" type="button" @click="confirm">确定</button>
       </div>
     </div>
   </div>

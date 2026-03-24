@@ -200,10 +200,24 @@ export class ToonflowApi {
     return this.post<{ message: string }>("/prompt/updatePrompt", { id, code, customValue });
   }
 
-  getVoicePresets(configId?: number) {
-    return this.post<VoicePresetItem[]>("/voice/getVoices", {
+  async getVoicePresets(configId?: number): Promise<VoicePresetItem[]> {
+    const data = await this.post<any>("/voice/getVoices", {
       configId: configId || undefined,
     });
+    const rawList = Array.isArray(data) ? data : Array.isArray(data?.voices) ? data.voices : [];
+    return rawList
+      .map((item: any) => {
+        if (!item) return null;
+        if (typeof item === "string") {
+          const voiceId = item.trim();
+          return voiceId ? { voiceId, name: voiceId } satisfies VoicePresetItem : null;
+        }
+        const voiceId = String(item.voice_id || item.voiceId || item.id || item.key || "").trim();
+        if (!voiceId) return null;
+        const name = String(item.name || item.label || item.voice_name || voiceId).trim() || voiceId;
+        return { voiceId, name } satisfies VoicePresetItem;
+      })
+      .filter((item): item is VoicePresetItem => !!item);
   }
 
   uploadVoiceAudio(projectId: number | undefined, base64Data: string, fileName: string) {
@@ -216,6 +230,10 @@ export class ToonflowApi {
 
   previewVoice(payload: Record<string, unknown>) {
     return this.post<{ audioUrl: string; data: unknown }>("/voice/preview", payload);
+  }
+
+  polishVoicePrompt(text: string, style = "") {
+    return this.post<{ prompt: string }>("/voice/polishPrompt", { text, style });
   }
 
   polishPrompt(prompt: string) {
