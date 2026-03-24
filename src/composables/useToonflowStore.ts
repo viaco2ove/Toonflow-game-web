@@ -1,10 +1,15 @@
 import { computed, reactive, watch } from "vue";
 import { ToonflowApi } from "../api/toonflow";
 import {
+  AiModelMapItem,
   AppTab,
   ChapterItem,
   MessageItem,
+  ModelConfigItem,
+  ModelConfigPayload,
+  ModelTestResult,
   ProjectItem,
+  PromptItem,
   SessionDetail,
   SessionItem,
   StoryRole,
@@ -103,6 +108,23 @@ type ToonflowStore = ReturnType<typeof createToonflowStore>;
 
 let singletonStore: ToonflowStore | null = null;
 
+const GAME_MODEL_SLOTS = [
+  { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
+  { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
+  { key: "storyImageModel", label: "AI生图", configType: "image" },
+  { key: "storyVoiceModel", label: "语音生成", configType: "voice" },
+  { key: "storyAsrModel", label: "语音识别", configType: "voice" },
+] as const;
+
+const STORY_PROMPT_CODES = [
+  "story-main",
+  "story-orchestrator",
+  "story-memory",
+  "story-chapter",
+  "story-mini-game",
+  "story-safety",
+] as const;
+
 function createToonflowStore() {
   const state = reactive({
     baseUrl: storageGet("toonflow.baseUrl", "http://127.0.0.1:60000"),
@@ -112,8 +134,8 @@ function createToonflowStore() {
     notice: "",
     activeTab: "home" as AppTab,
     loading: false,
-    userName: "",
-    userId: 0 as number,
+    userName: storageGet("toonflow.userName", ""),
+    userId: Number(storageGet("toonflow.userId", "0")) || 0,
     accountAvatarPath: storageGet("toonflow.accountAvatarPath", ""),
     accountAvatarBgPath: storageGet("toonflow.accountAvatarBgPath", ""),
     userAvatarPath: "",
@@ -130,6 +152,13 @@ function createToonflowStore() {
     voiceModels: [] as VoiceModelConfig[],
     voicePresetsCache: {} as Record<number, VoicePresetItem[]>,
     voiceLoading: false,
+    settingsPanelLoading: false,
+    settingsPanelLoaded: false,
+    settingsTextConfigs: [] as ModelConfigItem[],
+    settingsImageConfigs: [] as ModelConfigItem[],
+    settingsVoiceConfigs: [] as VoiceModelConfig[],
+    settingsAiModelMap: [] as AiModelMapItem[],
+    storyPrompts: [] as PromptItem[],
     aiGenerating: false,
     chapters: [] as ChapterItem[],
     selectedChapterId: null as number | null,
@@ -166,6 +195,8 @@ function createToonflowStore() {
     storageSet("toonflow.token", state.token.trim());
     storageSet("toonflow.loginUsername", state.loginUsername.trim());
     storageSet("toonflow.loginPassword", state.loginPassword);
+    storageSet("toonflow.userName", state.userName.trim());
+    storageSet("toonflow.userId", String(state.userId || 0));
     storageSet("toonflow.accountAvatarPath", state.accountAvatarPath);
     storageSet("toonflow.accountAvatarBgPath", state.accountAvatarBgPath);
   }
@@ -188,6 +219,12 @@ function createToonflowStore() {
     state.sessionDetail = null;
     state.messages = [];
     state.currentSessionId = "";
+    state.settingsPanelLoaded = false;
+    state.settingsTextConfigs = [];
+    state.settingsImageConfigs = [];
+    state.settingsVoiceConfigs = [];
+    state.settingsAiModelMap = [];
+    state.storyPrompts = [];
     state.notice = "请先登录账号";
     state.activeTab = "settings";
   }
@@ -621,6 +658,34 @@ function createToonflowStore() {
     return key && state.voicePresetsCache[key] ? state.voicePresetsCache[key] : [];
   }
 
+  function isAdminAccount(): boolean {
+    return state.userId === 1 || state.userName.trim().toLowerCase() === "admin";
+  }
+
+  function settingsConfigOptions(type: "text" | "image" | "voice"): ModelConfigItem[] {
+    if (type === "text") return state.settingsTextConfigs;
+    if (type === "image") return state.settingsImageConfigs;
+    return state.settingsVoiceConfigs.map((item) => ({
+      id: item.id,
+      type: item.type || "voice",
+      model: item.model,
+      modelType: item.modelType,
+      manufacturer: item.manufacturer,
+      baseUrl: item.baseUrl,
+      apiKey: item.apiKey,
+      createTime: item.createTime,
+    }));
+  }
+
+  function settingsModelBinding(key: string): AiModelMapItem | null {
+    return state.settingsAiModelMap.find((item) => item.key === key) || null;
+  }
+
+  function currentStoryPromptValue(code: string): string {
+    const row = state.storyPrompts.find((item) => item.code === code);
+    return String(row?.customValue || row?.defaultValue || "");
+  }
+
   async function uploadVoiceReferenceAudio(file: File): Promise<{ path: string; name: string }> {
     const payload = await fileToBase64Payload(file);
     const result = await api.uploadVoiceAudio(state.selectedProjectId, payload, file.name || "reference.wav");
@@ -730,6 +795,117 @@ function createToonflowStore() {
 
   async function updateChapterBackgroundFromFile(file: File) {
     state.chapterBackground = await uploadImage("chapter", file);
+  }
+
+  async function ensureSettingsPanelData(force = false) {
+    if (!state.token.trim()) return;
+    if (state.settingsPanelLoading) return;
+    if (state.settingsPanelLoaded && !force) return;
+    state.settingsPanelLoading = true;
+    try {
+      const [configs, voiceConfigs, aiModelMap, prompts] = await Promise.all([
+        api.getModelConfigs().catch(() => []),
+        api.getVoiceModels().catch(() => []),
+        api.getAiModelMap().catch(() => []),
+        api.getPrompts().catch(() => []),
+      ]);
+      state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
+      state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
+      state.settingsVoiceConfigs = voiceConfigs;
+      state.settingsAiModelMap = aiModelMap.filter((item) => GAME_MODEL_SLOTS.some((slot) => slot.key === item.key));
+      state.storyPrompts = prompts.filter((item) => STORY_PROMPT_CODES.includes(item.code as (typeof STORY_PROMPT_CODES)[number]));
+      state.settingsPanelLoaded = true;
+    } catch (err) {
+      state.notice = `加载设置失败: ${(err as Error).message}`;
+    } finally {
+      state.settingsPanelLoading = false;
+    }
+  }
+
+  async function bindGameModel(key: string, configId: number) {
+    const row = settingsModelBinding(key);
+    if (!row?.id) {
+      throw new Error("模型槽位不存在");
+    }
+    await api.bindModelConfig(row.id, configId);
+    await ensureSettingsPanelData(true);
+    state.notice = "模型配置已保存";
+  }
+
+  async function addManagedModelConfig(payload: ModelConfigPayload) {
+    await api.addModelConfig(payload);
+    await ensureSettingsPanelData(true);
+    state.notice = "模型配置已新增";
+  }
+
+  async function updateManagedModelConfig(payload: ModelConfigPayload) {
+    await api.updateModelConfig(payload);
+    await ensureSettingsPanelData(true);
+    state.notice = "模型配置已更新";
+  }
+
+  async function deleteManagedModelConfig(id: number) {
+    await api.deleteModelConfig(id);
+    await ensureSettingsPanelData(true);
+    state.notice = "模型配置已删除";
+  }
+
+  async function testManagedModelConfig(config: ModelConfigItem): Promise<ModelTestResult> {
+    const type = String(config.type || "").trim();
+    if (type === "text") {
+      const result = await api.testTextModel({
+        modelName: String(config.model || "").trim(),
+        apiKey: String(config.apiKey || "").trim(),
+        baseURL: String(config.baseUrl || "").trim() || undefined,
+        manufacturer: String(config.manufacturer || "").trim(),
+      });
+      return {
+        kind: "text",
+        content: String(result || "").trim(),
+      };
+    }
+    if (type === "image") {
+      const result = await api.testImageModel({
+        modelName: String(config.model || "").trim() || undefined,
+        apiKey: String(config.apiKey || "").trim(),
+        baseURL: String(config.baseUrl || "").trim() || undefined,
+        manufacturer: String(config.manufacturer || "").trim(),
+      });
+      return {
+        kind: "image",
+        content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
+      };
+    }
+    const presets = await api.getVoicePresets(config.id);
+    const firstVoice = presets.find((item) => item.voiceId.trim())?.voiceId || "";
+    if (!firstVoice) {
+      throw new Error("当前语音模型没有可用音色，无法测试");
+    }
+    const voice = await api.previewVoice({
+      configId: config.id,
+      text: "这是 AI 故事设置页的语音模型测试。",
+      mode: "text",
+      voiceId: firstVoice,
+    });
+    return {
+      kind: "audio",
+      content: resolveMediaUrl(state.baseUrl, String(voice.audioUrl || "").trim()),
+    };
+  }
+
+  async function saveStoryPrompt(code: string, customValue: string) {
+    const row = state.storyPrompts.find((item) => item.code === code);
+    if (!row?.id) {
+      throw new Error("提示词不存在");
+    }
+    await api.updatePrompt(row.id, code, customValue);
+    row.customValue = customValue;
+    state.notice = "提示词已保存";
+  }
+
+  async function resetStoryPrompt(code: string) {
+    await saveStoryPrompt(code, "");
+    state.notice = "提示词已重置为默认值";
   }
 
   function storySettingsObject() {
@@ -868,11 +1044,44 @@ function createToonflowStore() {
       saveSettings();
       state.notice = "登录成功";
       await reloadAll();
+      await ensureSettingsPanelData(true);
+      state.activeTab = "my";
     } catch (err) {
       state.notice = `登录失败: ${(err as Error).message}`;
     } finally {
       state.loading = false;
     }
+  }
+
+  async function registerAndLogin(username: string, password: string) {
+    const trimmedName = username.trim();
+    if (!trimmedName || !password.trim()) {
+      throw new Error("请输入账号和密码");
+    }
+    state.loading = true;
+    try {
+      const result = await api.register(trimmedName, password);
+      state.loginUsername = trimmedName;
+      state.loginPassword = password;
+      state.token = result.token;
+      state.userName = result.name || trimmedName;
+      state.userId = result.id || 0;
+      saveSettings();
+      state.notice = "注册成功";
+      await reloadAll();
+      await ensureSettingsPanelData(true);
+      state.activeTab = "my";
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  async function changePassword(oldPassword: string, newPassword: string) {
+    if (!state.token.trim()) throw new Error("请先登录账号");
+    await api.changePassword(oldPassword, newPassword);
+    state.loginPassword = newPassword;
+    saveSettings();
+    state.notice = "密码已更新";
   }
 
   function saveConnection() {
@@ -884,6 +1093,12 @@ function createToonflowStore() {
     state.token = "";
     state.accountAvatarPath = "";
     state.accountAvatarBgPath = "";
+    state.settingsPanelLoaded = false;
+    state.settingsTextConfigs = [];
+    state.settingsImageConfigs = [];
+    state.settingsVoiceConfigs = [];
+    state.settingsAiModelMap = [];
+    state.storyPrompts = [];
     saveSettings();
     clearRuntime();
     state.notice = "已退出登录";
@@ -891,6 +1106,9 @@ function createToonflowStore() {
 
   function setTab(tab: AppTab) {
     state.activeTab = tab;
+    if (tab === "settings" && state.token.trim()) {
+      void ensureSettingsPanelData();
+    }
   }
 
   function selectProject(projectId: number) {
@@ -1253,6 +1471,8 @@ function createToonflowStore() {
     saveSettings,
     reloadAll,
     loginAndSaveToken,
+    registerAndLogin,
+    changePassword,
     saveConnection,
     clearToken,
     setTab,
@@ -1281,6 +1501,18 @@ function createToonflowStore() {
     fetchVoiceModels,
     fetchVoicePresets,
     voicePresetsForConfig,
+    ensureSettingsPanelData,
+    bindGameModel,
+    addManagedModelConfig,
+    updateManagedModelConfig,
+    deleteManagedModelConfig,
+    testManagedModelConfig,
+    saveStoryPrompt,
+    resetStoryPrompt,
+    isAdminAccount,
+    settingsConfigOptions,
+    settingsModelBinding,
+    currentStoryPromptValue,
     uploadVoiceReferenceAudio,
     previewVoice,
     applyImageToTarget,
@@ -1309,6 +1541,8 @@ function createToonflowStore() {
     appendGlobalMention,
     appendChapterMention,
     resolveMediaPath,
+    GAME_MODEL_SLOTS,
+    STORY_PROMPT_CODES,
   };
 
   return apiFacade;

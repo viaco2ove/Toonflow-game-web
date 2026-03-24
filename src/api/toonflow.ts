@@ -1,10 +1,14 @@
 import axios from "axios";
 import type {
   ApiEnvelope,
+  AiModelMapItem,
   ChapterItem,
   GeneratedImageResult,
   MessageItem,
+  ModelConfigItem,
+  ModelConfigPayload,
   ProjectItem,
+  PromptItem,
   SessionDetail,
   SessionItem,
   StoryRole,
@@ -70,12 +74,20 @@ export class ToonflowApi {
     return this.post<{ token: string; name: string; id: number }>("/other/login", { username, password });
   }
 
+  register(username: string, password: string) {
+    return this.post<{ token: string; name: string; id: number }>("/other/register", { username, password });
+  }
+
   getUser() {
     return this.get<Record<string, unknown>>("/user/getUser");
   }
 
   saveUser(payload: Record<string, unknown>) {
     return this.post<string>("/user/saveUser", payload);
+  }
+
+  changePassword(oldPassword: string, newPassword: string) {
+    return this.post<{ message: string }>("/user/changePassword", { oldPassword, newPassword });
   }
 
   getProjects() {
@@ -156,6 +168,38 @@ export class ToonflowApi {
     return this.post<VoiceModelConfig[]>("/setting/getVoiceModelList", {});
   }
 
+  getModelConfigs() {
+    return this.post<ModelConfigItem[]>("/setting/getSetting", {});
+  }
+
+  addModelConfig(payload: ModelConfigPayload) {
+    return this.post<string>("/setting/addModel", payload);
+  }
+
+  updateModelConfig(payload: ModelConfigPayload) {
+    return this.post<string>("/setting/updateModel", payload);
+  }
+
+  deleteModelConfig(id: number) {
+    return this.post<string>("/setting/delModel", { id });
+  }
+
+  getAiModelMap() {
+    return this.post<AiModelMapItem[]>("/setting/getAiModelMap", {});
+  }
+
+  bindModelConfig(id: number, configId: number) {
+    return this.post<string>("/setting/configurationModel", { id, configId });
+  }
+
+  getPrompts() {
+    return this.get<PromptItem[]>("/prompt/getPrompts");
+  }
+
+  updatePrompt(id: number, code: string, customValue: string) {
+    return this.post<{ message: string }>("/prompt/updatePrompt", { id, code, customValue });
+  }
+
   getVoicePresets(configId?: number) {
     return this.post<VoicePresetItem[]>("/voice/getVoices", {
       configId: configId || undefined,
@@ -176,5 +220,13 @@ export class ToonflowApi {
 
   polishPrompt(prompt: string) {
     return this.post<{ prompt: string; text: string }>("/assets/polishPrompt", { prompt });
+  }
+
+  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+    return this.post<string>("/other/testAI", payload);
+  }
+
+  testImageModel(payload: { modelName?: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+    return this.post<string>("/other/testImage", payload);
   }
 }

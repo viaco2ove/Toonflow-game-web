@@ -181,9 +181,13 @@ export interface GeneratedImageResult {
 
 export interface VoiceModelConfig {
   id: number;
+  type?: string;
   model?: string;
+  modelType?: string;
   manufacturer?: string;
   baseUrl?: string;
+  apiKey?: string;
+  createTime?: number;
 }
 
 export interface VoicePresetItem {
@@ -194,6 +198,51 @@ export interface VoicePresetItem {
 export interface UploadedVoiceAudioResult {
   filePath?: string;
   url?: string;
+}
+
+export interface ModelConfigItem {
+  id: number;
+  type?: string;
+  model?: string;
+  modelType?: string;
+  manufacturer?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  createTime?: number;
+}
+
+export interface ModelConfigPayload {
+  id?: number;
+  type: "text" | "image" | "voice";
+  model: string;
+  modelType: string;
+  manufacturer: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface ModelTestResult {
+  kind: "text" | "image" | "audio";
+  content: string;
+}
+
+export interface AiModelMapItem {
+  id: number;
+  key: string;
+  name: string;
+  configId?: number | null;
+  model?: string | null;
+  manufacturer?: string | null;
+}
+
+export interface PromptItem {
+  id: number;
+  code: string;
+  name?: string | null;
+  type?: string | null;
+  parentCode?: string | null;
+  defaultValue?: string | null;
+  customValue?: string | null;
 }
 
 export type AppTab = "home" | "hall" | "create" | "history" | "my" | "settings" | "play";

@@ -19,9 +19,8 @@ const projectNameSet = computed(() => {
 const visibleDrafts = computed(() => drafts.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
 const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
 const latestDraft = computed(() => visibleDrafts.value[0] || null);
-const latestPublished = computed(() => visiblePublished.value[0] || null);
 const worksCount = computed(() => visiblePublished.value.length);
-const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 1));
+const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 3));
 const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));
 const followCount = computed(() => (visiblePublished.value.length ? 1 : 0));
 const fanCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.chapterCount || 0), 0));
@@ -215,26 +214,39 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         </div>
       </article>
 
-      <article class="my-work-card my-summary-card my-published-entry-card" :class="{ placeholder: !latestPublished }">
-        <button v-if="latestPublished" class="my-work-cover-btn" type="button" @click="store.startFromWorld(latestPublished)">
+      <article
+        v-for="world in visiblePublished"
+        :key="world.id"
+        class="my-work-card my-summary-card my-published-entry-card"
+      >
+        <button class="my-work-cover-btn" type="button" @click="store.startFromWorld(world)">
           <StoryCover
-            :title="latestPublished.name || '故事'"
-            :cover-path="store.worldCoverPath(latestPublished)"
+            :title="world.name || '故事'"
+            :cover-path="store.worldCoverPath(world)"
             height="128px"
             variant="plain"
           />
         </button>
-        <div v-else class="my-empty-card">暂无已发布故事</div>
         <div class="my-work-body">
           <div class="my-work-row">
-            <h3>{{ latestPublished ? `${latestPublished.name || "未命名故事"} · 浏览 ${latestPublished.sessionCount || 0}` : "暂无已发布故事" }}</h3>
-            <span class="my-work-status" :class="{ published: !!latestPublished }">已发布</span>
+            <h3>{{ `${world.name || "未命名故事"} · 浏览 ${world.sessionCount || 0}` }}</h3>
+            <span class="my-work-status published">已发布</span>
           </div>
-          <p>{{ latestPublished ? (latestPublished.intro || "") : "发布后会在这里展示" }}</p>
-          <div v-if="latestPublished" class="my-work-actions">
-            <button class="button small" type="button" @click="store.startFromWorld(latestPublished)">进入游戏</button>
-            <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(latestPublished)">编辑</button>
+          <p>{{ world.intro || "发布后会在这里展示" }}</p>
+          <div class="my-work-actions one">
+            <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(world)">编辑</button>
           </div>
+        </div>
+      </article>
+
+      <article v-if="!visiblePublished.length" class="my-work-card my-summary-card my-published-entry-card placeholder">
+        <div class="my-empty-card">暂无已发布故事</div>
+        <div class="my-work-body">
+          <div class="my-work-row">
+            <h3>暂无已发布故事</h3>
+            <span class="my-work-status published">已发布</span>
+          </div>
+          <p>发布后会在这里展示</p>
         </div>
       </article>
     </div>
@@ -310,8 +322,8 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
     </div>
   </div>
 
-  <div v-if="showAvatarActionDialog" class="modal-backdrop" @click.self="closeAvatarActionDialog">
-    <div class="modal-panel" style="width:min(100%,360px);">
+  <div v-if="showAvatarActionDialog" class="modal-backdrop image-source-dialog-backdrop" @click.self="closeAvatarActionDialog">
+    <div class="modal-panel image-source-dialog-panel">
       <div class="modal-header">
         <div style="font-weight:900;">选择图片来源</div>
       </div>
