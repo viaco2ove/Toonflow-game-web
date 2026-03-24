@@ -397,7 +397,7 @@ onBeforeUnmount(() => {
           <button v-for="role in roleCards" :key="role.id" type="button" class="role-card role-card-button" @click="openRoleDetail(role)">
             <div class="role-head">
               <div class="role-avatar">
-                <img v-if="role.avatarPath" :src="role.avatarPath" :alt="role.name" />
+                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" :alt="role.name" />
                 <span v-else>{{ role.name?.slice(0, 1) || "角" }}</span>
               </div>
               <div class="role-info">
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
       <div class="modal-body" v-if="roleDetail">
         <div class="detail-card">
           <div class="detail-avatar">
-            <img v-if="roleDetail.avatarPath" :src="roleDetail.avatarPath" :alt="roleDetail.name" />
+            <img v-if="roleDetail.avatarPath" :src="store.resolveMediaPath(roleDetail.avatarPath)" :alt="roleDetail.name" />
             <span v-else>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
           </div>
           <div class="detail-meta">

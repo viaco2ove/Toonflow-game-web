@@ -17,7 +17,7 @@ import {
   createDefaultPlayerRole,
   createEmptyChapter,
 } from "../types/toonflow";
-import { fileToDataUrl, fileToBase64Payload } from "../utils/file";
+import { fileToBase64Payload } from "../utils/file";
 
 type Loadable<T> = T | null;
 
@@ -168,6 +168,14 @@ function createToonflowStore() {
     storageSet("toonflow.loginPassword", state.loginPassword);
     storageSet("toonflow.accountAvatarPath", state.accountAvatarPath);
     storageSet("toonflow.accountAvatarBgPath", state.accountAvatarBgPath);
+  }
+
+  async function persistAccountAvatar() {
+    if (!state.token.trim() || state.userId <= 0) return;
+    await api.saveUser({
+      avatarPath: state.accountAvatarPath,
+      avatarBgPath: state.accountAvatarBgPath || state.accountAvatarPath,
+    });
   }
 
   function clearRuntime() {
@@ -655,7 +663,20 @@ function createToonflowStore() {
       base64List: referenceList,
       size: "2K",
     });
-    return result.path || result.filePath || "";
+    return result.filePath || result.path || "";
+  }
+
+  async function uploadImage(target: "account" | "user" | "npc" | "cover" | "chapter", file: File): Promise<string> {
+    if (target !== "account" && state.selectedProjectId <= 0) {
+      throw new Error("请先选择项目后再上传图片");
+    }
+    const result = await api.uploadImage({
+      projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
+      type: target === "cover" || target === "chapter" ? "scene" : "role",
+      fileName: file.name || undefined,
+      base64Data: await fileToBase64Payload(file),
+    });
+    return result.filePath || result.path || "";
   }
 
   async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
@@ -668,6 +689,7 @@ function createToonflowStore() {
       if (target === "account") {
         state.accountAvatarPath = path;
         state.accountAvatarBgPath = path;
+        await persistAccountAvatar();
       } else if (target === "user") {
         state.userAvatarPath = path;
         state.userAvatarBgPath = path;
@@ -686,27 +708,28 @@ function createToonflowStore() {
   }
 
   async function updateAvatarFromFile(target: "account" | "user" | "npc", file: File, onReady?: (path: string, bgPath?: string) => void, roleIndex?: number) {
-    const dataUrl = await fileToDataUrl(file);
+    const path = await uploadImage(target, file);
     if (target === "account") {
-      state.accountAvatarPath = dataUrl;
-      state.accountAvatarBgPath = dataUrl;
+      state.accountAvatarPath = path;
+      state.accountAvatarBgPath = path;
+      await persistAccountAvatar();
     } else if (target === "user") {
-      state.userAvatarPath = dataUrl;
-      state.userAvatarBgPath = dataUrl;
+      state.userAvatarPath = path;
+      state.userAvatarBgPath = path;
     } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
-      state.npcRoles[roleIndex].avatarPath = dataUrl;
-      state.npcRoles[roleIndex].avatarBgPath = dataUrl;
-      onReady?.(dataUrl, dataUrl);
+      state.npcRoles[roleIndex].avatarPath = path;
+      state.npcRoles[roleIndex].avatarBgPath = path;
+      onReady?.(path, path);
     }
   }
 
   async function updateCoverFromFile(file: File) {
-    state.worldCoverPath = await fileToDataUrl(file);
+    state.worldCoverPath = await uploadImage("cover", file);
     state.worldCoverBgPath = state.worldCoverPath;
   }
 
   async function updateChapterBackgroundFromFile(file: File) {
-    state.chapterBackground = await fileToDataUrl(file);
+    state.chapterBackground = await uploadImage("chapter", file);
   }
 
   function storySettingsObject() {
@@ -792,6 +815,10 @@ function createToonflowStore() {
       if (user) {
         state.userName = String((user as any).name || "");
         state.userId = Number((user as any).id || 0);
+        const accountAvatarPath = String((user as any).avatarPath || "").trim();
+        const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
+        state.accountAvatarPath = accountAvatarPath || state.accountAvatarPath;
+        state.accountAvatarBgPath = accountAvatarBgPath || state.accountAvatarBgPath || state.accountAvatarPath;
       }
       state.projects = projects || [];
       if (state.projects.length && !state.projects.find((item) => item.id === state.selectedProjectId)) {
@@ -851,6 +878,15 @@ function createToonflowStore() {
   function saveConnection() {
     saveSettings();
     state.notice = state.token.trim() ? "连接设置已保存" : "连接设置已保存，请先登录";
+  }
+
+  function clearToken() {
+    state.token = "";
+    state.accountAvatarPath = "";
+    state.accountAvatarBgPath = "";
+    saveSettings();
+    clearRuntime();
+    state.notice = "已退出登录";
   }
 
   function setTab(tab: AppTab) {
@@ -1218,6 +1254,7 @@ function createToonflowStore() {
     reloadAll,
     loginAndSaveToken,
     saveConnection,
+    clearToken,
     setTab,
     selectProject,
     startNewStoryDraft,

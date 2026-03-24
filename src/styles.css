@@ -469,6 +469,45 @@ a {
   grid-template-columns: 1fr;
 }
 
+.settings-page {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-back-btn {
+  border: 0;
+  background: transparent;
+  color: #7a6db1;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.settings-card {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-action-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-status-row {
+  color: #435674;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .draft-sheet-list {
   display: grid;
   gap: 10px;

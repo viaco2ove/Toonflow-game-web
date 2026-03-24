@@ -74,6 +74,10 @@ export class ToonflowApi {
     return this.get<Record<string, unknown>>("/user/getUser");
   }
 
+  saveUser(payload: Record<string, unknown>) {
+    return this.post<string>("/user/saveUser", payload);
+  }
+
   getProjects() {
     return this.post<ProjectItem[]>("/project/getProject", {});
   }
@@ -142,6 +146,10 @@ export class ToonflowApi {
 
   generateImage(payload: Record<string, unknown>) {
     return this.post<GeneratedImageResult>("/game/generateImage", payload);
+  }
+
+  uploadImage(payload: Record<string, unknown>) {
+    return this.post<GeneratedImageResult>("/game/uploadImage", payload);
   }
 
   getVoiceModels() {

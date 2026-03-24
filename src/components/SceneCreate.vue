@@ -226,7 +226,6 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
     <div class="row-between">
       <div>
         <h2 class="section-title">故事设定</h2>
-        <div class="subtle">按 Android 主流程拆分：角色、开场白、章节、旁白、基本信息。</div>
       </div>
       <div class="row">
         <button class="button small" type="button" @click="store.state.createStep = store.state.createStep === 0 ? 1 : 0">下一步</button>
@@ -285,7 +284,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           <div class="row-between">
             <div class="row">
               <div class="avatar" style="width:64px; height:64px;" @click="userAvatarInput?.click()">
-                <img v-if="store.state.userAvatarPath" :src="store.state.userAvatarPath" />
+                <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
                 <div v-else class="placeholder">U</div>
                 <div class="badge">+</div>
               </div>
@@ -338,7 +337,6 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">章节 1</div>
-          <div class="subtle">可继续添加章节，切换章节会自动回填当前内容。</div>
         </div>
         <div class="row">
           <button class="button small" type="button" @click="store.selectChapter(null)">新章节</button>
@@ -383,7 +381,6 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
     <section class="surface section-block">
       <div class="row-between">
         <div class="section-title" style="font-size:16px;">章节列表</div>
-        <div class="tiny">点击切换章节，切换前会自动保存当前章节</div>
       </div>
       <div class="surface surface-soft section-block" style="padding:12px; margin-bottom:12px;">
         <div class="row-between">
@@ -416,7 +413,6 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">旁白面板</div>
-          <div class="subtle">旁白音色与世界观设置。</div>
         </div>
       </div>
       <div class="field">
@@ -436,7 +432,6 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">高级设定</div>
-          <div class="subtle">这些设置会写进故事设置。</div>
         </div>
         <button class="button small" type="button" @click="showAdvanced = !showAdvanced">{{ showAdvanced ? "收起" : "展开" }}</button>
       </div>
@@ -483,7 +478,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           <div class="row-between">
             <div class="row" style="align-items:flex-start;">
               <div class="avatar" style="width:56px; height:56px;" @click="npcAvatarInputs[index]?.click()">
-                <img v-if="role.avatarPath" :src="role.avatarPath" />
+                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" />
                 <div v-else class="placeholder">{{ role.name.slice(0,1) || "R" }}</div>
                 <div class="badge">+</div>
               </div>
