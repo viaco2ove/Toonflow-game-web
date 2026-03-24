@@ -199,7 +199,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
     <div v-else class="subtle">暂无标签</div>
 
     <div class="my-work-grid">
-      <article class="my-work-card my-summary-card" @click="openDraftListDialog">
+      <article class="my-work-card my-summary-card my-draft-entry-card" @click="openDraftListDialog">
         <div v-if="latestDraft" class="my-summary-cover">
           <StoryCover
             :title="latestDraft.name || '草稿箱'"
@@ -210,12 +210,12 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
           />
         </div>
         <div v-else class="my-empty-card">暂无草稿</div>
-        <div class="my-work-body">
+        <div class="my-work-body my-draft-entry-body">
           <p>保存草稿后会显示在这里</p>
         </div>
       </article>
 
-      <article class="my-work-card my-summary-card" :class="{ placeholder: !latestPublished }">
+      <article class="my-work-card my-summary-card my-published-entry-card" :class="{ placeholder: !latestPublished }">
         <button v-if="latestPublished" class="my-work-cover-btn" type="button" @click="store.startFromWorld(latestPublished)">
           <StoryCover
             :title="latestPublished.name || '故事'"

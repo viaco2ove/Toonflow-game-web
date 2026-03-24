@@ -228,7 +228,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="modal-body">
         <div class="dialog-stack">
-          <section class="card section soft">
+          <section class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">语音模型</div>
             <div v-if="store.state.voiceModels.length" class="dialog-stack">
               <button
@@ -245,7 +245,7 @@ onBeforeUnmount(() => {
             <div v-else class="subtle">未加载到语音模型，请先在设置中配置 voice 模型。</div>
           </section>
 
-          <section class="card section soft">
+          <section class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">绑定模式</div>
             <div class="tag-row">
               <button class="chip" :class="{ active: selectedMode === 'text' }" type="button" @click="selectedMode = 'text'">预设音色</button>
@@ -255,7 +255,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-if="selectedMode === 'text'" class="card section soft">
+          <section v-if="selectedMode === 'text'" class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">音色预设</div>
             <div v-if="!presets.length" class="subtle">当前模型还没有返回可用音色。</div>
             <div v-else class="dialog-stack">
@@ -272,7 +272,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else-if="selectedMode === 'clone'" class="card section soft">
+          <section v-else-if="selectedMode === 'clone'" class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">参考音频</div>
             <input ref="fileInput" type="file" accept="audio/*" hidden @change="chooseAudio" />
             <button class="button block" type="button" :disabled="audioUploading" @click="openAudioPicker">选择并上传音频</button>
@@ -280,10 +280,10 @@ onBeforeUnmount(() => {
             <textarea v-model="referenceText" class="textarea" rows="2" placeholder="参考音频对应文本（可选）"></textarea>
           </section>
 
-          <section v-else-if="selectedMode === 'mix'" class="card section soft">
+          <section v-else-if="selectedMode === 'mix'" class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">混合音色</div>
             <div class="dialog-stack">
-              <div v-for="(item, index) in mixVoices" :key="index" class="card section">
+              <div v-for="(item, index) in mixVoices" :key="index" class="surface section-block">
                 <div class="row-between">
                   <div>{{ presets.find((item2) => item2.voiceId === item.voiceId)?.name || item.voiceId || '未选择音色' }}</div>
                   <div class="row">
@@ -310,12 +310,12 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section v-else class="card section soft">
+          <section v-else class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">提示词音色</div>
             <textarea v-model="promptText" class="textarea" rows="3" placeholder="例如：温柔、清亮、成熟、治愈、讲故事感"></textarea>
           </section>
 
-          <section class="card section soft">
+          <section class="surface section-block surface-soft">
             <div class="section-title" style="font-size:16px;">试听文本</div>
             <textarea v-model="previewText" class="textarea" rows="2" placeholder="输入要试听的文本"></textarea>
             <div class="row">

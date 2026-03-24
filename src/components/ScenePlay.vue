@@ -300,7 +300,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="card section">
+  <section class="surface section-block">
     <div class="row-between">
       <div>
         <h2 class="section-title">游玩</h2>
@@ -316,7 +316,7 @@ onBeforeUnmount(() => {
     </div>
   </section>
 
-  <section class="card section stack-gap">
+  <section class="surface section-block stack-gap">
     <div class="row-between">
       <div>
         <div class="section-title" style="font-size:16px; margin-bottom:6px;">章节设定</div>
@@ -335,29 +335,29 @@ onBeforeUnmount(() => {
         height="240px"
       />
 
-      <div class="card section soft">
+      <div class="surface section-block surface-soft">
         <div class="tiny">章节开场白</div>
         <div class="subtle" style="margin-top:6px;">发言角色：{{ currentChapter?.openingRole || "旁白" }}</div>
         <div style="white-space:pre-wrap; margin-top:8px;">{{ currentChapter?.openingText || store.state.chapterOpeningLine || "暂无开场白" }}</div>
       </div>
 
       <div class="grid-2">
-        <div class="card section soft">
+        <div class="surface section-block surface-soft">
           <div class="tiny">当前章节内容</div>
           <div style="white-space:pre-wrap; margin-top:6px;">{{ currentChapter?.content || store.state.chapterContent || "暂无章节内容" }}</div>
         </div>
-        <div class="card section soft">
+        <div class="surface section-block surface-soft">
           <div class="tiny">章节完成条件</div>
           <div style="white-space:pre-wrap; margin-top:6px;">{{ chapterCompletionText }}</div>
         </div>
       </div>
 
-      <div class="card section soft">
+      <div class="surface section-block surface-soft">
         <div class="tiny">章节进入条件</div>
         <div style="white-space:pre-wrap; margin-top:6px;">{{ chapterEntryText || "无" }}</div>
       </div>
 
-      <div class="card section soft">
+      <div class="surface section-block surface-soft">
         <div class="row-between" style="margin-bottom:10px;">
           <div>
             <div class="tiny">世界设定</div>
@@ -371,7 +371,7 @@ onBeforeUnmount(() => {
         <div style="white-space:pre-wrap;">{{ currentWorld?.settings?.globalBackground || store.state.globalBackground || "暂无世界背景" }}</div>
       </div>
 
-      <div class="card section soft">
+      <div class="surface section-block surface-soft">
         <div class="row-between" style="margin-bottom:10px;">
           <div>
             <div class="tiny">章节状态</div>
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
         <pre class="detail-pre" style="margin-top:10px;">{{ chapterConditionHint }}</pre>
       </div>
 
-      <div class="card section soft">
+      <div class="surface section-block surface-soft">
         <div class="row-between" style="margin-bottom:10px;">
           <div>
             <div class="tiny">角色卡</div>
@@ -411,12 +411,12 @@ onBeforeUnmount(() => {
             <div class="role-desc">{{ role.description || "暂无角色设定" }}</div>
           </button>
         </div>
-        <div v-else class="empty" style="padding:18px 12px;">当前故事还没有角色信息</div>
+        <div v-else class="empty-surface" style="padding:18px 12px;">当前故事还没有角色信息</div>
       </div>
     </div>
   </section>
 
-  <section class="card section stack-gap" v-if="store.state.debugMode">
+  <section class="surface section-block stack-gap" v-if="store.state.debugMode">
     <div class="chip active">调试缓存，不会持久化</div>
     <div class="row-between">
       <div>
@@ -432,11 +432,11 @@ onBeforeUnmount(() => {
   </section>
 
   <section class="stack-gap">
-    <div v-if="!messages.length" class="card empty">尚无消息</div>
+    <div v-if="!messages.length" class="empty-surface">尚无消息</div>
     <article
       v-for="message in messages"
       :key="message.id"
-      class="card section message-card"
+      class="surface section-block message-card"
       @dblclick.stop="openMenu(message, $event)"
       @contextmenu.prevent.stop="openMenu(message, $event)"
       @pointerdown="handlePressStart(message, $event)"
@@ -461,7 +461,7 @@ onBeforeUnmount(() => {
     </article>
   </section>
 
-  <section class="card section stack-gap play-input" style="position:sticky; bottom:72px;">
+  <section class="surface section-block stack-gap play-input" style="position:sticky; bottom:72px;">
     <textarea v-model="store.state.sendText" class="textarea" rows="3" placeholder="输入一句话开始对话"></textarea>
     <div class="row-between">
       <div class="subtle">双击 / 长按消息可打开操作菜单</div>
@@ -490,7 +490,7 @@ onBeforeUnmount(() => {
         <span class="tiny">{{ store.state.debugEndDialog }}</span>
       </div>
       <div class="modal-body">
-        <div class="card section soft">
+        <div class="surface section-block surface-soft">
           <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
           <div class="subtle" style="margin-top:8px;">
             {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回创作继续补章节。' : '当前调试已结束。' }}
@@ -528,15 +528,15 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="dialog-stack" style="margin-top:14px;">
-          <div class="card section soft">
+          <div class="surface section-block surface-soft">
             <div class="tiny">角色设定</div>
             <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.description || "暂无角色设定" }}</div>
           </div>
-          <div class="card section soft">
+          <div class="surface section-block surface-soft">
             <div class="tiny">台词示例</div>
             <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.sample || "暂无台词示例" }}</div>
           </div>
-          <div class="card section soft">
+          <div class="surface section-block surface-soft">
             <div class="tiny">参数卡</div>
             <div v-if="roleDetail.parameterCardJson" class="dialog-stack" style="margin-top:8px;">
               <div class="row-between">
@@ -559,7 +559,7 @@ onBeforeUnmount(() => {
             </div>
             <pre v-else class="detail-pre">无参数卡</pre>
           </div>
-          <div class="card section soft">
+          <div class="surface section-block surface-soft">
             <div class="tiny">音色信息</div>
             <div class="dialog-stack" style="margin-top:6px;">
               <div class="tiny">预设：{{ roleDetail.voicePresetId || "无" }}</div>

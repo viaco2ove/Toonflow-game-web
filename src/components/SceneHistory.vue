@@ -8,7 +8,7 @@ const sessions = computed(() => store.state.sessions);
 </script>
 
 <template>
-  <section class="card section">
+  <section class="surface section-block">
     <div class="row-between">
       <div>
         <h2 class="section-title">聊过</h2>
@@ -19,8 +19,8 @@ const sessions = computed(() => store.state.sessions);
   </section>
 
   <section class="stack-gap">
-    <div v-if="!sessions.length" class="card empty">暂无会话记录</div>
-    <article v-for="item in sessions" :key="item.sessionId" class="card section">
+    <div v-if="!sessions.length" class="empty-surface">暂无会话记录</div>
+    <article v-for="item in sessions" :key="item.sessionId" class="surface section-block">
       <div class="row" style="align-items:flex-start;">
         <StoryCover :title="item.title || item.worldName || '会话'" :cover-path="item.worldCoverPath" height="78px" style="width:78px; flex:none;" />
         <div style="flex:1;">

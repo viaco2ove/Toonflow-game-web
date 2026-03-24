@@ -222,7 +222,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
 </script>
 
 <template>
-  <section class="card section">
+  <section class="surface section-block">
     <div class="row-between">
       <div>
         <h2 class="section-title">故事设定</h2>
@@ -235,7 +235,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
   </section>
 
   <section v-if="store.state.createStep === 1" class="stack-gap">
-    <section class="card section">
+    <section class="surface section-block">
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">基本信息</div>
@@ -278,10 +278,10 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
   </section>
 
   <section v-else class="stack-gap">
-    <section class="card section">
+    <section class="surface section-block">
       <div class="section-title" style="font-size:16px;">角色（用户固定，旁白单独）</div>
       <div class="split">
-        <div class="card section soft">
+        <div class="surface section-block surface-soft">
           <div class="row-between">
             <div class="row">
               <div class="avatar" style="width:64px; height:64px;" @click="userAvatarInput?.click()">
@@ -314,7 +314,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           </div>
         </div>
 
-        <div class="card section soft">
+        <div class="surface section-block surface-soft">
           <div class="row-between">
             <div class="chip">旁白</div>
             <button class="button small" type="button" @click="openVoiceDialog('narrator')">选择音色</button>
@@ -334,7 +334,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       </div>
     </section>
 
-    <section class="card section">
+    <section class="surface section-block">
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">章节 1</div>
@@ -380,12 +380,12 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       </div>
     </section>
 
-    <section class="card section">
+    <section class="surface section-block">
       <div class="row-between">
         <div class="section-title" style="font-size:16px;">章节列表</div>
         <div class="tiny">点击切换章节，切换前会自动保存当前章节</div>
       </div>
-      <div class="card soft section" style="padding:12px; margin-bottom:12px;">
+      <div class="surface surface-soft section-block" style="padding:12px; margin-bottom:12px;">
         <div class="row-between">
           <div>
             <div style="font-weight:900;">当前章节</div>
@@ -412,7 +412,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       </div>
     </section>
 
-    <section class="card section">
+    <section class="surface section-block">
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">旁白面板</div>
@@ -432,7 +432,7 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       </div>
     </section>
 
-    <section class="card section">
+    <section class="surface section-block">
       <div class="row-between">
         <div>
           <div class="section-title" style="font-size:16px;">高级设定</div>
@@ -476,10 +476,10 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
       </div>
     </section>
 
-    <section class="card section">
+    <section class="surface section-block">
       <div class="section-title" style="font-size:16px;">NPC 列表</div>
       <div class="dialog-stack">
-        <article v-for="(role, index) in store.state.npcRoles" :key="role.id" class="card section soft">
+        <article v-for="(role, index) in store.state.npcRoles" :key="role.id" class="surface section-block surface-soft">
           <div class="row-between">
             <div class="row" style="align-items:flex-start;">
               <div class="avatar" style="width:56px; height:56px;" @click="npcAvatarInputs[index]?.click()">

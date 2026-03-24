@@ -104,7 +104,7 @@ function confirm() {
       </div>
 
       <div class="modal-body">
-        <section class="card section soft">
+        <section class="surface section-block surface-soft">
           <div class="row-between">
             <div class="subtle">选择绘图风格</div>
             <div class="chip" :style="{ color: selectedPreset.accent, borderColor: selectedPreset.accent + '55' }">{{ selectedPreset.title }}</div>
@@ -113,7 +113,7 @@ function confirm() {
             <button
               v-for="item in IMAGE_STYLE_PRESETS"
               :key="item.key"
-              class="card"
+              class="surface"
               type="button"
               style="padding:8px; border-radius:16px;"
               @click="styleKey = item.key"
@@ -127,7 +127,7 @@ function confirm() {
           </div>
         </section>
 
-        <section class="card section stack-gap">
+        <section class="surface section-block stack-gap">
           <div class="row-between">
             <div class="subtle">形象描述</div>
             <button class="button small" type="button" :disabled="props.loading" @click="askPolishPrompt">AI帮写</button>
@@ -139,10 +139,10 @@ function confirm() {
           </div>
         </section>
 
-        <section class="card section stack-gap">
+        <section class="surface section-block stack-gap">
           <div class="subtle">参考图（可选）</div>
           <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onChooseFiles" />
-          <div class="card story-cover" style="height:92px; border-radius:18px; border:1px solid var(--line); cursor:pointer;" @click="fileInput?.click()">
+          <div class="surface story-cover" style="height:92px; border-radius:18px; border:1px solid var(--line); cursor:pointer;" @click="fileInput?.click()">
             <div v-if="references.length" class="placeholder" style="background:rgba(246,248,252,0.78); flex-direction:column; gap:4px;">
               <div style="font-weight:800;">已选择 {{ references.length }} 张参考图</div>
               <div class="tiny">继续添加会自动作为图生图参考</div>

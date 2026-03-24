@@ -130,7 +130,7 @@ a {
 
 .main-view {
   flex: 1;
-  padding: 0 12px 16px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -145,23 +145,23 @@ a {
   box-shadow: 0 8px 20px rgba(31, 49, 77, 0.08);
 }
 
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+.surface {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #dde6f1;
+  border-radius: 16px;
+  box-shadow: none;
 }
 
-.card.soft {
-  background: rgba(255, 255, 255, 0.86);
+.surface.surface-soft {
+  background: #f8fbff;
 }
 
-.card + .card,
+.surface + .surface,
 .stack-gap {
   margin-top: 6px;
 }
 
-.section {
+.section-block {
   padding: 16px;
 }
 
@@ -321,7 +321,7 @@ a {
 .my-work-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
   align-items: start;
 }
 
@@ -362,6 +362,32 @@ a {
   background: #ffffff;
   box-shadow: none;
   overflow: hidden;
+}
+
+.my-draft-entry-card {
+  background: transparent;
+  border-color: #dbe4f1;
+}
+
+.my-draft-entry-card .my-summary-cover .story-cover,
+.my-draft-entry-card .my-empty-card {
+  min-height: 168px;
+  border-radius: 14px 14px 0 0;
+  background: #eef4ff;
+}
+
+.my-draft-entry-body {
+  min-height: 48px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-top: 1px solid #eef2f7;
+  background: #fff;
+}
+
+.my-published-entry-card .my-work-cover-btn .story-cover,
+.my-published-entry-card .my-empty-card {
+  min-height: 128px;
+  border-radius: 14px 14px 0 0;
 }
 
 .my-work-card.placeholder {
@@ -483,6 +509,8 @@ a {
   border: 0;
   border-radius: 0;
   height: 250px;
+  background:
+    linear-gradient(180deg, #f7f8fb 0%, #f4f6fa 100%);
 }
 
 .draft-tile-badge {
@@ -535,6 +563,16 @@ a {
   font-size: 24px;
   line-height: 1;
   padding: 0 6px;
+}
+
+.draft-page .button.small {
+  padding-inline: 12px;
+}
+
+.draft-page .modal-panel,
+.draft-page .modal-header,
+.draft-page .modal-body {
+  text-align: left;
 }
 
 .draft-sheet-item {
@@ -734,10 +772,13 @@ a {
   color: #495e7a;
 }
 
-.empty {
+.empty-surface {
   padding: 32px 18px;
   text-align: center;
   color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid #dde6f1;
+  border-radius: 16px;
 }
 
 .story-cover {

@@ -8,7 +8,7 @@ const list = computed(() => store.filteredHallWorlds());
 </script>
 
 <template>
-  <section class="card section">
+  <section class="surface section-block">
     <div class="row-between">
       <div>
         <h2 class="section-title">故事大厅</h2>
@@ -28,9 +28,9 @@ const list = computed(() => store.filteredHallWorlds());
   </section>
 
   <section class="stack-gap">
-    <div v-if="!list.length" class="card empty">暂无匹配故事</div>
+    <div v-if="!list.length" class="empty-surface">暂无匹配故事</div>
     <div v-else class="story-grid">
-      <article v-for="world in list" :key="world.id" class="card story-card">
+      <article v-for="world in list" :key="world.id" class="surface story-card">
         <StoryCover :title="world.name" :cover-path="store.worldCoverPath(world)" height="130px" />
         <div class="meta">
           <h3>{{ world.name }}</h3>

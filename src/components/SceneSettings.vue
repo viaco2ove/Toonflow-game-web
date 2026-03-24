@@ -5,7 +5,7 @@ const store = useToonflowStore();
 </script>
 
 <template>
-  <section class="card section">
+  <section class="surface section-block">
     <div class="row-between">
       <div>
         <h2 class="section-title">设置</h2>
@@ -15,7 +15,7 @@ const store = useToonflowStore();
     </div>
   </section>
 
-  <section class="card section stack-gap">
+  <section class="surface section-block stack-gap">
     <div class="field">
       <label>API Base URL</label>
       <input v-model="store.state.baseUrl" class="input" type="text" placeholder="http://127.0.0.1:60000" />
