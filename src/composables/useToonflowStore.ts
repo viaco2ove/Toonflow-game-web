@@ -65,6 +65,56 @@ function safeJsonParse<T>(text: string, fallback: T): T {
   }
 }
 
+function normalizeScalarEditorText(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  const raw = String(input);
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (["null", "undefined", "\"\"", "''", "\"null\"", "\"undefined\""].includes(trimmed)) return "";
+  return raw;
+}
+
+function normalizeConditionEditorText(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  if (typeof input === "string") {
+    const scalar = normalizeScalarEditorText(input).trim();
+    if (!scalar) return "";
+    try {
+      const parsed = JSON.parse(scalar) as unknown;
+      if (parsed === null || parsed === undefined || parsed === "") return "";
+      if (typeof parsed === "string") return normalizeScalarEditorText(parsed).trim();
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return scalar;
+    }
+  }
+  return JSON.stringify(input, null, 2);
+}
+
+function extractOpeningContentParts(input: unknown): { role: string; line: string; body: string } | null {
+  const text = normalizeScalarEditorText(input);
+  if (!text) return null;
+  const match = text.match(/^开场白(?:\[(.+?)\]|([^\[\]:：\r\n]+))\s*[:：]\s*([^\r\n]*)(?:\r?\n)*/);
+  if (!match) return null;
+  const role = String(match[1] || match[2] || "").trim();
+  const line = String(match[3] || "").trim();
+  const body = text.slice(match[0].length).replace(/^\s*[\r\n]+/, "");
+  if (!role && !line) return null;
+  return { role, line, body };
+}
+
+function stripOpeningPrefix(input: unknown, openingRole: string, openingLine: string): string {
+  const text = normalizeScalarEditorText(input);
+  if (!text) return "";
+  const extracted = extractOpeningContentParts(text);
+  if (!extracted) return text;
+  const expectedRole = normalizeScalarEditorText(openingRole).trim();
+  const expectedLine = normalizeScalarEditorText(openingLine).trim();
+  const roleMatches = !expectedRole || !extracted.role || extracted.role === expectedRole;
+  const lineMatches = !expectedLine || !extracted.line || extracted.line === expectedLine;
+  return roleMatches && lineMatches ? extracted.body : text;
+}
+
 function createEmptyWorldState() {
   return {
     worldId: 0,
@@ -551,13 +601,17 @@ function createToonflowStore() {
   }
 
   function appendGlobalMention(role: string) {
-    const suffix = state.globalBackground.endsWith(" ") || !state.globalBackground ? "" : " ";
-    state.globalBackground = `${state.globalBackground}${suffix}${role}`.trim();
+    const trimmed = role.trim();
+    if (!trimmed) return;
+    const prefix = state.globalBackground.trim().length ? " " : "";
+    state.globalBackground = `${state.globalBackground}${prefix}@${trimmed} `;
   }
 
   function appendChapterMention(role: string) {
-    const suffix = state.chapterContent.endsWith(" ") || !state.chapterContent ? "" : " ";
-    state.chapterContent = `${state.chapterContent}${suffix}${role}`.trim();
+    const trimmed = role.trim();
+    if (!trimmed) return;
+    const prefix = state.chapterContent.trim().length ? " " : "";
+    state.chapterContent = `${state.chapterContent}${prefix}@${trimmed} `;
   }
 
   function orderedChapters(): ChapterItem[] {
@@ -1465,12 +1519,27 @@ function createToonflowStore() {
     state.chapterConditionVisible = empty.showCompletionCondition ?? true;
   }
 
+  function beginNewChapterDraft() {
+    const nextSort = Math.max(0, ...state.chapters.map((item) => Number(item.sort || 0))) + 1;
+    state.selectedChapterId = null;
+    state.chapterTitle = `第 ${nextSort} 章`;
+    state.chapterContent = "";
+    state.chapterEntryCondition = "";
+    state.chapterCondition = "";
+    state.chapterOpeningRole = state.narratorName || "旁白";
+    state.chapterOpeningLine = "";
+    state.chapterBackground = "";
+    state.chapterMusic = "";
+    state.chapterConditionVisible = true;
+    primeStoryEditorPersistState();
+  }
+
   async function selectChapter(chapterId: number | null, saveCurrent = true) {
     if (saveCurrent) {
       await saveChapterDraft(false);
     }
     if (chapterId === null) {
-      resetChapterDraft();
+      beginNewChapterDraft();
       return;
     }
     const chapter = state.chapters.find((item) => item.id === chapterId);
@@ -1478,15 +1547,18 @@ function createToonflowStore() {
       resetChapterDraft();
       return;
     }
+    const extractedOpening = extractOpeningContentParts(chapter.content);
+    const openingRole = normalizeScalarEditorText(chapter.openingRole).trim() || extractedOpening?.role || "旁白";
+    const openingLine = normalizeScalarEditorText(chapter.openingText).trim() || extractedOpening?.line || "";
     state.selectedChapterId = chapter.id;
     state.chapterTitle = chapter.title || "";
-    state.chapterContent = chapter.content || "";
-    state.chapterEntryCondition = typeof chapter.entryCondition === "string" ? chapter.entryCondition : JSON.stringify(chapter.entryCondition || "", null, 0);
-    state.chapterCondition = typeof chapter.completionCondition === "string" ? chapter.completionCondition : JSON.stringify(chapter.completionCondition || "", null, 0);
-    state.chapterOpeningRole = chapter.openingRole || "旁白";
-    state.chapterOpeningLine = chapter.openingText || "";
-    state.chapterBackground = chapter.backgroundPath || "";
-    state.chapterMusic = chapter.bgmPath || "";
+    state.chapterContent = stripOpeningPrefix(chapter.content, openingRole, openingLine);
+    state.chapterEntryCondition = normalizeConditionEditorText(chapter.entryCondition);
+    state.chapterCondition = normalizeConditionEditorText(chapter.completionCondition);
+    state.chapterOpeningRole = openingRole;
+    state.chapterOpeningLine = openingLine;
+    state.chapterBackground = normalizeScalarEditorText(chapter.backgroundPath);
+    state.chapterMusic = normalizeScalarEditorText(chapter.bgmPath);
     state.chapterConditionVisible = chapter.showCompletionCondition ?? true;
     primeStoryEditorPersistState();
   }
@@ -1515,6 +1587,9 @@ function createToonflowStore() {
       const world = await saveWorldOnly(false);
       state.worldId = world.id;
     }
+    const chapterBody = stripOpeningPrefix(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
+    const entryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
+    const completionConditionText = normalizeConditionEditorText(state.chapterCondition);
     const chapterPayload = {
       chapterId: state.selectedChapterId || undefined,
       worldId: state.worldId,
@@ -1525,9 +1600,9 @@ function createToonflowStore() {
       bgmPath: state.chapterMusic,
       showCompletionCondition: state.chapterConditionVisible,
       title: state.chapterTitle.trim() || `章节 ${Date.now()}`,
-      content: state.chapterContent,
-      entryCondition: safeJsonParse(state.chapterEntryCondition, state.chapterEntryCondition || null),
-      completionCondition: safeJsonParse(state.chapterCondition, state.chapterCondition || null),
+      content: chapterBody,
+      entryCondition: safeJsonParse(entryConditionText, entryConditionText || null),
+      completionCondition: safeJsonParse(completionConditionText, completionConditionText || null),
       sort: state.selectedChapterId ? state.chapters.find((item) => item.id === state.selectedChapterId)?.sort || state.chapters.length + 1 : state.chapters.length + 1,
       status: statusOverride || "draft",
     };
@@ -1553,7 +1628,7 @@ function createToonflowStore() {
       await saveChapterDraft(false, publish ? "published" : "draft");
     }
     if (startNextDraft) {
-      await selectChapter(null, false);
+      beginNewChapterDraft();
     }
     if (successNotice !== null) {
       state.notice = successNotice || (publish ? "故事已发布" : "故事已保存");
@@ -1576,7 +1651,11 @@ function createToonflowStore() {
 
   async function saveCurrentChapterAndSelect(targetChapterId: number | null) {
     await saveChapterDraft(false);
-    await selectChapter(targetChapterId, false);
+    if (targetChapterId === null) {
+      beginNewChapterDraft();
+    } else {
+      await selectChapter(targetChapterId, false);
+    }
     primeStoryEditorPersistState();
   }
 
@@ -1740,6 +1819,7 @@ function createToonflowStore() {
     saveWorldOnly,
     saveChapterDraft,
     saveCurrentChapterAndSelect,
+    beginNewChapterDraft,
     scheduleStoryEditorAutoPersist,
     cancelStoryEditorAutoPersist,
     canUndoStoryAutoPersist,

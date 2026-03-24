@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 
@@ -33,9 +33,11 @@ const promptText = ref("");
 const previewText = ref("你好，很高兴见到你。");
 const previewStatus = ref("");
 const previewLoading = ref(false);
+const polishLoading = ref(false);
 const audioUploading = ref(false);
 const mixVoices = ref<VoiceMixItem[]>([]);
-const audioElement = ref<HTMLAudioElement | null>(null);
+const previewAudioUrl = ref("");
+const previewPlayer = ref<HTMLAudioElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const modeOptions = [
   { key: "text", label: "预设音色" },
@@ -45,6 +47,7 @@ const modeOptions = [
 ];
 
 const presets = computed(() => store.voicePresetsForConfig(selectedConfigId.value));
+const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === selectedConfigId.value) || null);
 
 watch(
   () => props.open,
@@ -63,6 +66,7 @@ watch(
     mixVoices.value = [...(props.initialMixVoices || [])];
     previewText.value = props.initialLabel ? `你好，我是${props.initialLabel}` : "你好，很高兴见到你。";
     previewStatus.value = "";
+    previewAudioUrl.value = "";
     await store.fetchVoiceModels();
     if (!selectedConfigId.value && store.state.voiceModels.length) {
       selectedConfigId.value = store.state.voiceModels[0].id;
@@ -79,6 +83,17 @@ watch(selectedConfigId, async (configId) => {
     await store.fetchVoicePresets(configId);
   }
 });
+
+watch(
+  [presets, selectedMode],
+  ([nextPresets, mode]) => {
+    if (mode !== "text" || !nextPresets.length) return;
+    if (!selectedPresetId.value || !nextPresets.some((item) => item.voiceId === selectedPresetId.value)) {
+      selectedPresetId.value = nextPresets[0].voiceId;
+    }
+  },
+  { immediate: true },
+);
 
 function labelForSelected() {
   switch (selectedMode.value) {
@@ -142,12 +157,12 @@ async function playPreview() {
       mixVoices.value,
     );
     if (!audioUrl) throw new Error("未返回试听音频");
-    if (audioElement.value) {
-      audioElement.value.pause();
-      audioElement.value = null;
-    }
-    const audio = new Audio(audioUrl);
-    audioElement.value = audio;
+    previewAudioUrl.value = audioUrl;
+    await nextTick();
+    const audio = previewPlayer.value;
+    if (!audio) throw new Error("播放器初始化失败");
+    audio.pause();
+    audio.currentTime = 0;
     audio.onplay = () => (previewStatus.value = "正在播放试听");
     audio.onended = () => (previewStatus.value = "试听完成");
     audio.onerror = () => {
@@ -163,12 +178,39 @@ async function playPreview() {
 }
 
 function stopPreview() {
-  if (audioElement.value) {
-    audioElement.value.pause();
-    audioElement.value = null;
+  if (previewPlayer.value) {
+    previewPlayer.value.pause();
+    previewPlayer.value.currentTime = 0;
   }
   previewLoading.value = false;
   previewStatus.value = "已停止试听";
+}
+
+async function polishPrompt() {
+  const source = promptText.value.trim() || props.initialLabel.trim();
+  if (!source) {
+    previewStatus.value = "请先输入提示词或角色名";
+    return;
+  }
+  polishLoading.value = true;
+  previewStatus.value = "";
+  try {
+    const style = [selectedModel.value?.model, selectedModel.value?.manufacturer].filter(Boolean).join(" · ");
+    const polished = await store.polishVoicePrompt(source, style);
+    if (!polished) throw new Error("未返回润色结果");
+    promptText.value = polished;
+    previewStatus.value = "提示词已润色";
+  } catch (err) {
+    previewStatus.value = `AI润色失败: ${(err as Error).message}`;
+  } finally {
+    polishLoading.value = false;
+  }
+}
+
+function downloadAudioName() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const base = props.title.replace(/\s+/g, "").replace(/[^\w\u4e00-\u9fa5-]/g, "") || "voice_preview";
+  return `${base}_${stamp}.wav`;
 }
 
 function openAudioPicker() {
@@ -326,7 +368,12 @@ onBeforeUnmount(() => {
           </section>
 
           <section v-else class="voice-dialog-section">
-            <div class="voice-dialog-section__title">提示词</div>
+            <div class="voice-dialog-section__head">
+              <div class="voice-dialog-section__title">提示词</div>
+              <button class="voice-dialog-inline-btn voice-dialog-inline-btn--accent" type="button" :disabled="polishLoading" @click="polishPrompt">
+                {{ polishLoading ? "润色中..." : "AI润色" }}
+              </button>
+            </div>
             <textarea v-model="promptText" class="voice-dialog-textarea voice-dialog-textarea--prompt" rows="3" placeholder="例如：温柔、清亮、成熟、治愈、讲故事感"></textarea>
           </section>
 
@@ -335,9 +382,11 @@ onBeforeUnmount(() => {
             <textarea v-model="previewText" class="voice-dialog-textarea voice-dialog-textarea--preview" rows="2" placeholder="输入要试听的文本"></textarea>
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
-              <button class="voice-dialog-preview-btn" type="button" :disabled="!previewStatus && !audioElement" @click="stopPreview">停止</button>
+              <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
+              <a v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" :href="previewAudioUrl" :download="downloadAudioName()">下载音色</a>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
+            <audio v-if="previewAudioUrl" ref="previewPlayer" class="voice-dialog-audio" :src="previewAudioUrl" controls preload="metadata"></audio>
           </section>
         </div>
       </div>

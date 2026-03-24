@@ -2345,6 +2345,13 @@ textarea::-webkit-scrollbar-thumb {
   padding: 12px;
 }
 
+.voice-dialog-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .voice-dialog-section__title {
   margin: 0 0 10px;
   font-size: 16px;
@@ -2452,6 +2459,14 @@ textarea::-webkit-scrollbar-thumb {
   padding: 0;
 }
 
+.voice-dialog-inline-btn--accent {
+  border: 1px solid rgba(126, 92, 217, 0.18);
+  background: rgba(126, 92, 217, 0.08);
+  color: #7a59cf;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+
 .voice-dialog-preview-actions {
   display: flex;
   align-items: center;
@@ -2474,6 +2489,18 @@ textarea::-webkit-scrollbar-thumb {
   border-color: transparent;
   background: #335fda;
   color: #fff;
+}
+
+.voice-dialog-preview-btn--download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.voice-dialog-audio {
+  width: 100%;
+  margin-top: 4px;
 }
 
 .voice-dialog-actions {

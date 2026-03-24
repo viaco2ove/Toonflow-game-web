@@ -217,7 +217,7 @@ export class ToonflowApi {
         const name = String(item.name || item.label || item.voice_name || voiceId).trim() || voiceId;
         return { voiceId, name } satisfies VoicePresetItem;
       })
-      .filter((item): item is VoicePresetItem => !!item);
+      .filter((item: VoicePresetItem | null): item is VoicePresetItem => !!item);
   }
 
   uploadVoiceAudio(projectId: number | undefined, base64Data: string, fileName: string) {

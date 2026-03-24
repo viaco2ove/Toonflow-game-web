@@ -23,6 +23,8 @@ const storyCoverInput = ref<HTMLInputElement | null>(null);
 const chapterBgInput = ref<HTMLInputElement | null>(null);
 const userAvatarInput = ref<HTMLInputElement | null>(null);
 const npcAvatarInputs = ref<Record<number, HTMLInputElement | null>>({});
+const globalBackgroundInput = ref<HTMLTextAreaElement | null>(null);
+const chapterContentInput = ref<HTMLTextAreaElement | null>(null);
 const imageDialogTarget = ref<ImageTarget | null>(null);
 const imageDialogNpcIndex = ref<number | null>(null);
 const voiceDialogTarget = ref<VoiceTarget | null>(null);
@@ -400,6 +402,35 @@ async function selectChapter(targetChapterId: number | null) {
   await store.saveCurrentChapterAndSelect(targetChapterId);
 }
 
+function insertMentionAtCursor(target: "global" | "chapter", role: string) {
+  const trimmed = role.trim();
+  if (!trimmed) return;
+  const mention = `@${trimmed} `;
+  const input = target === "global" ? globalBackgroundInput.value : chapterContentInput.value;
+  const sourceText = target === "global" ? store.state.globalBackground : store.state.chapterContent;
+  if (!input) {
+    if (target === "global") {
+      store.appendGlobalMention(trimmed);
+    } else {
+      store.appendChapterMention(trimmed);
+    }
+    return;
+  }
+  const start = input.selectionStart ?? sourceText.length;
+  const end = input.selectionEnd ?? sourceText.length;
+  const nextValue = `${sourceText.slice(0, start)}${mention}${sourceText.slice(end)}`;
+  if (target === "global") {
+    store.state.globalBackground = nextValue;
+  } else {
+    store.state.chapterContent = nextValue;
+  }
+  requestAnimationFrame(() => {
+    input.focus();
+    const caret = start + mention.length;
+    input.setSelectionRange(caret, caret);
+  });
+}
+
 function removeCurrentNpc() {
   if (typeof editingNpcIndex.value !== "number") return;
   showDeleteNpcConfirm.value = true;
@@ -506,14 +537,19 @@ function cancelRemoveCurrentNpc() {
           <div class="create-card-title">全局背景（选填）</div>
           <div class="field">
             <textarea
+              ref="globalBackgroundInput"
               v-model="store.state.globalBackground"
               class="textarea create-short-textarea"
               rows="4"
               placeholder="多章节故事时可填写世界背景，提及时请使用角色名或‘用户’。"
+              @beforeinput.stop
+              @keydown.stop
+              @keyup.stop
+              @keypress.stop
             ></textarea>
           </div>
           <div class="create-mention-row">
-            <button v-for="role in mentionRoles" :key="`global-${role}`" class="chip" type="button" @click="store.appendGlobalMention(role)">{{ role }}</button>
+            <button v-for="role in mentionRoles" :key="`global-${role}`" class="chip" type="button" @click="insertMentionAtCursor('global', role)">{{ role }}</button>
           </div>
         </div>
       </section>
@@ -534,6 +570,9 @@ function cancelRemoveCurrentNpc() {
               class="textarea create-short-textarea"
               rows="3"
               placeholder="作为选定角色/旁白的第一句话开启整个故事"
+              @keydown.stop
+              @keyup.stop
+              @keypress.stop
             ></textarea>
           </div>
         </div>
@@ -548,15 +587,20 @@ function cancelRemoveCurrentNpc() {
           <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼</div>
           <div class="field">
             <textarea
+              ref="chapterContentInput"
               v-model="store.state.chapterContent"
               class="textarea"
               rows="6"
               maxlength="1500"
               placeholder="描述主要情节，包括用户在故事中和其他角色的互动。提及时请使用角色原名或用户，不要使用‘你’来代称。"
+              @beforeinput.stop
+              @keydown.stop
+              @keyup.stop
+              @keypress.stop
             ></textarea>
           </div>
           <div class="create-mention-row">
-            <button v-for="role in mentionRoles" :key="role" class="chip" type="button" @click="store.appendChapterMention(role)">{{ role }}</button>
+            <button v-for="role in mentionRoles" :key="role" class="chip" type="button" @click="insertMentionAtCursor('chapter', role)">{{ role }}</button>
           </div>
           <div class="create-count-row">
             <span>还可输入1500字</span>
@@ -574,6 +618,9 @@ function cancelRemoveCurrentNpc() {
               class="textarea create-short-textarea"
               rows="4"
               placeholder="只有用户达成该条件才进入下一章节。为空代表无结束，AI 持续编排。"
+              @keydown.stop
+              @keyup.stop
+              @keypress.stop
             ></textarea>
           </div>
         </div>
@@ -595,14 +642,6 @@ function cancelRemoveCurrentNpc() {
         >
           {{ chapter.title || `章节 ${chapter.sort || 0}` }}
         </button>
-        <button
-          v-if="!store.state.selectedChapterId && (store.state.chapterTitle || store.state.chapterContent || store.state.chapterOpeningLine)"
-          class="create-chapter-pill active"
-          type="button"
-        >
-          {{ store.state.chapterTitle || '新章节草稿' }}
-        </button>
-        <button class="create-chapter-pill" type="button" @click="selectChapter(null)">新章节</button>
       </div>
 
       <section class="create-section">
