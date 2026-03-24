@@ -281,7 +281,7 @@ export function createDefaultNarratorRole(): StoryRole {
     avatarPath: "",
     avatarBgPath: "",
     description: "负责环境推进、规则提示与节奏控制",
-    voice: "默认旁白",
+    voice: "混合（清朗温润）",
     voiceMode: "text",
     voiceConfigId: null,
     voicePresetId: "",

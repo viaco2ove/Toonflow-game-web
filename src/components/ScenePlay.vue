@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import StoryCover from "./StoryCover.vue";
 import type { MessageItem, RoleParameterCard, StoryRole } from "../types/toonflow";
 
 const store = useToonflowStore();
 const messages = computed(() => store.state.messages);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
-const currentChapter = computed(() => session.value?.chapter || store.state.chapters.find((item) => item.id === debugChapterIndex.value) || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
+const currentChapter = computed(() => session.value?.chapter || store.state.chapters.find((item) => item.id === debugChapterIndex.value) || null);
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
 const chapterBackgroundPath = computed(() =>
   store.resolveMediaPath(
@@ -52,6 +51,13 @@ const roleCards = computed(() => {
   (world?.settings?.roles || []).forEach((role) => pushRole(role));
   return list;
 });
+
+const playMode = ref<"live" | "history" | "tips" | "setting">("live");
+const inputMode = ref<"voice" | "text">("voice");
+const autoVoice = ref(true);
+const voiceListening = ref(false);
+const settingRoleId = ref("");
+const settingModePickerOpen = ref(false);
 const roleDetail = ref<StoryRole | null>(null);
 const roleParameterRawOpen = ref(false);
 const chapterDetailOpen = ref(true);
@@ -62,6 +68,96 @@ const menuX = ref(0);
 const menuY = ref(0);
 const pressTimer = ref<number | null>(null);
 const menuVisibleHint = ref("");
+const messageViewport = ref<HTMLElement | null>(null);
+let speechRecognition: any = null;
+
+const displayMessages = computed(() => (playMode.value === "history" ? messages.value : messages.value.slice(-1)));
+const playStageStyle = computed(() => {
+  const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
+  if (chapterBackgroundPath.value) {
+    layers.push(`url("${chapterBackgroundPath.value}")`);
+  } else {
+    layers.push("linear-gradient(180deg, #132745 0%, #0e2038 100%)");
+  }
+  return { backgroundImage: layers.join(",") };
+});
+const playTitle = computed(() => currentWorld.value?.name || session.value?.title || store.state.debugSessionTitle || "当前故事");
+const playSubtitle = computed(() => {
+  const chapterTitle = currentChapter.value?.title || store.state.debugChapterTitle || "当前章节";
+  return store.state.debugMode ? `章节：${chapterTitle}（调试）` : `章节：${chapterTitle}`;
+});
+const playHandle = computed(() => {
+  const role = roleCards.value.find((item) => item.roleType !== "player");
+  return `@${role?.name || "故事角色"}`;
+});
+const playLikeCount = computed(() => Object.values(store.state.messageReactions).filter((item) => item === "like").length);
+const statePreviewText = computed(() => {
+  if (store.state.debugMode) return store.state.debugStatePreview || "{}";
+  const state = session.value?.latestSnapshot?.state || session.value?.state || {};
+  try {
+    return JSON.stringify(state, null, 2);
+  } catch {
+    return String(state || "{}");
+  }
+});
+const allowRoleView = computed(() => currentWorld.value?.settings?.allowRoleView !== false);
+const settingSelectedRole = computed(() => roleCards.value.find((item) => item.id === settingRoleId.value) || roleCards.value[0] || null);
+const tipOptions = computed(() => {
+  const leadRole = roleCards.value.find((item) => item.roleType === "npc")?.name || currentChapter.value?.openingRole || "旁白";
+  const chapterTitle = currentChapter.value?.title || "当前章节";
+  return [
+    `我想先观察${leadRole}在《${chapterTitle}》中的反应，再决定下一步。`,
+    `直接推进当前章节目标，别再绕路。`,
+    `你先给我一个稳妥方案，我按方案执行。`,
+  ];
+});
+const browserSpeechSupported = computed(() => {
+  if (typeof window === "undefined") return false;
+  return Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+});
+
+watch(roleCards, (list) => {
+  if (!list.length) {
+    settingRoleId.value = "";
+    return;
+  }
+  if (!list.find((item) => item.id === settingRoleId.value)) {
+    settingRoleId.value = list[0].id;
+  }
+}, { immediate: true });
+
+watch(
+  () => [store.state.currentSessionId, playMode.value, displayMessages.value.length],
+  () => {
+    nextTick(() => {
+      const el = messageViewport.value;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    });
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => store.state.currentSessionId,
+  () => {
+    playMode.value = "live";
+    inputMode.value = "voice";
+    settingModePickerOpen.value = false;
+    chapterDetailOpen.value = true;
+    closeMenu();
+    stopVoiceRecognition();
+  },
+);
+
+watch(playMode, (mode) => {
+  if (mode !== "setting") {
+    settingModePickerOpen.value = false;
+  }
+  if (mode === "tips" || mode === "setting") {
+    closeMenu();
+  }
+});
 
 function closeMenu() {
   menuOpen.value = false;
@@ -71,8 +167,12 @@ function closeMenu() {
 
 function openMenu(message: MessageItem, event: MouseEvent | PointerEvent) {
   menuMessage.value = message;
-  menuX.value = event.clientX;
-  menuY.value = event.clientY;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const left = Math.min(event.clientX, vw - 292);
+  const top = Math.min(event.clientY, vh - 260);
+  menuX.value = Math.max(12, left);
+  menuY.value = Math.max(16, top);
   menuOpen.value = true;
   menuVisibleHint.value = `${message.role || (message.roleType === "player" ? "用户" : "旁白")}`;
 }
@@ -98,6 +198,7 @@ function handlePressEnd() {
 
 async function submit() {
   await store.sendMessage();
+  playMode.value = "live";
 }
 
 function like(id: number) {
@@ -115,13 +216,15 @@ function resetReaction(id: number) {
 function copy(text: string) {
   store.copyMessageText(text);
   menuVisibleHint.value = "已复制";
+  store.state.notice = "已复制对话内容";
 }
 
 function rewrite(content: string) {
   store.state.sendText = `请改写以下内容：\n${content}\n`;
-  store.state.activeTab = "play";
+  playMode.value = "live";
+  inputMode.value = "text";
   nextTick(() => {
-    const textarea = document.querySelector<HTMLTextAreaElement>(".play-input textarea");
+    const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
     textarea?.focus();
   });
   menuVisibleHint.value = "已填入改写内容";
@@ -232,6 +335,25 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
   ].filter((item) => String(item.value || "").trim().length > 0);
 }
 
+function messageAvatarPath(message: MessageItem): string {
+  if (message.roleType === "player") {
+    return store.resolveMediaPath(currentWorld.value?.playerRole?.avatarPath || store.state.userAvatarPath || "");
+  }
+  const role = roleCards.value.find((item) => item.name === message.role || item.id === message.role);
+  return store.resolveMediaPath(role?.avatarPath || "");
+}
+
+function messageTitle(message: MessageItem): string {
+  return message.role || (message.roleType === "player" ? "用户" : "旁白");
+}
+
+function messageReactionText(message: MessageItem): string {
+  const reaction = store.state.messageReactions[String(message.id)];
+  if (reaction === "like") return "已点赞";
+  if (reaction === "dislike") return "已点踩";
+  return "";
+}
+
 function openRoleDetail(role: StoryRole) {
   roleDetail.value = role;
   roleParameterRawOpen.value = false;
@@ -286,13 +408,134 @@ function closeDebugDialog() {
 }
 
 function exitDebugMode() {
+  stopVoiceRecognition();
   store.state.debugEndDialog = null;
   store.state.debugMode = false;
   store.setTab("create");
 }
 
+function toggleHistoryMode() {
+  playMode.value = playMode.value === "history" ? "live" : "history";
+}
+
+function toggleTipsMode() {
+  playMode.value = playMode.value === "tips" ? "live" : "tips";
+}
+
+function openSettingMode() {
+  playMode.value = playMode.value === "setting" ? "live" : "setting";
+}
+
+function handleStatusAction() {
+  if (store.state.debugMode) {
+    store.state.notice = "当前为调试缓存";
+    return;
+  }
+  void store.refreshCurrentSession();
+}
+
+function toggleInputMode() {
+  inputMode.value = inputMode.value === "voice" ? "text" : "voice";
+  if (inputMode.value === "text") {
+    nextTick(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
+      textarea?.focus();
+    });
+  } else {
+    stopVoiceRecognition();
+  }
+}
+
+function openHall() {
+  stopVoiceRecognition();
+  store.setTab("hall");
+}
+
+function stopVoiceRecognition() {
+  if (speechRecognition) {
+    try {
+      speechRecognition.stop();
+    } catch {
+      // noop
+    }
+    speechRecognition = null;
+  }
+  voiceListening.value = false;
+}
+
+function startVoiceRecognition() {
+  if (!browserSpeechSupported.value) {
+    inputMode.value = "text";
+    store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
+    nextTick(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
+      textarea?.focus();
+    });
+    return;
+  }
+  const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognitionCtor) return;
+  const recognition = new SpeechRecognitionCtor();
+  speechRecognition = recognition;
+  recognition.lang = "zh-CN";
+  recognition.interimResults = false;
+  recognition.continuous = false;
+  recognition.onstart = () => {
+    voiceListening.value = true;
+  };
+  recognition.onresult = async (event: any) => {
+    const text = Array.from(event.results || [])
+      .map((result: any) => result?.[0]?.transcript || "")
+      .join("")
+      .trim();
+    if (!text) return;
+    store.state.sendText = text;
+    await submit();
+  };
+  recognition.onerror = () => {
+    voiceListening.value = false;
+    store.state.notice = "语音识别失败";
+  };
+  recognition.onend = () => {
+    voiceListening.value = false;
+    speechRecognition = null;
+  };
+  recognition.start();
+}
+
+function handleVoicePrimary() {
+  if (inputMode.value === "text") {
+    void submit();
+    return;
+  }
+  if (voiceListening.value) {
+    stopVoiceRecognition();
+    return;
+  }
+  startVoiceRecognition();
+}
+
+function onMiniAction(kind: "share" | "comment") {
+  if (kind === "share") {
+    store.copyMessageText(`${playTitle.value} ${playSubtitle.value}`.trim());
+    store.state.notice = "已复制故事标题";
+    return;
+  }
+  store.state.notice = "评论功能待接入";
+}
+
+function toggleFavorite() {
+  store.state.notice = "收藏功能待接入";
+}
+
+function pickTip(option: string) {
+  store.state.sendText = option;
+  void submit();
+}
+
 onBeforeUnmount(() => {
   clearPressTimer();
+  stopVoiceRecognition();
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
@@ -300,287 +543,318 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="surface section-block">
-    <div class="row-between">
-      <div>
-        <h2 class="section-title">游玩</h2>
-        <div class="subtle">
-          <span v-if="store.state.debugMode">调试模式</span>
-          <span v-else>{{ session?.world?.name || "会话中" }}</span>
+  <section class="play-page">
+    <div class="play-stage" :style="playStageStyle">
+      <div class="play-stage__mask"></div>
+      <div class="play-stage__shade"></div>
+
+      <header class="play-head">
+        <div class="play-head__meta">
+          <button type="button" class="play-title-btn" @click="openSettingMode">{{ playTitle }} &gt;</button>
+          <div class="play-head__sub">{{ playSubtitle }}</div>
         </div>
-      </div>
-      <div class="row">
-        <button class="button small" type="button" @click="store.refreshCurrentSession">刷新状态</button>
-        <button class="button small" type="button" @click="store.state.debugMode ? (store.state.debugMode=false, store.setTab('create')) : store.startDebugCurrentChapter()">调试</button>
-      </div>
-    </div>
-  </section>
-
-  <section class="surface section-block stack-gap">
-    <div class="row-between">
-      <div>
-        <div class="section-title" style="font-size:16px; margin-bottom:6px;">章节设定</div>
-        <div class="subtle">{{ currentWorld?.name || "当前故事" }}</div>
-      </div>
-      <div class="row">
-        <div class="chip" v-if="currentChapter">{{ currentChapter.title || "当前章节" }}</div>
-        <button class="button small" type="button" @click="toggleChapterDetail">{{ chapterDetailOpen ? "收起" : "展开" }}</button>
-      </div>
-    </div>
-    <div v-if="chapterDetailOpen" class="dialog-stack">
-      <StoryCover
-        :title="currentChapter?.title || '当前章节'"
-        :coverPath="chapterBackgroundPath"
-        emptyText="暂无章节背景"
-        height="240px"
-      />
-
-      <div class="surface section-block surface-soft">
-        <div class="tiny">章节开场白</div>
-        <div class="subtle" style="margin-top:6px;">发言角色：{{ currentChapter?.openingRole || "旁白" }}</div>
-        <div style="white-space:pre-wrap; margin-top:8px;">{{ currentChapter?.openingText || store.state.chapterOpeningLine || "暂无开场白" }}</div>
-      </div>
-
-      <div class="grid-2">
-        <div class="surface section-block surface-soft">
-          <div class="tiny">当前章节内容</div>
-          <div style="white-space:pre-wrap; margin-top:6px;">{{ currentChapter?.content || store.state.chapterContent || "暂无章节内容" }}</div>
-        </div>
-        <div class="surface section-block surface-soft">
-          <div class="tiny">章节完成条件</div>
-          <div style="white-space:pre-wrap; margin-top:6px;">{{ chapterCompletionText }}</div>
-        </div>
-      </div>
-
-      <div class="surface section-block surface-soft">
-        <div class="tiny">章节进入条件</div>
-        <div style="white-space:pre-wrap; margin-top:6px;">{{ chapterEntryText || "无" }}</div>
-      </div>
-
-      <div class="surface section-block surface-soft">
-        <div class="row-between" style="margin-bottom:10px;">
-          <div>
-            <div class="tiny">世界设定</div>
-            <div class="subtle" style="margin-top:4px;">{{ currentWorld?.intro || store.state.worldIntro || "暂无简介" }}</div>
-          </div>
-          <div class="row">
-            <span class="chip" :class="{ active: currentWorld?.settings?.allowRoleView !== false }">角色可见</span>
-            <span class="chip" :class="{ active: currentWorld?.settings?.allowChatShare !== false }">聊天可分享</span>
-          </div>
-        </div>
-        <div style="white-space:pre-wrap;">{{ currentWorld?.settings?.globalBackground || store.state.globalBackground || "暂无世界背景" }}</div>
-      </div>
-
-      <div class="surface section-block surface-soft">
-        <div class="row-between" style="margin-bottom:10px;">
-          <div>
-            <div class="tiny">章节状态</div>
-            <div class="subtle" style="margin-top:4px;">正式会话由服务端推进，调试缓存由本地章节判定推进</div>
-          </div>
-          <div class="row">
-            <span v-for="item in chapterStatusItems" :key="item.label" class="chip">{{ item.label }}：{{ item.value }}</span>
-          </div>
-        </div>
-        <div class="tiny">正式会话：保存后会由后端保存和推进章节。调试缓存：不落库，只按当前章节条件自动切章。</div>
-        <pre class="detail-pre" style="margin-top:10px;">{{ chapterConditionHint }}</pre>
-      </div>
-
-      <div class="surface section-block surface-soft">
-        <div class="row-between" style="margin-bottom:10px;">
-          <div>
-            <div class="tiny">角色卡</div>
-            <div class="subtle" style="margin-top:4px;">当前故事内的用户、旁白与 NPC 角色</div>
-          </div>
-          <div class="chip">{{ roleCards.length }} 个角色</div>
-        </div>
-        <div v-if="roleCards.length" class="role-grid">
-          <button v-for="role in roleCards" :key="role.id" type="button" class="role-card role-card-button" @click="openRoleDetail(role)">
-            <div class="role-head">
-              <div class="role-avatar">
-                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" :alt="role.name" />
-                <span v-else>{{ role.name?.slice(0, 1) || "角" }}</span>
-              </div>
-              <div class="role-info">
-                <div class="row" style="gap:8px;">
-                  <strong>{{ role.name }}</strong>
-                  <span class="chip">{{ roleTypeLabel(role) }}</span>
-                </div>
-                <div class="tiny">{{ role.voice || "未绑定音色" }}</div>
-              </div>
-            </div>
-            <div class="role-desc">{{ role.description || "暂无角色设定" }}</div>
+        <div class="play-head__actions">
+          <button type="button" class="play-circle-btn" aria-label="进入故事大厅" @click="openHall">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="6"></circle>
+              <path d="M20 20l-4-4"></path>
+            </svg>
+          </button>
+          <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="autoVoice = !autoVoice">
+            <svg v-if="autoVoice" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 10v4h4l5 4V6l-5 4H5z"></path>
+              <path d="M18 9a4 4 0 010 6"></path>
+              <path d="M20 7a7 7 0 010 10"></path>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 10v4h4l5 4V6l-5 4H5z"></path>
+              <path d="M18 9l-6 6"></path>
+              <path d="M12 9l6 6"></path>
+            </svg>
           </button>
         </div>
-        <div v-else class="empty-surface" style="padding:18px 12px;">当前故事还没有角色信息</div>
-      </div>
-    </div>
-  </section>
+      </header>
 
-  <section class="surface section-block stack-gap" v-if="store.state.debugMode">
-    <div class="chip active">调试缓存，不会持久化</div>
-    <div class="row-between">
-      <div>
-        <div class="subtle">章节：{{ store.state.debugChapterTitle || "当前章节" }}</div>
-        <div class="tiny" v-if="debugChapter">进入条件 / 结束条件会按当前章节判断</div>
-      </div>
-      <div class="row">
-        <button class="button small" type="button" @click="debugPrevChapter">上一章</button>
-        <button class="button small" type="button" @click="debugNextChapter">下一章</button>
-      </div>
-    </div>
-    <pre class="textarea" style="white-space:pre-wrap; margin:0;">{{ store.state.debugStatePreview }}</pre>
-  </section>
+      <div class="play-ai-mark">内容由 AI 生成</div>
+      <button type="button" class="play-fav-btn" @click="toggleFavorite">❤</button>
+      <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
+      <div v-if="playMode === 'history'" class="play-mode-badge">历史模式</div>
+      <button type="button" class="play-float-btn" @click="toggleTipsMode">{{ playMode === "tips" ? "↩" : "提" }}</button>
 
-  <section class="stack-gap">
-    <div v-if="!messages.length" class="empty-surface">尚无消息</div>
-    <article
-      v-for="message in messages"
-      :key="message.id"
-      class="surface section-block message-card"
-      @dblclick.stop="openMenu(message, $event)"
-      @contextmenu.prevent.stop="openMenu(message, $event)"
-      @pointerdown="handlePressStart(message, $event)"
-      @pointerup="handlePressEnd"
-      @pointerleave="handlePressEnd"
-      @pointercancel="handlePressEnd"
-    >
-      <div class="row-between">
-        <div class="chip" :class="{ active: message.roleType === 'player' }">
-          {{ message.role || (message.roleType === "player" ? "用户" : "旁白") }}
-        </div>
-        <div class="row">
-          <button class="button small" type="button" @click.stop="copy(message.content)">复制</button>
-          <button class="button small" type="button" @click.stop="like(message.id)">点赞</button>
-          <button class="button small" type="button" @click.stop="dislike(message.id)">点踩</button>
-        </div>
-      </div>
-      <p style="white-space:pre-wrap; margin:10px 0 0;">{{ message.content }}</p>
-      <div v-if="store.state.messageReactions[String(message.id)]" class="tiny" style="margin-top:8px;">
-        当前评价：{{ store.state.messageReactions[String(message.id)] === 'like' ? '点赞' : '点踩' }}
-      </div>
-    </article>
-  </section>
-
-  <section class="surface section-block stack-gap play-input" style="position:sticky; bottom:72px;">
-    <textarea v-model="store.state.sendText" class="textarea" rows="3" placeholder="输入一句话开始对话"></textarea>
-    <div class="row-between">
-      <div class="subtle">双击 / 长按消息可打开操作菜单</div>
-      <button class="button primary" type="button" @click="submit">发送</button>
-    </div>
-  </section>
-
-  <div v-if="menuOpen" class="message-menu-backdrop" @click.self="closeMenu">
-    <div class="message-menu" :style="{ left: `${menuX}px`, top: `${menuY}px` }">
-      <div class="message-menu-title">{{ menuMessage?.role || "消息操作" }}</div>
-      <div class="tiny" style="margin-bottom:8px;">{{ menuVisibleHint || "请选择操作" }}</div>
-      <button class="button block" type="button" @click="menuCopy">复制</button>
-      <button class="button block" type="button" @click="menuReplay">重听</button>
-      <button class="button block" type="button" @click="menuLike">点赞</button>
-      <button class="button block" type="button" @click="menuDislike">点踩</button>
-      <button class="button block" type="button" @click="menuReset">取消评价</button>
-      <button class="button accent block" type="button" @click="menuRewrite">改写</button>
-    </div>
-  </div>
-
-  <div v-if="store.state.debugEndDialog" class="modal-backdrop" @click.self="closeDebugDialog">
-    <div class="modal-panel" style="width:min(100%,420px);">
-      <div class="modal-header">
-        <button class="button small" type="button" @click="closeDebugDialog">关闭</button>
-        <div style="font-weight:900;">调试结束</div>
-        <span class="tiny">{{ store.state.debugEndDialog }}</span>
-      </div>
-      <div class="modal-body">
-        <div class="surface section-block surface-soft">
-          <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
-          <div class="subtle" style="margin-top:8px;">
-            {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回创作继续补章节。' : '当前调试已结束。' }}
-          </div>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="button" type="button" @click="closeDebugDialog">继续看</button>
-        <button class="button primary" type="button" @click="exitDebugMode">返回创作</button>
-      </div>
-    </div>
-  </div>
-
-  <div v-if="roleDetail" class="modal-backdrop" @click.self="closeRoleDetail">
-    <div class="modal-panel" style="width:min(100%,560px);">
-      <div class="modal-header">
-        <button class="button small" type="button" @click="closeRoleDetail">关闭</button>
-        <div style="font-weight:900;">角色详情</div>
-        <span class="tiny">{{ roleDetail ? roleTypeLabel(roleDetail) : "" }}</span>
-      </div>
-      <div class="modal-body" v-if="roleDetail">
-        <div class="detail-card">
-          <div class="detail-avatar">
-            <img v-if="roleDetail.avatarPath" :src="store.resolveMediaPath(roleDetail.avatarPath)" :alt="roleDetail.name" />
-            <span v-else>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
-          </div>
-          <div class="detail-meta">
-            <div class="row" style="gap:8px; align-items:center;">
-              <strong style="font-size:20px;">{{ roleDetail.name }}</strong>
-              <span class="chip">{{ roleTypeLabel(roleDetail) }}</span>
+      <div ref="messageViewport" class="play-thread" :class="{ 'play-thread--history': playMode === 'history' }">
+        <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
+        <div v-else class="play-thread__inner" :class="{ 'play-thread__inner--history': playMode === 'history' }">
+          <article
+            v-for="message in displayMessages"
+            :key="message.id"
+            class="play-bubble-item"
+            :class="{ 'play-bubble-item--player': message.roleType === 'player' }"
+            @dblclick.stop="openMenu(message, $event)"
+            @contextmenu.prevent.stop="openMenu(message, $event)"
+            @pointerdown="handlePressStart(message, $event)"
+            @pointerup="handlePressEnd"
+            @pointerleave="handlePressEnd"
+            @pointercancel="handlePressEnd"
+          >
+            <div v-if="message.roleType !== 'player'" class="play-bubble-avatar">
+              <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
+              <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
             </div>
-            <div class="subtle">{{ roleDetail.voice || "未绑定音色" }}</div>
-            <div class="tiny" v-if="roleDetail.voiceMode">绑定模式：{{ voiceModeLabel(roleDetail.voiceMode) }}</div>
+
+            <div class="play-bubble-wrap">
+              <div class="play-bubble-title">{{ messageTitle(message) }}</div>
+              <div class="play-bubble" :class="{ 'play-bubble--player': message.roleType === 'player' }">
+                {{ message.content || "（空消息）" }}
+              </div>
+              <div v-if="messageReactionText(message)" class="play-bubble-reaction">{{ messageReactionText(message) }}</div>
+            </div>
+
+            <div v-if="message.roleType === 'player'" class="play-bubble-avatar">
+              <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
+              <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <section v-if="playMode === 'setting'" class="play-sheet play-sheet--setting">
+        <div class="play-sheet__head">
+          <div>
+            <div class="play-sheet__title">{{ playTitle }}</div>
+            <div class="play-sheet__sub">故事简介：{{ currentWorld?.intro || store.state.worldIntro || "暂无简介" }}</div>
           </div>
+          <button type="button" class="play-sheet__close" @click="openSettingMode">关闭</button>
         </div>
 
-        <div class="dialog-stack" style="margin-top:14px;">
-          <div class="surface section-block surface-soft">
-            <div class="tiny">角色设定</div>
-            <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.description || "暂无角色设定" }}</div>
+        <div class="play-sheet__label">角色列表</div>
+        <div class="play-role-strip">
+          <button
+            v-for="role in roleCards"
+            :key="role.id"
+            type="button"
+            class="play-role-pill"
+            :class="{ 'play-role-pill--active': settingSelectedRole?.id === role.id }"
+            @click="settingRoleId = role.id"
+          >
+            <div class="play-role-pill__avatar">
+              <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" :alt="role.name" />
+              <span v-else>{{ role.name.slice(0, 1) }}</span>
+            </div>
+            <span>{{ role.name }}</span>
+          </button>
+        </div>
+
+        <div v-if="!allowRoleView" class="play-inline-card">
+          创作者未开放“他人可查看角色设定”，当前仅展示基础信息。
+        </div>
+        <div v-else-if="settingSelectedRole" class="play-inline-card">
+          <div class="play-inline-card__title">{{ settingSelectedRole.name }}</div>
+          <div class="play-inline-card__text">角色类型：{{ roleTypeLabel(settingSelectedRole) }}</div>
+          <div class="play-inline-card__text">角色设定：{{ settingSelectedRole.description || "暂无角色设定" }}</div>
+          <div class="play-inline-card__text">角色音色：{{ settingSelectedRole.voice || "未绑定音色" }}</div>
+          <div v-if="settingSelectedRole.sample" class="play-inline-card__text">台词示例：{{ settingSelectedRole.sample }}</div>
+          <button type="button" class="play-link-text" @click="openRoleDetail(settingSelectedRole)">查看角色详情</button>
+        </div>
+
+        <button type="button" class="play-link-row" @click="toggleChapterDetail">
+          <span>故事设定</span>
+          <span>{{ chapterDetailOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="chapterDetailOpen" class="play-inline-card">
+          <div class="play-inline-card__text">故事背景：{{ currentWorld?.settings?.globalBackground || store.state.globalBackground || "暂无世界背景" }}</div>
+          <div class="play-inline-card__text">章节：{{ currentChapter?.title || "当前章节" }}</div>
+          <div class="play-inline-card__text">章节内容：{{ currentChapter?.content || store.state.chapterContent || "暂无章节内容" }}</div>
+          <div class="play-inline-card__text">章节进入条件：{{ chapterEntryText || "无" }}</div>
+          <div class="play-inline-card__text">章节完成条件：{{ chapterCompletionText }}</div>
+          <pre class="play-state-pre">{{ statePreviewText }}</pre>
+        </div>
+
+        <button type="button" class="play-link-row" @click="settingModePickerOpen = !settingModePickerOpen">
+          <span>对话模式</span>
+          <span>基础模式 &gt;</span>
+        </button>
+        <div v-if="settingModePickerOpen" class="play-inline-card">
+          <div class="play-inline-card__title">✓ 基础模式（当前唯一）</div>
+          <div class="play-inline-card__text">当前仅支持基础模式，后续可扩展其他对话模式。</div>
+        </div>
+      </section>
+
+      <section v-if="playMode === 'tips'" class="play-sheet play-sheet--tips">
+        <div class="play-sheet__title">AI 提示</div>
+        <button v-for="option in tipOptions" :key="option" type="button" class="play-tip-option" @click="pickTip(option)">{{ option }}</button>
+        <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
+      </section>
+
+      <div v-if="store.state.debugMode" class="play-debug-panel">
+        <div class="play-debug-panel__meta">
+          <span class="play-debug-badge">调试缓存</span>
+          <span>{{ store.state.debugChapterTitle || "当前章节" }}</span>
+        </div>
+        <div class="play-debug-panel__actions">
+          <button type="button" class="play-mini-btn" @click="debugPrevChapter">上一章</button>
+          <button type="button" class="play-mini-btn" @click="debugNextChapter">下一章</button>
+        </div>
+      </div>
+
+      <div class="play-story-footer">
+        <div class="play-story-main">
+          <button type="button" class="play-story-entry" @click="openSettingMode">{{ playTitle }} &gt;</button>
+          <div class="play-story-sub">{{ playHandle }}</div>
+        </div>
+        <div class="play-story-actions">
+          <button type="button" class="play-story-action" @click="toggleFavorite">
+            <span class="play-story-action__icon">❤</span>
+            <span>{{ playLikeCount }}</span>
+          </button>
+          <button type="button" class="play-story-action" @click="onMiniAction('share')">
+            <span class="play-story-action__icon">↗</span>
+            <span>分享</span>
+          </button>
+          <button type="button" class="play-story-action" @click="onMiniAction('comment')">
+            <span class="play-story-action__icon">💬</span>
+            <span>评论</span>
+          </button>
+          <button type="button" class="play-story-action" @click="toggleHistoryMode">
+            <span class="play-story-action__icon">{{ playMode === "history" ? "↩" : "◷" }}</span>
+            <span>{{ playMode === "history" ? "返回" : "历史" }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="play-input-shell" :class="{ 'play-input-shell--text': inputMode === 'text' }">
+        <template v-if="inputMode === 'text'">
+          <div class="play-text-bar">
+            <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话开始故事"></textarea>
+            <button type="button" class="play-mini-round" @click="toggleInputMode">声</button>
+            <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+            <button type="button" class="play-send-btn" @click="submit">发送</button>
           </div>
-          <div class="surface section-block surface-soft">
-            <div class="tiny">台词示例</div>
-            <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.sample || "暂无台词示例" }}</div>
+        </template>
+        <template v-else>
+          <div class="play-voice-bar">
+            <button type="button" class="play-voice-btn" @click="handleVoicePrimary">
+              {{ voiceListening ? "识别中，点击结束" : "按住说话" }}
+            </button>
+            <button type="button" class="play-mini-round" @click="toggleInputMode">键</button>
+            <button type="button" class="play-mini-round" @click="onMiniAction('share')">＋</button>
           </div>
+        </template>
+      </div>
+    </div>
+
+    <div v-if="menuOpen" class="message-menu-backdrop" @click.self="closeMenu">
+      <div class="message-menu play-message-menu" :style="{ left: `${menuX}px`, top: `${menuY}px` }">
+        <div class="message-menu-title">{{ menuMessage?.role || "消息操作" }}</div>
+        <div class="tiny" style="margin-bottom:8px; color:#c0cee3;">{{ menuVisibleHint || "请选择操作" }}</div>
+        <button class="button block" type="button" @click="menuCopy">复制</button>
+        <button class="button block" type="button" @click="menuReplay">重听</button>
+        <button class="button block" type="button" @click="menuLike">点赞</button>
+        <button class="button block" type="button" @click="menuDislike">点踩</button>
+        <button class="button block" type="button" @click="menuReset">取消评价</button>
+        <button class="button accent block" type="button" @click="menuRewrite">改写</button>
+      </div>
+    </div>
+
+    <div v-if="store.state.debugEndDialog" class="modal-backdrop" @click.self="closeDebugDialog">
+      <div class="modal-panel" style="width:min(100%,420px);">
+        <div class="modal-header">
+          <button class="button small" type="button" @click="closeDebugDialog">关闭</button>
+          <div style="font-weight:900;">调试结束</div>
+          <span class="tiny">{{ store.state.debugEndDialog }}</span>
+        </div>
+        <div class="modal-body">
           <div class="surface section-block surface-soft">
-            <div class="tiny">参数卡</div>
-            <div v-if="roleDetail.parameterCardJson" class="dialog-stack" style="margin-top:8px;">
-              <div class="row-between">
-                <div class="tiny">已结构化展开，可切回原文核对</div>
-                <button class="button small" type="button" @click="roleParameterRawOpen = !roleParameterRawOpen">
-                  {{ roleParameterRawOpen ? "收起原文" : "查看原文" }}
-                </button>
+            <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
+            <div class="subtle" style="margin-top:8px;">
+              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回创作继续补章节。' : '当前调试已结束。' }}
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button" type="button" @click="closeDebugDialog">继续看</button>
+          <button class="button primary" type="button" @click="exitDebugMode">返回创作</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="roleDetail" class="modal-backdrop" @click.self="closeRoleDetail">
+      <div class="modal-panel" style="width:min(100%,560px);">
+        <div class="modal-header">
+          <button class="button small" type="button" @click="closeRoleDetail">关闭</button>
+          <div style="font-weight:900;">角色详情</div>
+          <span class="tiny">{{ roleDetail ? roleTypeLabel(roleDetail) : "" }}</span>
+        </div>
+        <div class="modal-body" v-if="roleDetail">
+          <div class="detail-card">
+            <div class="detail-avatar">
+              <img v-if="roleDetail.avatarPath" :src="store.resolveMediaPath(roleDetail.avatarPath)" :alt="roleDetail.name" />
+              <span v-else>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
+            </div>
+            <div class="detail-meta">
+              <div class="row" style="gap:8px; align-items:center;">
+                <strong style="font-size:20px;">{{ roleDetail.name }}</strong>
+                <span class="chip">{{ roleTypeLabel(roleDetail) }}</span>
               </div>
-              <div class="param-grid">
-                <div
-                  v-for="item in parameterCardEntries(roleDetail.parameterCardJson)"
-                  :key="item.label"
-                  class="param-item"
-                >
-                  <div class="tiny">{{ item.label }}</div>
-                  <div class="param-value">{{ item.value }}</div>
+              <div class="subtle">{{ roleDetail.voice || "未绑定音色" }}</div>
+              <div class="tiny" v-if="roleDetail.voiceMode">绑定模式：{{ voiceModeLabel(roleDetail.voiceMode) }}</div>
+            </div>
+          </div>
+
+          <div class="dialog-stack" style="margin-top:14px;">
+            <div class="surface section-block surface-soft">
+              <div class="tiny">角色设定</div>
+              <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.description || "暂无角色设定" }}</div>
+            </div>
+            <div class="surface section-block surface-soft">
+              <div class="tiny">台词示例</div>
+              <div style="white-space:pre-wrap; margin-top:6px;">{{ roleDetail.sample || "暂无台词示例" }}</div>
+            </div>
+            <div class="surface section-block surface-soft">
+              <div class="tiny">参数卡</div>
+              <div v-if="roleDetail.parameterCardJson" class="dialog-stack" style="margin-top:8px;">
+                <div class="row-between">
+                  <div class="tiny">已结构化展开，可切回原文核对</div>
+                  <button class="button small" type="button" @click="roleParameterRawOpen = !roleParameterRawOpen">
+                    {{ roleParameterRawOpen ? "收起原文" : "查看原文" }}
+                  </button>
+                </div>
+                <div class="param-grid">
+                  <div
+                    v-for="item in parameterCardEntries(roleDetail.parameterCardJson)"
+                    :key="item.label"
+                    class="param-item"
+                  >
+                    <div class="tiny">{{ item.label }}</div>
+                    <div class="param-value">{{ item.value }}</div>
+                  </div>
+                </div>
+                <pre v-if="roleParameterRawOpen" class="detail-pre">{{ JSON.stringify(roleDetail.parameterCardJson, null, 2) }}</pre>
+              </div>
+              <pre v-else class="detail-pre">无参数卡</pre>
+            </div>
+            <div class="surface section-block surface-soft">
+              <div class="tiny">音色信息</div>
+              <div class="dialog-stack" style="margin-top:6px;">
+                <div class="tiny">预设：{{ roleDetail.voicePresetId || "无" }}</div>
+                <div class="tiny">模型配置：{{ roleDetail.voiceConfigId ?? "无" }}</div>
+                <div class="tiny">参考音频：{{ roleDetail.voiceReferenceAudioName || roleDetail.voiceReferenceAudioPath || "无" }}</div>
+                <div class="tiny">参考文本：{{ roleDetail.voiceReferenceText || "无" }}</div>
+                <div class="tiny">提示词：{{ roleDetail.voicePromptText || "无" }}</div>
+                <div class="tiny">
+                  混合音色：
+                  {{ roleDetail.voiceMixVoices?.length ? roleDetail.voiceMixVoices.map((item) => `${item.voiceId}(${item.weight.toFixed(1)})`).join("、") : "无" }}
                 </div>
               </div>
-              <pre v-if="roleParameterRawOpen" class="detail-pre">{{ JSON.stringify(roleDetail.parameterCardJson, null, 2) }}</pre>
-            </div>
-            <pre v-else class="detail-pre">无参数卡</pre>
-          </div>
-          <div class="surface section-block surface-soft">
-            <div class="tiny">音色信息</div>
-            <div class="dialog-stack" style="margin-top:6px;">
-              <div class="tiny">预设：{{ roleDetail.voicePresetId || "无" }}</div>
-              <div class="tiny">模型配置：{{ roleDetail.voiceConfigId ?? "无" }}</div>
-              <div class="tiny">参考音频：{{ roleDetail.voiceReferenceAudioName || roleDetail.voiceReferenceAudioPath || "无" }}</div>
-              <div class="tiny">参考文本：{{ roleDetail.voiceReferenceText || "无" }}</div>
-              <div class="tiny">提示词：{{ roleDetail.voicePromptText || "无" }}</div>
-              <div class="tiny">
-                混合音色：
-                {{ roleDetail.voiceMixVoices?.length ? roleDetail.voiceMixVoices.map((item) => `${item.voiceId}(${item.weight.toFixed(1)})`).join("、") : "无" }}
-              </div>
             </div>
           </div>
+          <div v-if="roleCopyHint" class="tiny" style="margin-top:10px;">{{ roleCopyHint }}</div>
         </div>
-        <div v-if="roleCopyHint" class="tiny" style="margin-top:10px;">{{ roleCopyHint }}</div>
-      </div>
-      <div class="modal-actions">
-        <button class="button" type="button" @click="copyRoleProfile">复制角色资料</button>
-        <button class="button" type="button" @click="editCurrentWorld">编辑当前故事</button>
-        <button class="button primary" type="button" @click="closeRoleDetail">知道了</button>
+        <div class="modal-actions">
+          <button class="button" type="button" @click="copyRoleProfile">复制角色资料</button>
+          <button class="button" type="button" @click="editCurrentWorld">编辑当前故事</button>
+          <button class="button primary" type="button" @click="closeRoleDetail">知道了</button>
+        </div>
       </div>
     </div>
-  </div>
+  </section>
 </template>

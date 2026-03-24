@@ -84,7 +84,7 @@ function createEmptyWorldState() {
     playerVoicePromptText: "",
     playerVoiceMixVoices: [] as VoiceMixItem[],
     narratorName: "旁白",
-    narratorVoice: "默认旁白",
+    narratorVoice: "混合（清朗温润）",
     narratorVoiceConfigId: null as number | null,
     narratorVoicePresetId: "",
     narratorVoiceMode: "text",
@@ -102,6 +102,52 @@ function createEmptyWorldState() {
 
 function createEmptyEditorState(sort = 1) {
   return createEmptyChapter(sort);
+}
+
+interface StoryEditorSnapshot {
+  createStep: 0 | 1;
+  worldId: number;
+  worldName: string;
+  worldIntro: string;
+  worldCoverPath: string;
+  worldCoverBgPath: string;
+  playerName: string;
+  playerDesc: string;
+  playerVoice: string;
+  playerVoiceConfigId: number | null;
+  playerVoicePresetId: string;
+  playerVoiceMode: string;
+  playerVoiceReferenceAudioPath: string;
+  playerVoiceReferenceAudioName: string;
+  playerVoiceReferenceText: string;
+  playerVoicePromptText: string;
+  playerVoiceMixVoices: VoiceMixItem[];
+  narratorName: string;
+  narratorVoice: string;
+  narratorVoiceConfigId: number | null;
+  narratorVoicePresetId: string;
+  narratorVoiceMode: string;
+  narratorVoiceReferenceAudioPath: string;
+  narratorVoiceReferenceAudioName: string;
+  narratorVoiceReferenceText: string;
+  narratorVoicePromptText: string;
+  narratorVoiceMixVoices: VoiceMixItem[];
+  globalBackground: string;
+  allowRoleView: boolean;
+  allowChatShare: boolean;
+  worldPublishStatus: string;
+  npcRoles: StoryRole[];
+  chapters: ChapterItem[];
+  selectedChapterId: number | null;
+  chapterTitle: string;
+  chapterContent: string;
+  chapterEntryCondition: string;
+  chapterCondition: string;
+  chapterOpeningRole: string;
+  chapterOpeningLine: string;
+  chapterBackground: string;
+  chapterMusic: string;
+  chapterConditionVisible: boolean;
 }
 
 type ToonflowStore = ReturnType<typeof createToonflowStore>;
@@ -189,6 +235,11 @@ function createToonflowStore() {
   });
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
+  let editorAutoPersistTimer: number | null = null;
+  let editorPersistMuted = false;
+  let lastPersistedEditorSnapshot: StoryEditorSnapshot | null = null;
+  let lastPersistedEditorSignature = "";
+  let undoEditorSnapshot: StoryEditorSnapshot | null = null;
 
   function saveSettings() {
     storageSet("toonflow.baseUrl", state.baseUrl.trim());
@@ -225,7 +276,7 @@ function createToonflowStore() {
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
     state.storyPrompts = [];
-    state.notice = "请先登录账号";
+    state.notice = "";
     state.activeTab = "settings";
   }
 
@@ -244,6 +295,192 @@ function createToonflowStore() {
     state.chapterConditionVisible = true;
     state.npcRoles = [];
     state.createStep = 0;
+    primeStoryEditorPersistState();
+  }
+
+  function cloneStoryEditorSnapshot(snapshot: StoryEditorSnapshot): StoryEditorSnapshot {
+    return JSON.parse(JSON.stringify(snapshot)) as StoryEditorSnapshot;
+  }
+
+  function captureStoryEditorSnapshot(): StoryEditorSnapshot {
+    return {
+      createStep: state.createStep,
+      worldId: state.worldId,
+      worldName: state.worldName,
+      worldIntro: state.worldIntro,
+      worldCoverPath: state.worldCoverPath,
+      worldCoverBgPath: state.worldCoverBgPath,
+      playerName: state.playerName,
+      playerDesc: state.playerDesc,
+      playerVoice: state.playerVoice,
+      playerVoiceConfigId: state.playerVoiceConfigId,
+      playerVoicePresetId: state.playerVoicePresetId,
+      playerVoiceMode: state.playerVoiceMode,
+      playerVoiceReferenceAudioPath: state.playerVoiceReferenceAudioPath,
+      playerVoiceReferenceAudioName: state.playerVoiceReferenceAudioName,
+      playerVoiceReferenceText: state.playerVoiceReferenceText,
+      playerVoicePromptText: state.playerVoicePromptText,
+      playerVoiceMixVoices: JSON.parse(JSON.stringify(state.playerVoiceMixVoices || [])) as VoiceMixItem[],
+      narratorName: state.narratorName,
+      narratorVoice: state.narratorVoice,
+      narratorVoiceConfigId: state.narratorVoiceConfigId,
+      narratorVoicePresetId: state.narratorVoicePresetId,
+      narratorVoiceMode: state.narratorVoiceMode,
+      narratorVoiceReferenceAudioPath: state.narratorVoiceReferenceAudioPath,
+      narratorVoiceReferenceAudioName: state.narratorVoiceReferenceAudioName,
+      narratorVoiceReferenceText: state.narratorVoiceReferenceText,
+      narratorVoicePromptText: state.narratorVoicePromptText,
+      narratorVoiceMixVoices: JSON.parse(JSON.stringify(state.narratorVoiceMixVoices || [])) as VoiceMixItem[],
+      globalBackground: state.globalBackground,
+      allowRoleView: state.allowRoleView,
+      allowChatShare: state.allowChatShare,
+      worldPublishStatus: state.worldPublishStatus,
+      npcRoles: JSON.parse(JSON.stringify(state.npcRoles || [])) as StoryRole[],
+      chapters: JSON.parse(JSON.stringify(state.chapters || [])) as ChapterItem[],
+      selectedChapterId: state.selectedChapterId,
+      chapterTitle: state.chapterTitle,
+      chapterContent: state.chapterContent,
+      chapterEntryCondition: state.chapterEntryCondition,
+      chapterCondition: state.chapterCondition,
+      chapterOpeningRole: state.chapterOpeningRole,
+      chapterOpeningLine: state.chapterOpeningLine,
+      chapterBackground: state.chapterBackground,
+      chapterMusic: state.chapterMusic,
+      chapterConditionVisible: state.chapterConditionVisible,
+    };
+  }
+
+  function applyStoryEditorSnapshot(snapshot: StoryEditorSnapshot) {
+    editorPersistMuted = true;
+    state.createStep = snapshot.createStep;
+    state.worldId = snapshot.worldId;
+    state.worldName = snapshot.worldName;
+    state.worldIntro = snapshot.worldIntro;
+    state.worldCoverPath = snapshot.worldCoverPath;
+    state.worldCoverBgPath = snapshot.worldCoverBgPath;
+    state.playerName = snapshot.playerName;
+    state.playerDesc = snapshot.playerDesc;
+    state.playerVoice = snapshot.playerVoice;
+    state.playerVoiceConfigId = snapshot.playerVoiceConfigId;
+    state.playerVoicePresetId = snapshot.playerVoicePresetId;
+    state.playerVoiceMode = snapshot.playerVoiceMode;
+    state.playerVoiceReferenceAudioPath = snapshot.playerVoiceReferenceAudioPath;
+    state.playerVoiceReferenceAudioName = snapshot.playerVoiceReferenceAudioName;
+    state.playerVoiceReferenceText = snapshot.playerVoiceReferenceText;
+    state.playerVoicePromptText = snapshot.playerVoicePromptText;
+    state.playerVoiceMixVoices = JSON.parse(JSON.stringify(snapshot.playerVoiceMixVoices || [])) as VoiceMixItem[];
+    state.narratorName = snapshot.narratorName;
+    state.narratorVoice = snapshot.narratorVoice;
+    state.narratorVoiceConfigId = snapshot.narratorVoiceConfigId;
+    state.narratorVoicePresetId = snapshot.narratorVoicePresetId;
+    state.narratorVoiceMode = snapshot.narratorVoiceMode;
+    state.narratorVoiceReferenceAudioPath = snapshot.narratorVoiceReferenceAudioPath;
+    state.narratorVoiceReferenceAudioName = snapshot.narratorVoiceReferenceAudioName;
+    state.narratorVoiceReferenceText = snapshot.narratorVoiceReferenceText;
+    state.narratorVoicePromptText = snapshot.narratorVoicePromptText;
+    state.narratorVoiceMixVoices = JSON.parse(JSON.stringify(snapshot.narratorVoiceMixVoices || [])) as VoiceMixItem[];
+    state.globalBackground = snapshot.globalBackground;
+    state.allowRoleView = snapshot.allowRoleView;
+    state.allowChatShare = snapshot.allowChatShare;
+    state.worldPublishStatus = snapshot.worldPublishStatus;
+    state.npcRoles = JSON.parse(JSON.stringify(snapshot.npcRoles || [])) as StoryRole[];
+    state.chapters = JSON.parse(JSON.stringify(snapshot.chapters || [])) as ChapterItem[];
+    state.selectedChapterId = snapshot.selectedChapterId;
+    state.chapterTitle = snapshot.chapterTitle;
+    state.chapterContent = snapshot.chapterContent;
+    state.chapterEntryCondition = snapshot.chapterEntryCondition;
+    state.chapterCondition = snapshot.chapterCondition;
+    state.chapterOpeningRole = snapshot.chapterOpeningRole;
+    state.chapterOpeningLine = snapshot.chapterOpeningLine;
+    state.chapterBackground = snapshot.chapterBackground;
+    state.chapterMusic = snapshot.chapterMusic;
+    state.chapterConditionVisible = snapshot.chapterConditionVisible;
+    window.setTimeout(() => {
+      editorPersistMuted = false;
+    }, 0);
+  }
+
+  function hasPersistableStoryEditorContent(snapshot = captureStoryEditorSnapshot()): boolean {
+    if (snapshot.worldId > 0) return true;
+    if (snapshot.worldName.trim() || snapshot.worldIntro.trim()) return true;
+    if (snapshot.worldCoverPath.trim() || snapshot.playerDesc.trim() || snapshot.globalBackground.trim()) return true;
+    if (snapshot.chapterTitle.trim() || snapshot.chapterContent.trim() || snapshot.chapterOpeningLine.trim()) return true;
+    if (snapshot.chapterEntryCondition.trim() || snapshot.chapterCondition.trim()) return true;
+    if (snapshot.chapterBackground.trim() || snapshot.chapterMusic.trim()) return true;
+    return snapshot.npcRoles.some((role) =>
+      [
+        role.name,
+        role.description,
+        role.avatarPath,
+        role.avatarBgPath,
+        role.voice,
+        role.sample,
+      ].some((value) => String(value || "").trim().length > 0),
+    );
+  }
+
+  function cancelStoryEditorAutoPersist() {
+    if (editorAutoPersistTimer) {
+      window.clearTimeout(editorAutoPersistTimer);
+      editorAutoPersistTimer = null;
+    }
+  }
+
+  function primeStoryEditorPersistState(clearUndo = true) {
+    cancelStoryEditorAutoPersist();
+    lastPersistedEditorSnapshot = captureStoryEditorSnapshot();
+    lastPersistedEditorSignature = JSON.stringify(lastPersistedEditorSnapshot);
+    if (clearUndo) {
+      undoEditorSnapshot = null;
+    }
+  }
+
+  function canUndoStoryAutoPersist(): boolean {
+    return !!undoEditorSnapshot;
+  }
+
+  async function autoPersistStoryEditor() {
+    if (editorPersistMuted || state.activeTab !== "create" || state.selectedProjectId <= 0) return;
+    const current = captureStoryEditorSnapshot();
+    if (!hasPersistableStoryEditorContent(current)) return;
+    const currentSignature = JSON.stringify(current);
+    if (currentSignature === lastPersistedEditorSignature) return;
+    const previous = lastPersistedEditorSnapshot ? cloneStoryEditorSnapshot(lastPersistedEditorSnapshot) : null;
+    editorPersistMuted = true;
+    try {
+      await saveStoryEditor(false, false, null);
+      lastPersistedEditorSnapshot = captureStoryEditorSnapshot();
+      lastPersistedEditorSignature = JSON.stringify(lastPersistedEditorSnapshot);
+      undoEditorSnapshot = previous;
+    } finally {
+      editorPersistMuted = false;
+    }
+  }
+
+  function scheduleStoryEditorAutoPersist(delayMs = 900) {
+    if (editorPersistMuted || state.activeTab !== "create") return;
+    const snapshot = captureStoryEditorSnapshot();
+    if (!hasPersistableStoryEditorContent(snapshot)) return;
+    if (JSON.stringify(snapshot) === lastPersistedEditorSignature) return;
+    cancelStoryEditorAutoPersist();
+    editorAutoPersistTimer = window.setTimeout(() => {
+      void autoPersistStoryEditor();
+    }, delayMs);
+  }
+
+  async function undoStoryAutoPersist() {
+    if (!undoEditorSnapshot) return;
+    const target = cloneStoryEditorSnapshot(undoEditorSnapshot);
+    undoEditorSnapshot = null;
+    applyStoryEditorSnapshot(target);
+    editorPersistMuted = true;
+    try {
+      await saveStoryEditor(false, false, "已撤回到上一次自动保存前");
+      lastPersistedEditorSnapshot = captureStoryEditorSnapshot();
+      lastPersistedEditorSignature = JSON.stringify(lastPersistedEditorSnapshot);
+    } finally {
+      editorPersistMuted = false;
+    }
   }
 
   function isWorldPublished(world: WorldItem): boolean {
@@ -1129,6 +1366,7 @@ function createToonflowStore() {
     if (!state.selectedProjectId && state.projects.length) {
       state.selectedProjectId = state.projects[0].id;
     }
+    primeStoryEditorPersistState();
   }
 
   async function loadWorldForEdit(world: WorldItem) {
@@ -1162,7 +1400,7 @@ function createToonflowStore() {
       state.playerVoicePromptText = worldDetail.playerRole?.voicePromptText || "";
       state.playerVoiceMixVoices = worldDetail.playerRole?.voiceMixVoices || [];
       state.narratorName = worldDetail.narratorRole?.name || "旁白";
-      state.narratorVoice = worldDetail.narratorRole?.voice || "默认旁白";
+      state.narratorVoice = worldDetail.narratorRole?.voice || "混合（清朗温润）";
       state.narratorVoiceMode = worldDetail.narratorRole?.voiceMode || "text";
       state.narratorVoiceConfigId = worldDetail.narratorRole?.voiceConfigId ?? null;
       state.narratorVoicePresetId = worldDetail.narratorRole?.voicePresetId || "";
@@ -1181,6 +1419,7 @@ function createToonflowStore() {
       }
       state.createStep = 0;
       state.activeTab = "create";
+      primeStoryEditorPersistState();
     } finally {
       state.loading = false;
     }
@@ -1244,6 +1483,7 @@ function createToonflowStore() {
     state.chapterBackground = chapter.backgroundPath || "";
     state.chapterMusic = chapter.bgmPath || "";
     state.chapterConditionVisible = chapter.showCompletionCondition ?? true;
+    primeStoryEditorPersistState();
   }
 
   async function saveWorldOnly(publish = false) {
@@ -1265,7 +1505,7 @@ function createToonflowStore() {
     return result;
   }
 
-  async function saveChapterDraft(showNotice = true) {
+  async function saveChapterDraft(showNotice = true, statusOverride?: "draft" | "published") {
     if (!state.worldId) {
       const world = await saveWorldOnly(false);
       state.worldId = world.id;
@@ -1284,7 +1524,7 @@ function createToonflowStore() {
       entryCondition: safeJsonParse(state.chapterEntryCondition, state.chapterEntryCondition || null),
       completionCondition: safeJsonParse(state.chapterCondition, state.chapterCondition || null),
       sort: state.selectedChapterId ? state.chapters.find((item) => item.id === state.selectedChapterId)?.sort || state.chapters.length + 1 : state.chapters.length + 1,
-      status: "draft",
+      status: statusOverride || "draft",
     };
     const saved = await api.saveChapter(chapterPayload);
     const index = state.chapters.findIndex((item) => item.id === saved.id);
@@ -1298,31 +1538,41 @@ function createToonflowStore() {
       state.notice = "章节已保存";
     }
     await reloadWorldsAfterSave();
+    primeStoryEditorPersistState();
     return saved;
   }
 
-  async function saveStoryEditor(publish = false, startNextDraft = false, successNotice = "保存成功") {
+  async function saveStoryEditor(publish = false, startNextDraft = false, successNotice: string | null = "保存成功") {
     const world = await saveWorldOnly(publish);
     if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
-      await saveChapterDraft(false);
+      await saveChapterDraft(false, publish ? "published" : "draft");
     }
     if (startNextDraft) {
       await selectChapter(null, false);
     }
-    state.notice = successNotice || (publish ? "故事已发布" : "故事已保存");
+    if (successNotice !== null) {
+      state.notice = successNotice || (publish ? "故事已发布" : "故事已保存");
+    }
     if (publish) {
       state.worldPublishStatus = "published";
     }
+    primeStoryEditorPersistState();
     return world;
   }
 
   async function reloadWorldsAfterSave() {
-    state.worlds = await api.listWorlds(state.selectedProjectId || undefined).catch(() => state.worlds);
+    const [worlds, sessions] = await Promise.all([
+      api.listWorlds(undefined).catch(() => state.worlds),
+      api.listSession(undefined).catch(() => state.sessions),
+    ]);
+    state.worlds = worlds;
+    state.sessions = sessions;
   }
 
   async function saveCurrentChapterAndSelect(targetChapterId: number | null) {
     await saveChapterDraft(false);
     await selectChapter(targetChapterId, false);
+    primeStoryEditorPersistState();
   }
 
   async function startFromWorld(world: WorldItem, quickText = "") {
@@ -1485,6 +1735,11 @@ function createToonflowStore() {
     saveWorldOnly,
     saveChapterDraft,
     saveCurrentChapterAndSelect,
+    scheduleStoryEditorAutoPersist,
+    cancelStoryEditorAutoPersist,
+    canUndoStoryAutoPersist,
+    undoStoryAutoPersist,
+    primeStoryEditorPersistState,
     selectChapter,
     startFromWorld,
     quickStart,

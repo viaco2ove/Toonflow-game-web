@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import ImageGenerateDialog from "./ImageGenerateDialog.vue";
 import StoryCover from "./StoryCover.vue";
 import VoiceBindingDialog from "./VoiceBindingDialog.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { VoiceBindingDraft } from "../types/toonflow";
+import type { StoryRole, VoiceBindingDraft } from "../types/toonflow";
 import { imageStyleForKey } from "../utils/imageStyles";
 
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
@@ -12,6 +12,13 @@ type VoiceTarget = "player" | "narrator" | "npc";
 
 const store = useToonflowStore();
 const showAdvanced = ref(false);
+const showUserEditor = ref(false);
+const showNpcEditor = ref(false);
+const editingNpcIndex = ref<number | null>(null);
+const showImageSourceDialog = ref(false);
+const imageSourceTarget = ref<ImageTarget | null>(null);
+const imageSourceNpcIndex = ref<number | null>(null);
+
 const storyCoverInput = ref<HTMLInputElement | null>(null);
 const chapterBgInput = ref<HTMLInputElement | null>(null);
 const userAvatarInput = ref<HTMLInputElement | null>(null);
@@ -22,41 +29,50 @@ const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
 
 const coverAiPrompt = computed(() => store.state.worldIntro || store.state.worldName || "故事封面");
-
 const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
 const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
+const mentionRoles = computed(() => store.mentionRoleNames());
+const chapterRemain = computed(() => Math.max(0, 1500 - (store.state.chapterContent || "").length));
+const chapterUsed = computed(() => Math.min(1500, (store.state.chapterContent || "").length));
+const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
+const showGlobalBackground = computed(() => store.state.chapters.length > 1 || !!store.state.globalBackground.trim());
+const currentNpcRole = computed<StoryRole | null>(() => {
+  const index = editingNpcIndex.value;
+  if (typeof index !== "number") return null;
+  return store.state.npcRoles[index] || null;
+});
 
 const imageDialogState = computed(() => {
   switch (imageDialogTarget.value) {
     case "user":
       return {
-        title: "用户头像",
+        title: "创建角色",
         initialPrompt: store.state.playerDesc || store.state.playerName || "用户头像",
         initialStyleKey: "general_3",
       };
     case "cover":
       return {
-        title: "故事封面",
+        title: "创建故事封面",
         initialPrompt: coverAiPrompt.value,
         initialStyleKey: "cinema",
       };
     case "chapter":
       return {
-        title: "章节背景图",
+        title: "创建章节背景",
         initialPrompt: store.state.chapterContent || store.state.chapterTitle || "章节背景图",
         initialStyleKey: "cinema",
       };
     case "npc": {
       const role = typeof imageDialogNpcIndex.value === "number" ? store.state.npcRoles[imageDialogNpcIndex.value] : null;
       return {
-        title: role ? `${role.name || "角色"}头像` : "角色头像",
+        title: "创建角色",
         initialPrompt: role?.description || role?.sample || role?.name || "角色头像",
         initialStyleKey: "general_3",
       };
     }
     default:
       return {
-        title: "图片生成",
+        title: "创建角色",
         initialPrompt: "角色头像",
         initialStyleKey: "general_3",
       };
@@ -122,40 +138,97 @@ const voiceDialogState = computed(() => {
   }
 });
 
-function onUserAvatarFile(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) {
-    void store.updateAvatarFromFile("user", file);
-  }
-  input.value = "";
+store.primeStoryEditorPersistState();
+let autosaveReady = false;
+watch(
+  () => JSON.stringify({
+    step: store.state.createStep,
+    worldName: store.state.worldName,
+    worldIntro: store.state.worldIntro,
+    worldCoverPath: store.state.worldCoverPath,
+    worldCoverBgPath: store.state.worldCoverBgPath,
+    playerName: store.state.playerName,
+    playerDesc: store.state.playerDesc,
+    playerVoice: store.state.playerVoice,
+    playerVoiceConfigId: store.state.playerVoiceConfigId,
+    playerVoicePresetId: store.state.playerVoicePresetId,
+    playerVoiceMode: store.state.playerVoiceMode,
+    playerVoiceReferenceAudioPath: store.state.playerVoiceReferenceAudioPath,
+    playerVoiceReferenceAudioName: store.state.playerVoiceReferenceAudioName,
+    playerVoiceReferenceText: store.state.playerVoiceReferenceText,
+    playerVoicePromptText: store.state.playerVoicePromptText,
+    playerVoiceMixVoices: store.state.playerVoiceMixVoices,
+    narratorName: store.state.narratorName,
+    narratorVoice: store.state.narratorVoice,
+    narratorVoiceConfigId: store.state.narratorVoiceConfigId,
+    narratorVoicePresetId: store.state.narratorVoicePresetId,
+    narratorVoiceMode: store.state.narratorVoiceMode,
+    narratorVoiceReferenceAudioPath: store.state.narratorVoiceReferenceAudioPath,
+    narratorVoiceReferenceAudioName: store.state.narratorVoiceReferenceAudioName,
+    narratorVoiceReferenceText: store.state.narratorVoiceReferenceText,
+    narratorVoicePromptText: store.state.narratorVoicePromptText,
+    narratorVoiceMixVoices: store.state.narratorVoiceMixVoices,
+    globalBackground: store.state.globalBackground,
+    allowRoleView: store.state.allowRoleView,
+    allowChatShare: store.state.allowChatShare,
+    npcRoles: store.state.npcRoles.map((role) => ({
+      id: role.id,
+      name: role.name,
+      avatarPath: role.avatarPath,
+      avatarBgPath: role.avatarBgPath,
+      description: role.description,
+      voice: role.voice,
+      voiceMode: role.voiceMode,
+      voiceConfigId: role.voiceConfigId,
+      voicePresetId: role.voicePresetId,
+      voiceReferenceAudioPath: role.voiceReferenceAudioPath,
+      voiceReferenceAudioName: role.voiceReferenceAudioName,
+      voiceReferenceText: role.voiceReferenceText,
+      voicePromptText: role.voicePromptText,
+      voiceMixVoices: role.voiceMixVoices,
+      sample: role.sample,
+    })),
+    chapterTitle: store.state.chapterTitle,
+    chapterContent: store.state.chapterContent,
+    chapterEntryCondition: store.state.chapterEntryCondition,
+    chapterCondition: store.state.chapterCondition,
+    chapterOpeningRole: store.state.chapterOpeningRole,
+    chapterOpeningLine: store.state.chapterOpeningLine,
+    chapterBackground: store.state.chapterBackground,
+    chapterMusic: store.state.chapterMusic,
+    chapterConditionVisible: store.state.chapterConditionVisible,
+  }),
+  () => {
+    if (!autosaveReady) {
+      autosaveReady = true;
+      return;
+    }
+    store.scheduleStoryEditorAutoPersist();
+  },
+);
+
+onUnmounted(() => {
+  store.cancelStoryEditorAutoPersist();
+});
+
+function openUserEditor() {
+  showUserEditor.value = true;
 }
 
-function onCoverFile(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) {
-    void store.updateCoverFromFile(file);
-  }
-  input.value = "";
+function openNpcEditor(index: number) {
+  editingNpcIndex.value = index;
+  showNpcEditor.value = true;
 }
 
-function onChapterBgFile(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) {
-    void store.updateChapterBackgroundFromFile(file);
-  }
-  input.value = "";
+function createNpcAndOpen() {
+  store.addNpcRole();
+  editingNpcIndex.value = Math.max(0, store.state.npcRoles.length - 1);
+  showNpcEditor.value = true;
 }
 
-function onNpcAvatarFile(index: number, e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) {
-    void store.updateAvatarFromFile("npc", file, undefined, index);
-  }
-  input.value = "";
+function closeNpcEditor() {
+  showNpcEditor.value = false;
+  editingNpcIndex.value = null;
 }
 
 function openImageDialog(target: ImageTarget, index: number | null = null) {
@@ -168,14 +241,75 @@ function closeImageDialog() {
   imageDialogNpcIndex.value = null;
 }
 
-function openVoiceDialog(target: VoiceTarget, index: number | null = null) {
-  voiceDialogTarget.value = target;
-  voiceDialogNpcIndex.value = index;
+function openImageSource(target: ImageTarget, index: number | null = null) {
+  imageSourceTarget.value = target;
+  imageSourceNpcIndex.value = index;
+  showImageSourceDialog.value = true;
 }
 
-function closeVoiceDialog() {
-  voiceDialogTarget.value = null;
-  voiceDialogNpcIndex.value = null;
+function closeImageSource() {
+  showImageSourceDialog.value = false;
+  imageSourceTarget.value = null;
+  imageSourceNpcIndex.value = null;
+}
+
+function handleImageSourceUpload() {
+  const target = imageSourceTarget.value;
+  if (!target) return;
+  if (target === "user") userAvatarInput.value?.click();
+  if (target === "cover") storyCoverInput.value?.click();
+  if (target === "chapter") chapterBgInput.value?.click();
+  if (target === "npc" && typeof imageSourceNpcIndex.value === "number") {
+    npcAvatarInputs.value[imageSourceNpcIndex.value]?.click();
+  }
+  closeImageSource();
+}
+
+function handleImageSourceAi() {
+  const target = imageSourceTarget.value;
+  if (!target) return;
+  openImageDialog(target, imageSourceNpcIndex.value);
+  closeImageSource();
+}
+
+async function onUserAvatarFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    await store.updateAvatarFromFile("user", file);
+    store.scheduleStoryEditorAutoPersist(120);
+  }
+  input.value = "";
+}
+
+async function onCoverFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    await store.updateCoverFromFile(file);
+    store.scheduleStoryEditorAutoPersist(120);
+  }
+  input.value = "";
+}
+
+async function onChapterBgFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    await store.updateChapterBackgroundFromFile(file);
+    store.scheduleStoryEditorAutoPersist(120);
+  }
+  input.value = "";
+}
+
+async function onNpcAvatarFile(index: number, e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    await store.updateAvatarFromFile("npc", file, undefined, index);
+    store.scheduleStoryEditorAutoPersist(120);
+  }
+  input.value = "";
 }
 
 async function handleImageConfirm(payload: { prompt: string; styleKey: string; references: string[] }) {
@@ -199,11 +333,22 @@ async function handleImageConfirm(payload: { prompt: string; styleKey: string; r
       }
     }
     store.state.notice = "图片已更新";
+    store.scheduleStoryEditorAutoPersist(120);
   } catch (err) {
     store.state.notice = `AI 生图失败: ${(err as Error).message}`;
   } finally {
     closeImageDialog();
   }
+}
+
+function openVoiceDialog(target: VoiceTarget, index: number | null = null) {
+  voiceDialogTarget.value = target;
+  voiceDialogNpcIndex.value = index;
+}
+
+function closeVoiceDialog() {
+  voiceDialogTarget.value = null;
+  voiceDialogNpcIndex.value = null;
 }
 
 function handleVoiceConfirm(binding: VoiceBindingDraft) {
@@ -217,48 +362,70 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
     store.setNpcRoleVoice(voiceDialogNpcIndex.value, binding);
   }
   store.state.notice = "音色已更新";
+  store.scheduleStoryEditorAutoPersist(120);
   closeVoiceDialog();
+}
+
+function cycleOpeningRole() {
+  const roles = mentionRoles.value;
+  if (!roles.length) return;
+  const currentIndex = Math.max(0, roles.indexOf(store.state.chapterOpeningRole));
+  store.state.chapterOpeningRole = roles[(currentIndex + 1) % roles.length] || roles[0];
+}
+
+async function goNextStep() {
+  await store.saveStoryEditor(false, false, null);
+  store.state.createStep = 1;
+}
+
+async function backToStoryStep() {
+  await store.saveStoryEditor(false, false, null);
+  store.state.createStep = 0;
+}
+
+async function saveDraft() {
+  await store.saveStoryEditor(false, false, "故事草稿已保存");
+}
+
+async function publishStory() {
+  await store.saveStoryEditor(true, false, "故事已发布并可游玩");
+}
+
+async function addNextChapter() {
+  await store.saveStoryEditor(false, true, "当前章节已保存，并已新建下一章节草稿");
+}
+
+async function selectChapter(targetChapterId: number | null) {
+  await store.saveCurrentChapterAndSelect(targetChapterId);
+}
+
+function removeCurrentNpc() {
+  if (typeof editingNpcIndex.value !== "number") return;
+  store.removeNpcRole(editingNpcIndex.value);
+  closeNpcEditor();
+  store.scheduleStoryEditorAutoPersist(120);
 }
 </script>
 
 <template>
-  <section class="surface section-block">
-    <div class="row-between">
-      <div>
-        <h2 class="section-title">故事设定</h2>
-      </div>
-      <div class="row">
-        <button class="button small" type="button" @click="store.state.createStep = store.state.createStep === 0 ? 1 : 0">下一步</button>
-      </div>
-    </div>
-  </section>
-
-  <section v-if="store.state.createStep === 1" class="stack-gap">
-    <section class="surface section-block">
-      <div class="row-between">
-        <div>
-          <div class="section-title" style="font-size:16px;">基本信息</div>
-          <div class="subtle">故事图标、名称、简介。</div>
-        </div>
-        <button class="button small" type="button" @click="store.state.createStep = 0">返回</button>
+  <section class="create-page">
+    <div v-if="store.state.createStep === 1" class="create-step-page stack-gap">
+      <div class="create-page-header">
+        <h2 class="create-page-title">基本信息</h2>
+        <button class="create-link-btn" type="button" @click="backToStoryStep">返回</button>
       </div>
 
-      <div class="stack-gap">
+      <div v-if="canUndoPersist" class="create-undo-row">
+        <button class="create-link-btn" type="button" @click="store.undoStoryAutoPersist()">撤回</button>
+      </div>
+
+      <section class="create-card">
         <div class="field">
           <label>故事图标</label>
-          <div class="row" style="align-items:flex-start;">
-            <div class="story-cover" style="width:100%; max-width: 320px; height: 160px; border-radius: 18px; border:1px solid var(--line);">
-              <StoryCover :title="store.state.worldName || '故事'" :cover-path="store.resolveMediaPath(store.state.worldCoverPath)" empty-text="故事图标" />
-            </div>
-            <div class="dialog-stack" style="min-width: 160px;">
-              <input ref="storyCoverInput" type="file" accept="image/*" hidden @change="onCoverFile" />
-              <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
-              <button class="button block" type="button" @click="storyCoverInput?.click()">上传图片</button>
-              <button class="button block" type="button" @click="openImageDialog('cover')">AI 生图</button>
-            </div>
-          </div>
+          <button class="create-cover-btn create-cover-btn--basic" type="button" @click="openImageSource('cover')">
+            <StoryCover :title="store.state.worldName || '故事'" :cover-path="store.resolveMediaPath(store.state.worldCoverPath)" empty-text="故事图标" />
+          </button>
         </div>
-
         <div class="field">
           <label>故事名称</label>
           <input v-model="store.state.worldName" class="input" type="text" placeholder="输入故事名称" />
@@ -267,288 +434,342 @@ function handleVoiceConfirm(binding: VoiceBindingDraft) {
           <label>故事简介</label>
           <textarea v-model="store.state.worldIntro" class="textarea" rows="5" placeholder="输入故事简介"></textarea>
         </div>
-        <div class="row">
-          <button class="button" type="button" @click="store.state.createStep = 0">返回</button>
-          <button class="button" type="button" @click="store.saveStoryEditor(false, false, '故事草稿已保存')">存草稿</button>
-          <button class="button primary" type="button" @click="store.saveStoryEditor(true, false, '故事已发布并可游玩')">发布</button>
+        <div class="create-footer-actions">
+          <button class="create-footer-btn" type="button" @click="backToStoryStep">返回</button>
+          <button class="create-footer-btn" type="button" @click="saveDraft">存草稿</button>
+          <button class="create-footer-btn create-footer-btn--primary" type="button" @click="publishStory">发布</button>
         </div>
-      </div>
-    </section>
-  </section>
+      </section>
+    </div>
 
-  <section v-else class="stack-gap">
-    <section class="surface section-block">
-      <div class="section-title" style="font-size:16px;">角色（用户固定，旁白单独）</div>
-      <div class="split">
-        <div class="surface section-block surface-soft">
-          <div class="row-between">
-            <div class="row">
-              <div class="avatar" style="width:64px; height:64px;" @click="userAvatarInput?.click()">
+    <div v-else class="create-step-page stack-gap">
+      <div class="create-page-header">
+        <h2 class="create-page-title">故事设定</h2>
+        <button class="create-link-btn" type="button" @click="goNextStep">下一步</button>
+      </div>
+
+      <div v-if="canUndoPersist" class="create-undo-row">
+        <button class="create-link-btn" type="button" @click="store.undoStoryAutoPersist()">撤回</button>
+      </div>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">角色</div>
+          <div class="create-avatar-row">
+            <button class="create-avatar-item" type="button" @click="openUserEditor">
+              <div class="avatar create-role-avatar">
                 <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
-                <div v-else class="placeholder">U</div>
-                <div class="badge">+</div>
+                <div v-else class="placeholder create-user-placeholder">
+                  <span class="create-user-glyph"></span>
+                </div>
+                <div class="badge">✎</div>
               </div>
-              <input ref="userAvatarInput" type="file" accept="image/*" hidden @change="onUserAvatarFile" />
-              <div>
-                <div class="chip active">用户</div>
-                <div class="tiny">点击上传 / AI 生图</div>
+              <span>用户</span>
+            </button>
+            <button
+              v-for="(role, index) in store.state.npcRoles"
+              :key="role.id"
+              class="create-avatar-item"
+              type="button"
+              @click="openNpcEditor(index)"
+            >
+              <div class="avatar create-role-avatar">
+                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" />
+                <div v-else class="placeholder">{{ role.name.slice(0, 1) || '角' }}</div>
               </div>
-            </div>
-            <button class="button small" type="button" @click="openImageDialog('user')">AI 生图</button>
-          </div>
-          <div class="field stack-gap">
-            <label>角色名</label>
-            <input v-model="store.state.playerName" class="input" type="text" placeholder="用户" />
-          </div>
-          <div class="field stack-gap">
-            <label>角色设定</label>
-            <textarea v-model="store.state.playerDesc" class="textarea" rows="3" placeholder="用户在故事中的主视角角色"></textarea>
-          </div>
-          <div class="field stack-gap">
-            <label>角色音色</label>
-            <div class="row">
-              <input :value="store.state.playerVoice || '未选择音色'" class="input" type="text" readonly />
-              <button class="button small" type="button" @click="openVoiceDialog('player')">选择音色</button>
-            </div>
+              <span>{{ role.name || '新角色' }}</span>
+            </button>
+            <button class="create-avatar-item" type="button" @click="createNpcAndOpen">
+              <div class="avatar create-role-avatar create-role-avatar-add">
+                <div class="placeholder">＋</div>
+              </div>
+              <span>新增</span>
+            </button>
           </div>
         </div>
+      </section>
 
-        <div class="surface section-block surface-soft">
-          <div class="row-between">
-            <div class="chip">旁白</div>
-            <button class="button small" type="button" @click="openVoiceDialog('narrator')">选择音色</button>
+      <section v-if="showGlobalBackground" class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">全局背景（选填）</div>
+          <div class="field">
+            <textarea
+              v-model="store.state.globalBackground"
+              class="textarea create-short-textarea"
+              rows="4"
+              placeholder="多章节故事时可填写世界背景，提及时请使用角色名或‘用户’。"
+            ></textarea>
           </div>
-          <div class="field stack-gap">
-            <label>旁白名称</label>
-            <input v-model="store.state.narratorName" class="input" type="text" />
-          </div>
-          <div class="field stack-gap">
-            <label>旁白音色</label>
-            <div class="row">
-              <input :value="store.state.narratorVoice || '默认旁白'" class="input" type="text" readonly />
-              <button class="button small" type="button" @click="openVoiceDialog('narrator')">选择音色</button>
-            </div>
+          <div class="create-mention-row">
+            <button v-for="role in mentionRoles" :key="`global-${role}`" class="chip" type="button" @click="store.appendGlobalMention(role)">{{ role }}</button>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="surface section-block">
-      <div class="row-between">
-        <div>
-          <div class="section-title" style="font-size:16px;">章节 1</div>
-        </div>
-        <div class="row">
-          <button class="button small" type="button" @click="store.selectChapter(null)">新章节</button>
-          <button class="button small" type="button" @click="store.startDebugCurrentChapter()">调试</button>
-        </div>
-      </div>
-
-      <div class="dialog-stack">
-        <div class="field">
-          <label>章节进入条件</label>
-          <textarea v-model="store.state.chapterEntryCondition" class="textarea" rows="3" placeholder="章节开始前的进入条件，可选 JSON 或文本。"></textarea>
-        </div>
-        <div class="field">
-          <label>章节标题</label>
-          <input v-model="store.state.chapterTitle" class="input" type="text" placeholder="章节标题" />
-        </div>
-        <div class="field">
-          <label>章节开场白角色</label>
-          <select v-model="store.state.chapterOpeningRole" class="select">
-            <option v-for="role in store.mentionRoleNames()" :key="role" :value="role">{{ role }}</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>开场白</label>
-          <textarea v-model="store.state.chapterOpeningLine" class="textarea" rows="3" placeholder="作为选定角色/旁白的第一句话开启整个故事"></textarea>
-        </div>
-        <div class="field">
-          <label>章节内容</label>
-          <textarea v-model="store.state.chapterContent" class="textarea" rows="6" placeholder="描述主要情节，提及时请使用角色原名或用户，不要使用“你”来代称。"></textarea>
-        </div>
-        <div class="field">
-          <label>成功条件（结局）</label>
-          <textarea v-model="store.state.chapterCondition" class="textarea" rows="4" placeholder="只有用户达成该条件才进入下一章节。为空代表无结束。"></textarea>
-        </div>
-        <div class="row">
-          <button class="button" type="button" @click="store.saveCurrentChapterAndSelect(null)">添加下一章节</button>
-          <button class="button primary" type="button" @click="store.saveChapterDraft()">保存章节</button>
-        </div>
-      </div>
-    </section>
-
-    <section class="surface section-block">
-      <div class="row-between">
-        <div class="section-title" style="font-size:16px;">章节列表</div>
-      </div>
-      <div class="surface surface-soft section-block" style="padding:12px; margin-bottom:12px;">
-        <div class="row-between">
-          <div>
-            <div style="font-weight:900;">当前章节</div>
-            <div class="tiny">
-              {{ store.state.selectedChapterId ? `${store.state.chapterTitle || '未命名章节'} · #${store.state.selectedChapterId}` : '新章节草稿' }}
-            </div>
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">故事描述</div>
+          <div class="field">
+            <label>开场白</label>
+            <button class="create-picker-btn" type="button" @click="cycleOpeningRole">
+              <span>选择开场白发言角色</span>
+              <strong>{{ store.state.chapterOpeningRole || '旁白' }} ＞</strong>
+            </button>
           </div>
-          <button class="button small" type="button" @click="store.saveCurrentChapterAndSelect(null)">保存并下一章</button>
+          <div class="field">
+            <textarea
+              v-model="store.state.chapterOpeningLine"
+              class="textarea create-short-textarea"
+              rows="3"
+              placeholder="作为选定角色/旁白的第一句话开启整个故事"
+            ></textarea>
+          </div>
         </div>
-      </div>
-      <div class="tag-row">
+      </section>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-section-head">
+            <div class="create-card-title">故事内容（章节内容）</div>
+            <button class="create-link-btn create-debug-btn" type="button" @click="store.startDebugCurrentChapter()">调试</button>
+          </div>
+          <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼</div>
+          <div class="field">
+            <textarea
+              v-model="store.state.chapterContent"
+              class="textarea"
+              rows="6"
+              maxlength="1500"
+              placeholder="描述主要情节，包括用户在故事中和其他角色的互动。提及时请使用角色原名或用户，不要使用‘你’来代称。"
+            ></textarea>
+          </div>
+          <div class="create-mention-row">
+            <button v-for="role in mentionRoles" :key="role" class="chip" type="button" @click="store.appendChapterMention(role)">{{ role }}</button>
+          </div>
+          <div class="create-count-row">
+            <span>还可输入1500字</span>
+            <span>{{ chapterUsed }}/1500</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">成功条件（章节结局）</div>
+          <div class="field">
+            <textarea
+              v-model="store.state.chapterCondition"
+              class="textarea create-short-textarea"
+              rows="4"
+              placeholder="只有用户达成该条件才进入下一章节。为空代表无结束，AI 持续编排。"
+            ></textarea>
+          </div>
+        </div>
+      </section>
+
+      <button class="create-add-chapter-btn" type="button" @click="addNextChapter">
+        <span>添加下一章节</span>
+        <strong>＋</strong>
+      </button>
+
+      <div v-if="store.state.chapters.length || store.state.chapterTitle || store.state.chapterContent || store.state.chapterOpeningLine" class="create-chapter-tabs">
         <button
           v-for="chapter in store.state.chapters"
           :key="chapter.id"
-          class="chip"
+          class="create-chapter-pill"
           :class="{ active: store.state.selectedChapterId === chapter.id }"
           type="button"
-          @click="store.selectChapter(chapter.id)"
+          @click="selectChapter(chapter.id)"
         >
           {{ chapter.title || `章节 ${chapter.sort || 0}` }}
-          <span class="tiny">{{ chapter.status || 'draft' }}</span>
         </button>
-        <button class="chip" type="button" @click="store.selectChapter(null)">新章节</button>
+        <button
+          v-if="!store.state.selectedChapterId && (store.state.chapterTitle || store.state.chapterContent || store.state.chapterOpeningLine)"
+          class="create-chapter-pill active"
+          type="button"
+        >
+          {{ store.state.chapterTitle || '新章节草稿' }}
+        </button>
+        <button class="create-chapter-pill" type="button" @click="selectChapter(null)">新章节</button>
       </div>
-    </section>
 
-    <section class="surface section-block">
-      <div class="row-between">
-        <div>
-          <div class="section-title" style="font-size:16px;">旁白面板</div>
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">旁白面板</div>
+          <button class="create-picker-btn" type="button" @click="openVoiceDialog('narrator')">
+            <span>旁白音色</span>
+            <strong>{{ store.state.narratorVoice || '混合（清朗温润）' }} ＞</strong>
+          </button>
         </div>
-      </div>
-      <div class="field">
-        <label>旁白背景</label>
-        <textarea v-model="store.state.globalBackground" class="textarea" rows="3" placeholder="多章节故事时可填写世界背景。"></textarea>
-      </div>
-      <div class="field stack-gap">
-        <label>结局条件对用户可见</label>
-        <select v-model="store.state.chapterConditionVisible" class="select">
-          <option :value="true">显示</option>
-          <option :value="false">隐藏</option>
-        </select>
-      </div>
-    </section>
+      </section>
 
-    <section class="surface section-block">
-      <div class="row-between">
-        <div>
-          <div class="section-title" style="font-size:16px;">高级设定</div>
-        </div>
-        <button class="button small" type="button" @click="showAdvanced = !showAdvanced">{{ showAdvanced ? "收起" : "展开" }}</button>
-      </div>
-      <div v-if="showAdvanced" class="dialog-stack">
-        <div class="field">
-          <label>章节背景图</label>
-          <div class="row" style="align-items:flex-start;">
-            <div class="story-cover" style="width:100%; max-width: 320px; height: 140px; border:1px solid var(--line); border-radius: 18px;">
-              <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.resolveMediaPath(store.state.chapterBackground)" empty-text="上传 / AI 生成章节背景图" />
+      <section class="create-section">
+        <div class="create-card create-card--compact create-card--toggle">
+          <button class="create-advanced-toggle" type="button" @click="showAdvanced = !showAdvanced">
+            <span>高级设定</span>
+            <strong>{{ showAdvanced ? '收起' : '展开' }}</strong>
+          </button>
+          <div v-if="showAdvanced" class="create-advanced-body">
+            <div class="field">
+              <label>章节背景图</label>
+              <button class="create-cover-btn create-chapter-bg-btn" type="button" @click="openImageSource('chapter')">
+                <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.resolveMediaPath(store.state.chapterBackground)" empty-text="上传 / AI 生成章节背景图" />
+              </button>
             </div>
-            <div class="dialog-stack" style="min-width: 160px;">
-              <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
-              <button class="button block" type="button" @click="chapterBgInput?.click()">上传图片</button>
-              <button class="button block" type="button" @click="openImageDialog('chapter')">AI 生图</button>
+            <div class="field">
+              <label>背景音乐</label>
+              <input v-model="store.state.chapterMusic" class="input" type="text" placeholder="背景音乐（可选）" />
             </div>
+            <label class="create-switch-row">
+              <span>结局条件对用户可见</span>
+              <input v-model="store.state.chapterConditionVisible" type="checkbox" />
+            </label>
+            <label class="create-switch-row">
+              <span>他人可查看角色设定</span>
+              <input v-model="store.state.allowRoleView" type="checkbox" />
+            </label>
+            <label class="create-switch-row">
+              <span>他人可分享对话剧情</span>
+              <input v-model="store.state.allowChatShare" type="checkbox" />
+            </label>
           </div>
         </div>
+      </section>
 
-        <div class="field">
-          <label>背景音乐</label>
-          <input v-model="store.state.chapterMusic" class="input" type="text" placeholder="背景音乐（可选）" />
+      <button class="create-primary-btn" type="button" @click="goNextStep">下一步</button>
+    </div>
+
+    <input ref="storyCoverInput" type="file" accept="image/*" hidden @change="onCoverFile" />
+    <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
+    <input ref="userAvatarInput" type="file" accept="image/*" hidden @change="onUserAvatarFile" />
+
+    <div v-if="showUserEditor" class="modal-backdrop">
+      <div class="modal-panel fullscreen create-editor-panel">
+        <div class="create-editor-header">
+          <div class="create-editor-title">用户扮演角色资料</div>
+          <button class="create-link-btn" type="button" @click="showUserEditor = false">完成</button>
         </div>
-        <div class="field">
-          <label>他人可查看角色设定</label>
-          <select v-model="store.state.allowRoleView" class="select">
-            <option :value="true">是</option>
-            <option :value="false">否</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>他人可分享对话剧情</label>
-          <select v-model="store.state.allowChatShare" class="select">
-            <option :value="true">是</option>
-            <option :value="false">否</option>
-          </select>
+        <div class="create-editor-body">
+          <div class="field">
+            <label>头像（可上传 / AI 生成）</label>
+            <button class="create-editor-avatar-row" type="button" @click="openImageSource('user')">
+              <div class="avatar create-editor-avatar create-editor-avatar--compact">
+                <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
+                <div v-else class="placeholder">
+                  <span class="create-user-glyph"></span>
+                </div>
+              </div>
+              <div class="create-editor-avatar-copy">
+                <strong>点击头像更换</strong>
+                <span>支持 PNG / GIF，保存时会自动标准化。</span>
+                <span>可选：上传、AI 生图。</span>
+              </div>
+            </button>
+          </div>
+          <div class="field">
+            <label>角色名（选填）</label>
+            <input v-model="store.state.playerName" class="input" type="text" placeholder="玩家" />
+          </div>
+          <div class="field">
+            <label>角色设定（选填）</label>
+            <textarea v-model="store.state.playerDesc" class="textarea" rows="5" placeholder="用户在故事中的主视角角色"></textarea>
+          </div>
+          <div class="field">
+            <label>角色音色（选填）</label>
+            <button class="create-picker-btn" type="button" @click="openVoiceDialog('player')">
+              <span>{{ store.state.playerVoice || '例如：温和女声 / 少年音' }}</span>
+              <strong>选择音色 ＞</strong>
+            </button>
+          </div>
+          <div class="create-note">用户是固定角色，不可删除。参数卡会在保存后自动生成。</div>
         </div>
       </div>
-    </section>
+    </div>
 
-    <section class="surface section-block">
-      <div class="section-title" style="font-size:16px;">NPC 列表</div>
-      <div class="dialog-stack">
-        <article v-for="(role, index) in store.state.npcRoles" :key="role.id" class="surface section-block surface-soft">
-          <div class="row-between">
-            <div class="row" style="align-items:flex-start;">
-              <div class="avatar" style="width:56px; height:56px;" @click="npcAvatarInputs[index]?.click()">
-                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" />
-                <div v-else class="placeholder">{{ role.name.slice(0,1) || "R" }}</div>
-                <div class="badge">+</div>
+    <div v-if="showNpcEditor && currentNpcRole" class="modal-backdrop">
+      <div class="modal-panel fullscreen create-editor-panel">
+        <div class="create-editor-header">
+          <div class="create-editor-title">{{ editingNpcIndex === null || editingNpcIndex < 0 ? '新增角色资料' : '编辑角色资料' }}</div>
+          <button class="create-link-btn" type="button" @click="closeNpcEditor">确定</button>
+        </div>
+        <div class="create-editor-body">
+          <div class="field">
+            <label>头像</label>
+            <button class="create-editor-avatar-row" type="button" @click="openImageSource('npc', editingNpcIndex)">
+              <div class="avatar create-editor-avatar create-editor-avatar--compact">
+                <img v-if="currentNpcRole.avatarPath" :src="store.resolveMediaPath(currentNpcRole.avatarPath)" />
+                <div v-else class="placeholder">{{ currentNpcRole.name?.slice(0, 1) || '角' }}</div>
               </div>
-              <input :ref="(el) => (npcAvatarInputs[index] = el as HTMLInputElement | null)" type="file" accept="image/*" hidden @change="onNpcAvatarFile(index, $event)" />
-              <div>
-                <div class="chip active">角色</div>
-                <div class="tiny">第 {{ index + 1 }} 个 NPC</div>
+              <div class="create-editor-avatar-copy">
+                <strong>点击头像更换</strong>
+                <span>支持 PNG / GIF，保存时会自动标准化。</span>
+                <span>可选：上传、AI 生图。</span>
               </div>
-            </div>
-            <div class="row">
-              <button class="button small" type="button" @click="openImageDialog('npc', index)">AI 生图</button>
-              <button class="button small" type="button" @click="store.removeNpcRole(index)">删除</button>
-            </div>
+            </button>
+            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="image/*" hidden @change="editingNpcIndex !== null ? onNpcAvatarFile(editingNpcIndex, $event) : undefined" />
           </div>
-          <div class="field stack-gap">
+          <div class="field">
             <label>角色名</label>
-            <input v-model="role.name" class="input" type="text" />
+            <input v-model="currentNpcRole.name" class="input" type="text" placeholder="角色名" />
           </div>
-          <div class="field stack-gap">
+          <div class="field">
             <label>角色设定</label>
-            <textarea v-model="role.description" class="textarea" rows="3"></textarea>
+            <textarea v-model="currentNpcRole.description" class="textarea" rows="5" placeholder="角色设定"></textarea>
           </div>
-          <div class="field stack-gap">
+          <div class="field">
             <label>角色音色</label>
-            <div class="row">
-              <input :value="role.voice || '未选择音色'" class="input" type="text" readonly />
-              <button class="button small" type="button" @click="openVoiceDialog('npc', index)">选择音色</button>
-            </div>
+            <button class="create-picker-btn" type="button" @click="openVoiceDialog('npc', editingNpcIndex)">
+              <span>{{ currentNpcRole.voice || '未选择音色' }}</span>
+              <strong>选择音色 ＞</strong>
+            </button>
           </div>
-          <div class="field stack-gap">
+          <div class="field">
             <label>台词示例</label>
-            <input v-model="role.sample" class="input" type="text" placeholder="例如：欢迎来到这里。" />
+            <textarea v-model="currentNpcRole.sample" class="textarea create-short-textarea" rows="3" placeholder="例如：欢迎来到这里。"></textarea>
           </div>
-        </article>
-        <button class="button block" type="button" @click="store.addNpcRole()">新增角色</button>
+          <div class="create-note">参数卡会在保存角色后自动生成到 parameterCardJson。</div>
+          <button class="create-remove-btn" type="button" @click="removeCurrentNpc">删除当前角色</button>
+        </div>
       </div>
-    </section>
+    </div>
 
-    <section class="row">
-      <button class="button" type="button" @click="store.saveStoryEditor(false, false, '故事设定已保存')">存草稿</button>
-      <button class="button primary" type="button" @click="store.saveStoryEditor(true, false, '故事已发布并可游玩')">发布</button>
-      <button class="button accent" type="button" @click="store.state.createStep = 1">下一步</button>
-    </section>
+    <div v-if="showImageSourceDialog" class="modal-backdrop image-source-dialog-backdrop">
+      <div class="modal-panel image-source-dialog-panel">
+        <div class="modal-header">选择图片来源</div>
+        <div class="dialog-stack">
+          <button class="image-source-action-btn" type="button" @click="handleImageSourceUpload">上传图片</button>
+          <button class="image-source-action-btn" type="button" @click="handleImageSourceAi">AI 生图</button>
+          <button class="image-source-action-btn image-source-action-btn--ghost" type="button" @click="closeImageSource">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <ImageGenerateDialog
+      v-if="imageDialogTarget"
+      :open="imageDialogOpen"
+      :title="imageDialogState.title"
+      :initial-prompt="imageDialogState.initialPrompt"
+      :initial-style-key="imageDialogState.initialStyleKey"
+      :loading="store.state.aiGenerating"
+      @close="closeImageDialog"
+      @confirm="handleImageConfirm"
+    />
+
+    <VoiceBindingDialog
+      v-if="voiceDialogTarget"
+      :open="voiceDialogOpen"
+      :title="voiceDialogState.title"
+      :initial-label="voiceDialogState.initialLabel"
+      :initial-config-id="voiceDialogState.initialConfigId"
+      :initial-preset-id="voiceDialogState.initialPresetId"
+      :initial-mode="voiceDialogState.initialMode"
+      :initial-reference-audio-path="voiceDialogState.initialReferenceAudioPath"
+      :initial-reference-audio-name="voiceDialogState.initialReferenceAudioName"
+      :initial-reference-text="voiceDialogState.initialReferenceText"
+      :initial-prompt-text="voiceDialogState.initialPromptText"
+      :initial-mix-voices="voiceDialogState.initialMixVoices"
+      @close="closeVoiceDialog"
+      @confirm="handleVoiceConfirm"
+    />
   </section>
-
-  <ImageGenerateDialog
-    v-if="imageDialogTarget"
-    :open="imageDialogOpen"
-    :title="imageDialogState.title"
-    :initial-prompt="imageDialogState.initialPrompt"
-    :initial-style-key="imageDialogState.initialStyleKey"
-    :loading="store.state.aiGenerating"
-    @close="closeImageDialog"
-    @confirm="handleImageConfirm"
-  />
-
-  <VoiceBindingDialog
-    v-if="voiceDialogTarget"
-    :open="voiceDialogOpen"
-    :title="voiceDialogState.title"
-    :initial-label="voiceDialogState.initialLabel"
-    :initial-config-id="voiceDialogState.initialConfigId"
-    :initial-preset-id="voiceDialogState.initialPresetId"
-    :initial-mode="voiceDialogState.initialMode"
-    :initial-reference-audio-path="voiceDialogState.initialReferenceAudioPath"
-    :initial-reference-audio-name="voiceDialogState.initialReferenceAudioName"
-    :initial-reference-text="voiceDialogState.initialReferenceText"
-    :initial-prompt-text="voiceDialogState.initialPromptText"
-    :initial-mix-voices="voiceDialogState.initialMixVoices"
-    @close="closeVoiceDialog"
-    @confirm="handleVoiceConfirm"
-  />
 </template>
