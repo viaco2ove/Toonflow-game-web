@@ -1045,6 +1045,10 @@ a {
   height: 18px;
 }
 
+.create-switch-row--spaced {
+  margin-top: 2px;
+}
+
 .create-primary-btn {
   width: 100%;
   min-height: 44px;

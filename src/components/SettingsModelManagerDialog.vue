@@ -6,7 +6,10 @@ import {
   MODEL_MANUFACTURERS,
   MODEL_TYPE_OPTIONS,
   defaultBaseUrlFor,
+  defaultManufacturerFor,
+  defaultModelNameFor,
   defaultModelTypeFor,
+  isApiKeyRequiredFor,
   manufacturerLabel,
   manufacturerWebsite,
   modelKindLabel,
@@ -35,10 +38,10 @@ const editingId = ref<number | null>(null);
 const testingId = ref<number | null>(null);
 const visibleKeys = reactive<Record<number, boolean>>({});
 const form = reactive({
-  manufacturer: "volcengine",
+  manufacturer: defaultManufacturerFor(props.configType),
   modelType: defaultModelTypeFor(props.configType),
-  model: "",
-  baseUrl: defaultBaseUrlFor("volcengine", props.configType),
+  model: defaultModelNameFor(defaultManufacturerFor(props.configType), props.configType),
+  baseUrl: defaultBaseUrlFor(defaultManufacturerFor(props.configType), props.configType),
   apiKey: "",
 });
 
@@ -71,6 +74,7 @@ watch(
   ([manufacturer, configType], [prevManufacturer]) => {
     if (manufacturer !== prevManufacturer && !editingId.value) {
       form.baseUrl = defaultBaseUrlFor(manufacturer, configType);
+      form.model = defaultModelNameFor(manufacturer, configType);
     }
   },
 );
@@ -97,9 +101,9 @@ function close() {
 
 function openCreate() {
   editingId.value = null;
-  form.manufacturer = "volcengine";
+  form.manufacturer = defaultManufacturerFor(props.configType);
   form.modelType = defaultModelTypeFor(props.configType);
-  form.model = "";
+  form.model = defaultModelNameFor(form.manufacturer, props.configType);
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType);
   form.apiKey = "";
   showEditor.value = true;
@@ -120,7 +124,7 @@ async function submitEditor() {
     store.state.notice = "模型名称不能为空";
     return;
   }
-  if (!form.apiKey.trim()) {
+  if (isApiKeyRequiredFor(form.manufacturer, props.configType) && !form.apiKey.trim()) {
     store.state.notice = "API Key 不能为空";
     return;
   }
@@ -289,7 +293,12 @@ async function confirmBinding() {
         </div>
         <div class="field">
           <label>API Key</label>
-          <input v-model="form.apiKey" class="input" type="password" placeholder="请输入 API Key" />
+          <input
+            v-model="form.apiKey"
+            class="input"
+            type="password"
+            :placeholder="isApiKeyRequiredFor(form.manufacturer, configType) ? '请输入 API Key' : '本地 ai_voice_tts 可留空'"
+          />
         </div>
       </div>
       <div class="modal-actions">

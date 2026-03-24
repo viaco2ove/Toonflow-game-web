@@ -193,6 +193,9 @@ export interface VoiceModelConfig {
 export interface VoicePresetItem {
   voiceId: string;
   name: string;
+  provider?: string;
+  modes?: string[];
+  description?: string;
 }
 
 export interface UploadedVoiceAudioResult {

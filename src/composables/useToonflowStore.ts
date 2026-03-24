@@ -3,6 +3,7 @@ import { ToonflowApi } from "../api/toonflow";
 import {
   AiModelMapItem,
   AppTab,
+  ChapterExtra,
   ChapterItem,
   MessageItem,
   ModelConfigItem,
@@ -113,6 +114,14 @@ function stripOpeningPrefix(input: unknown, openingRole: string, openingLine: st
   const roleMatches = !expectedRole || !extracted.role || extracted.role === expectedRole;
   const lineMatches = !expectedLine || !extracted.line || extracted.line === expectedLine;
   return roleMatches && lineMatches ? extracted.body : text;
+}
+
+function buildPersistedChapterContent(input: unknown, openingRole: string, openingLine: string, fallbackRole = "旁白"): string {
+  const role = normalizeScalarEditorText(openingRole).trim() || fallbackRole;
+  const line = normalizeScalarEditorText(openingLine).trim();
+  const body = stripOpeningPrefix(input, role, line).trim();
+  if (!line) return body;
+  return body ? `开场白[${role}]：${line}\n${body}` : `开场白[${role}]：${line}`;
 }
 
 function createEmptyWorldState() {
@@ -1205,6 +1214,42 @@ function createToonflowStore() {
   }
 
   function storySettingsObject() {
+    const chapterExtras: ChapterExtra[] = state.chapters
+      .map((chapter) => ({
+        chapterId: chapter.id,
+        sort: Number(chapter.sort || 0),
+        openingRole: normalizeScalarEditorText(chapter.openingRole).trim(),
+        openingLine: normalizeScalarEditorText(chapter.openingText).trim(),
+        background: normalizeScalarEditorText(chapter.backgroundPath).trim(),
+        music: normalizeScalarEditorText(chapter.bgmPath).trim(),
+        conditionVisible: chapter.showCompletionCondition ?? true,
+      }))
+      .filter((item) => item.sort > 0);
+    const draftSort = state.selectedChapterId
+      ? state.chapters.find((item) => item.id === state.selectedChapterId)?.sort || 0
+      : Math.max(0, ...state.chapters.map((item) => Number(item.sort || 0))) + 1;
+    const hasDraftExtra =
+      normalizeScalarEditorText(state.chapterOpeningLine).trim().length > 0 ||
+      normalizeScalarEditorText(state.chapterBackground).trim().length > 0 ||
+      normalizeScalarEditorText(state.chapterMusic).trim().length > 0 ||
+      state.chapterConditionVisible !== true;
+    if (hasDraftExtra && draftSort > 0) {
+      const draftExtra = {
+        chapterId: state.selectedChapterId || null,
+        sort: draftSort,
+        openingRole: normalizeScalarEditorText(state.chapterOpeningRole).trim() || state.narratorName || "旁白",
+        openingLine: normalizeScalarEditorText(state.chapterOpeningLine).trim(),
+        background: normalizeScalarEditorText(state.chapterBackground).trim(),
+        music: normalizeScalarEditorText(state.chapterMusic).trim(),
+        conditionVisible: state.chapterConditionVisible,
+      };
+      const index = chapterExtras.findIndex((item) => (draftExtra.chapterId ? item.chapterId === draftExtra.chapterId : item.sort === draftExtra.sort));
+      if (index >= 0) {
+        chapterExtras[index] = draftExtra;
+      } else {
+        chapterExtras.push(draftExtra);
+      }
+    }
     return {
       roles: state.npcRoles,
       narratorVoice: state.narratorVoice,
@@ -1231,7 +1276,7 @@ function createToonflowStore() {
         notes: "",
       },
       publishStatus: state.worldPublishStatus,
-      chapterExtras: [],
+      chapterExtras,
     };
   }
 
@@ -1550,9 +1595,10 @@ function createToonflowStore() {
     const extractedOpening = extractOpeningContentParts(chapter.content);
     const openingRole = normalizeScalarEditorText(chapter.openingRole).trim() || extractedOpening?.role || "旁白";
     const openingLine = normalizeScalarEditorText(chapter.openingText).trim() || extractedOpening?.line || "";
+    const chapterBody = stripOpeningPrefix(chapter.content, openingRole, openingLine);
     state.selectedChapterId = chapter.id;
-    state.chapterTitle = chapter.title || "";
-    state.chapterContent = stripOpeningPrefix(chapter.content, openingRole, openingLine);
+    state.chapterTitle = normalizeScalarEditorText(chapter.title);
+    state.chapterContent = chapterBody;
     state.chapterEntryCondition = normalizeConditionEditorText(chapter.entryCondition);
     state.chapterCondition = normalizeConditionEditorText(chapter.completionCondition);
     state.chapterOpeningRole = openingRole;
@@ -1588,8 +1634,21 @@ function createToonflowStore() {
       state.worldId = world.id;
     }
     const chapterBody = stripOpeningPrefix(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
+    const persistedContent = buildPersistedChapterContent(
+      chapterBody,
+      state.chapterOpeningRole,
+      state.chapterOpeningLine,
+      state.narratorName || "旁白",
+    );
     const entryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
     const completionConditionText = normalizeConditionEditorText(state.chapterCondition);
+    state.chapterContent = chapterBody;
+    state.chapterEntryCondition = entryConditionText;
+    state.chapterCondition = completionConditionText;
+    state.chapterOpeningLine = normalizeScalarEditorText(state.chapterOpeningLine).trim();
+    state.chapterOpeningRole = normalizeScalarEditorText(state.chapterOpeningRole).trim() || state.narratorName || "旁白";
+    state.chapterBackground = normalizeScalarEditorText(state.chapterBackground).trim();
+    state.chapterMusic = normalizeScalarEditorText(state.chapterMusic).trim();
     const chapterPayload = {
       chapterId: state.selectedChapterId || undefined,
       worldId: state.worldId,
@@ -1600,7 +1659,7 @@ function createToonflowStore() {
       bgmPath: state.chapterMusic,
       showCompletionCondition: state.chapterConditionVisible,
       title: state.chapterTitle.trim() || `章节 ${Date.now()}`,
-      content: chapterBody,
+      content: persistedContent,
       entryCondition: safeJsonParse(entryConditionText, entryConditionText || null),
       completionCondition: safeJsonParse(completionConditionText, completionConditionText || null),
       sort: state.selectedChapterId ? state.chapters.find((item) => item.id === state.selectedChapterId)?.sort || state.chapters.length + 1 : state.chapters.length + 1,
@@ -1617,6 +1676,7 @@ function createToonflowStore() {
     if (showNotice) {
       state.notice = "章节已保存";
     }
+    await saveWorldOnly(statusOverride === "published");
     await reloadWorldsAfterSave();
     primeStoryEditorPersistState();
     return saved;

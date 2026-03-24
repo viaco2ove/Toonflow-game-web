@@ -48,6 +48,7 @@ const modeOptions = [
 
 const presets = computed(() => store.voicePresetsForConfig(selectedConfigId.value));
 const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === selectedConfigId.value) || null);
+const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
 
 watch(
   () => props.open,
@@ -195,7 +196,7 @@ async function polishPrompt() {
   polishLoading.value = true;
   previewStatus.value = "";
   try {
-    const style = [selectedModel.value?.model, selectedModel.value?.manufacturer].filter(Boolean).join(" · ");
+    const style = [selectedModel.value?.model, selectedModel.value?.manufacturer, selectedPreset.value?.provider].filter(Boolean).join(" · ");
     const polished = await store.polishVoicePrompt(source, style);
     if (!polished) throw new Error("未返回润色结果");
     promptText.value = polished;
@@ -211,6 +212,33 @@ function downloadAudioName() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const base = props.title.replace(/\s+/g, "").replace(/[^\w\u4e00-\u9fa5-]/g, "") || "voice_preview";
   return `${base}_${stamp}.wav`;
+}
+
+async function downloadPreviewAudio() {
+  const url = previewAudioUrl.value.trim();
+  if (!url) {
+    previewStatus.value = "请先试听后再下载";
+    return;
+  }
+  previewStatus.value = "正在准备下载...";
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = downloadAudioName();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    previewStatus.value = "下载已开始";
+  } catch (err) {
+    previewStatus.value = `下载失败: ${(err as Error).message}`;
+  }
 }
 
 function openAudioPicker() {
@@ -383,7 +411,7 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
-              <a v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" :href="previewAudioUrl" :download="downloadAudioName()">下载音色</a>
+              <button v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
             <audio v-if="previewAudioUrl" ref="previewPlayer" class="voice-dialog-audio" :src="previewAudioUrl" controls preload="metadata"></audio>

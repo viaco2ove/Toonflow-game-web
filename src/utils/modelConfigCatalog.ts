@@ -14,6 +14,14 @@ export interface ModelTypeOption {
 
 export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
   {
+    value: "ai_voice_tts",
+    label: "ai_voice_tts",
+    website: "https://github.com/viaco2ove/ai_voice_tts",
+    defaults: {
+      voice: "http://127.0.0.1:8000",
+    },
+  },
+  {
     value: "volcengine",
     label: "火山引擎",
     website: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
@@ -88,7 +96,7 @@ export const MODEL_TYPE_OPTIONS: Record<ModelConfigKind, ModelTypeOption[]> = {
     { value: "i2i", label: "图生图" },
   ],
   voice: [
-    { value: "tts", label: "语音生成" },
+    { value: "tts", label: "语音tts" },
     { value: "asr", label: "语音识别" },
   ],
 };
@@ -104,8 +112,22 @@ export function defaultModelTypeFor(type: ModelConfigKind): string {
   return MODEL_TYPE_OPTIONS[type][0]?.value || "";
 }
 
+export function defaultManufacturerFor(type: ModelConfigKind): string {
+  return type === "voice" ? "ai_voice_tts" : "volcengine";
+}
+
 export function defaultBaseUrlFor(manufacturer: string, type: ModelConfigKind): string {
   return MODEL_MANUFACTURERS.find((item) => item.value === manufacturer)?.defaults[type] || "";
+}
+
+export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind): string {
+  if (type === "voice" && manufacturer === "ai_voice_tts") return "ai_voice_tts";
+  return "";
+}
+
+export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind): boolean {
+  if (type === "voice" && manufacturer === "ai_voice_tts") return false;
+  return true;
 }
 
 export function manufacturerLabel(value: string): string {

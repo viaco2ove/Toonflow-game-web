@@ -215,7 +215,10 @@ export class ToonflowApi {
         const voiceId = String(item.voice_id || item.voiceId || item.id || item.key || "").trim();
         if (!voiceId) return null;
         const name = String(item.name || item.label || item.voice_name || voiceId).trim() || voiceId;
-        return { voiceId, name } satisfies VoicePresetItem;
+        const provider = String(item.provider || item.provider_id || "").trim();
+        const modes = Array.isArray(item.modes) ? item.modes.map((mode: any) => String(mode || "").trim()).filter(Boolean) : [];
+        const description = String(item.description || item.desc || "").trim();
+        return { voiceId, name, provider, modes, description } satisfies VoicePresetItem;
       })
       .filter((item: VoicePresetItem | null): item is VoicePresetItem => !!item);
   }

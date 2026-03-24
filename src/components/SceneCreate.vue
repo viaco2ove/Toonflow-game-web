@@ -21,6 +21,7 @@ const imageSourceNpcIndex = ref<number | null>(null);
 
 const storyCoverInput = ref<HTMLInputElement | null>(null);
 const chapterBgInput = ref<HTMLInputElement | null>(null);
+const chapterMusicInput = ref<HTMLInputElement | null>(null);
 const userAvatarInput = ref<HTMLInputElement | null>(null);
 const npcAvatarInputs = ref<Record<number, HTMLInputElement | null>>({});
 const globalBackgroundInput = ref<HTMLTextAreaElement | null>(null);
@@ -35,8 +36,7 @@ const coverAiPrompt = computed(() => store.state.worldIntro || store.state.world
 const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
 const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
 const mentionRoles = computed(() => store.mentionRoleNames());
-const chapterRemain = computed(() => Math.max(0, 1500 - (store.state.chapterContent || "").length));
-const chapterUsed = computed(() => Math.min(1500, (store.state.chapterContent || "").length));
+const chapterUsed = computed(() => (store.state.chapterContent || "").length);
 const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
 const showGlobalBackground = computed(() => store.state.chapters.length > 1 || !!store.state.globalBackground.trim());
 const currentNpcRole = computed<StoryRole | null>(() => {
@@ -44,6 +44,13 @@ const currentNpcRole = computed<StoryRole | null>(() => {
   if (typeof index !== "number") return null;
   return store.state.npcRoles[index] || null;
 });
+
+function displayMediaName(input: string, fallback: string) {
+  const raw = String(input || "").trim();
+  if (!raw) return fallback;
+  const clean = raw.split("?")[0]?.split("#")[0] || raw;
+  return clean.split("/").filter(Boolean).pop() || fallback;
+}
 
 const imageDialogState = computed(() => {
   switch (imageDialogTarget.value) {
@@ -305,6 +312,18 @@ async function onChapterBgFile(e: Event) {
   input.value = "";
 }
 
+async function onChapterMusicFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    const uploaded = await store.uploadVoiceReferenceAudio(file);
+    store.state.chapterMusic = uploaded.path;
+    store.state.notice = "背景音乐已上传";
+    store.scheduleStoryEditorAutoPersist(120);
+  }
+  input.value = "";
+}
+
 async function onNpcAvatarFile(index: number, e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -542,10 +561,6 @@ function cancelRemoveCurrentNpc() {
               class="textarea create-short-textarea"
               rows="4"
               placeholder="多章节故事时可填写世界背景，提及时请使用角色名或‘用户’。"
-              @beforeinput.stop
-              @keydown.stop
-              @keyup.stop
-              @keypress.stop
             ></textarea>
           </div>
           <div class="create-mention-row">
@@ -570,11 +585,17 @@ function cancelRemoveCurrentNpc() {
               class="textarea create-short-textarea"
               rows="3"
               placeholder="作为选定角色/旁白的第一句话开启整个故事"
-              @keydown.stop
-              @keyup.stop
-              @keypress.stop
             ></textarea>
           </div>
+        </div>
+      </section>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">章节背景图片</div>
+          <button class="create-cover-btn create-chapter-bg-btn" type="button" @click="openImageSource('chapter')">
+            <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.resolveMediaPath(store.state.chapterBackground)" empty-text="上传 / AI 生成章节背景图" />
+          </button>
         </div>
       </section>
 
@@ -591,12 +612,7 @@ function cancelRemoveCurrentNpc() {
               v-model="store.state.chapterContent"
               class="textarea"
               rows="6"
-              maxlength="1500"
               placeholder="描述主要情节，包括用户在故事中和其他角色的互动。提及时请使用角色原名或用户，不要使用‘你’来代称。"
-              @beforeinput.stop
-              @keydown.stop
-              @keyup.stop
-              @keypress.stop
             ></textarea>
           </div>
           <div class="create-mention-row">
@@ -618,11 +634,22 @@ function cancelRemoveCurrentNpc() {
               class="textarea create-short-textarea"
               rows="4"
               placeholder="只有用户达成该条件才进入下一章节。为空代表无结束，AI 持续编排。"
-              @keydown.stop
-              @keyup.stop
-              @keypress.stop
             ></textarea>
           </div>
+          <label class="create-switch-row create-switch-row--spaced">
+            <span>结局条件对用户可见</span>
+            <input v-model="store.state.chapterConditionVisible" type="checkbox" />
+          </label>
+        </div>
+      </section>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">背景音乐（可选）</div>
+          <button class="create-picker-btn" type="button" @click="chapterMusicInput?.click()">
+            <span>{{ displayMediaName(store.state.chapterMusic, '可选预设音乐（现在无），也可以上传') }}</span>
+            <strong>上传 ＞</strong>
+          </button>
         </div>
       </section>
 
@@ -631,7 +658,7 @@ function cancelRemoveCurrentNpc() {
         <strong>＋</strong>
       </button>
 
-      <div v-if="store.state.chapters.length || store.state.chapterTitle || store.state.chapterContent || store.state.chapterOpeningLine" class="create-chapter-tabs">
+      <div v-if="store.state.chapters.length > 1" class="create-chapter-tabs">
         <button
           v-for="chapter in store.state.chapters"
           :key="chapter.id"
@@ -661,20 +688,6 @@ function cancelRemoveCurrentNpc() {
             <strong>{{ showAdvanced ? '收起' : '展开' }}</strong>
           </button>
           <div v-if="showAdvanced" class="create-advanced-body">
-            <div class="field">
-              <label>章节背景图</label>
-              <button class="create-cover-btn create-chapter-bg-btn" type="button" @click="openImageSource('chapter')">
-                <StoryCover :title="store.state.chapterTitle || '章节背景'" :cover-path="store.resolveMediaPath(store.state.chapterBackground)" empty-text="上传 / AI 生成章节背景图" />
-              </button>
-            </div>
-            <div class="field">
-              <label>背景音乐</label>
-              <input v-model="store.state.chapterMusic" class="input" type="text" placeholder="背景音乐（可选）" />
-            </div>
-            <label class="create-switch-row">
-              <span>结局条件对用户可见</span>
-              <input v-model="store.state.chapterConditionVisible" type="checkbox" />
-            </label>
             <label class="create-switch-row">
               <span>他人可查看角色设定</span>
               <input v-model="store.state.allowRoleView" type="checkbox" />
@@ -692,6 +705,7 @@ function cancelRemoveCurrentNpc() {
 
     <input ref="storyCoverInput" type="file" accept="image/*" hidden @change="onCoverFile" />
     <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
+    <input ref="chapterMusicInput" type="file" accept="audio/*" hidden @change="onChapterMusicFile" />
     <input ref="userAvatarInput" type="file" accept="image/*" hidden @change="onUserAvatarFile" />
 
     <div v-if="showUserEditor" class="modal-backdrop">
