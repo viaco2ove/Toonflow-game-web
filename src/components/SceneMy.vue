@@ -20,8 +20,8 @@ const visibleDrafts = computed(() => drafts.value.filter((world) => !projectName
 const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
 const latestDraft = computed(() => visibleDrafts.value[0] || null);
 const latestPublished = computed(() => visiblePublished.value[0] || null);
-const worksCount = computed(() => visibleDrafts.value.length + visiblePublished.value.length);
-const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 3));
+const worksCount = computed(() => visiblePublished.value.length);
+const workTags = computed(() => visiblePublished.value.map((world) => world.name).filter(Boolean).slice(0, 1));
 const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));
 const followCount = computed(() => (visiblePublished.value.length ? 1 : 0));
 const fanCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.chapterCount || 0), 0));
@@ -30,6 +30,7 @@ const showAvatarActionDialog = ref(false);
 const accountImageDialogOpen = ref(false);
 const showDraftListPage = ref(false);
 const deletingDraft = ref<WorldItem | null>(null);
+const draftMenuWorld = ref<WorldItem | null>(null);
 
 const accountDialogTitle = computed(() => "创建角色");
 const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
@@ -71,10 +72,12 @@ function openDraftListDialog() {
 
 function closeDraftListDialog() {
   showDraftListPage.value = false;
+  draftMenuWorld.value = null;
 }
 
 function askDeleteDraft(world: WorldItem) {
   deletingDraft.value = world;
+  draftMenuWorld.value = null;
 }
 
 function cancelDeleteDraft() {
@@ -92,8 +95,25 @@ async function confirmDeleteDraft() {
 }
 
 async function editDraft(world: WorldItem) {
+  draftMenuWorld.value = null;
   closeDraftListDialog();
   await store.openWorldForEdit(world);
+}
+
+function openDraftMenu(world: WorldItem) {
+  draftMenuWorld.value = world;
+}
+
+function closeDraftMenu() {
+  draftMenuWorld.value = null;
+}
+
+function formatDate(ts?: number) {
+  if (!ts) return "";
+  const date = new Date(ts);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${month}-${day}`;
 }
 
 async function handleAccountImageConfirm(payload: { prompt: string; styleKey: string; references: string[] }) {
@@ -191,11 +211,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         </div>
         <div v-else class="my-empty-card">暂无草稿</div>
         <div class="my-work-body">
-          <div class="my-work-row">
-            <h3>{{ latestDraft ? `${latestDraft.name || "未命名故事"} · 草稿` : "暂无草稿" }}</h3>
-            <span class="my-work-status">草稿箱</span>
-          </div>
-          <p>{{ latestDraft ? `共 ${visibleDrafts.length} 个草稿` : "保存草稿后会显示在这里" }}</p>
+          <p>保存草稿后会显示在这里</p>
         </div>
       </article>
 
@@ -215,7 +231,8 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
             <span class="my-work-status" :class="{ published: !!latestPublished }">已发布</span>
           </div>
           <p>{{ latestPublished ? (latestPublished.intro || "") : "发布后会在这里展示" }}</p>
-          <div v-if="latestPublished" class="my-work-actions one">
+          <div v-if="latestPublished" class="my-work-actions">
+            <button class="button small" type="button" @click="store.startFromWorld(latestPublished)">进入游戏</button>
             <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(latestPublished)">编辑</button>
           </div>
         </div>
@@ -240,31 +257,43 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
       <div class="my-empty-caption">保存草稿后会显示在这里</div>
     </section>
 
-    <section v-else class="draft-sheet-list-page">
-      <article v-for="world in visibleDrafts" :key="world.id" class="draft-sheet-item">
-        <button class="draft-sheet-cover" type="button" @click="editDraft(world)">
+    <section v-else class="draft-tile-grid">
+      <article v-for="world in visibleDrafts" :key="world.id" class="draft-tile">
+        <button class="draft-tile-cover" type="button" @click="editDraft(world)">
           <StoryCover
             :title="world.name || '草稿'"
             :cover-path="store.worldCoverPath(world)"
-            empty-text="草稿"
-            height="140px"
+            empty-text=""
+            height="250px"
             variant="plain"
           />
+          <span v-if="!store.worldCoverPath(world)" class="draft-tile-badge">未生图</span>
+          <div class="draft-tile-overlay">
+            <div class="draft-tile-title">{{ world.name || "未命名" }}</div>
+            <div class="draft-tile-date">{{ formatDate((world as any).updateTime) || "--.--" }}</div>
+          </div>
         </button>
-        <div class="draft-sheet-body">
-          <div class="my-work-row">
-            <h3>{{ world.name || "未命名故事" }}</h3>
-            <span class="my-work-status">草稿</span>
-          </div>
-          <p>{{ world.intro || "保存草稿后会显示在这里" }}</p>
-          <div class="draft-sheet-actions">
-            <button class="button primary small" type="button" @click="editDraft(world)">编辑</button>
-            <button class="button small danger-outline" type="button" @click="askDeleteDraft(world)">删除</button>
-          </div>
-        </div>
+        <button class="draft-tile-menu" type="button" @click="openDraftMenu(world)">...</button>
       </article>
     </section>
   </main>
+
+  <div v-if="draftMenuWorld" class="modal-backdrop" @click.self="closeDraftMenu">
+    <div class="modal-panel" style="width:min(100%,320px);">
+      <div class="modal-header">
+        <div style="font-weight:900;">{{ draftMenuWorld.name || "未命名故事" }}</div>
+      </div>
+      <div class="modal-body">
+        <div class="dialog-stack">
+          <button class="button primary block" type="button" @click="editDraft(draftMenuWorld)">编辑</button>
+          <button class="button block danger-outline" type="button" @click="askDeleteDraft(draftMenuWorld)">删除</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="button" type="button" @click="closeDraftMenu">关闭</button>
+      </div>
+    </div>
+  </div>
 
   <div v-if="deletingDraft" class="modal-backdrop" @click.self="cancelDeleteDraft">
     <div class="modal-panel" style="width:min(100%,360px);">
