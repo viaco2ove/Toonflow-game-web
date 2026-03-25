@@ -8,8 +8,29 @@ const messages = computed(() => store.state.messages);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
-const currentChapter = computed(() => session.value?.chapter || store.state.chapters.find((item) => item.id === debugChapterIndex.value) || null);
+const currentChapter = computed(() => session.value?.chapter || store.state.chapters[debugChapterIndex.value] || null);
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
+function extractOpeningContentParts(input: unknown): { role: string; line: string; body: string } | null {
+  const text = String(input || "").trim();
+  if (!text) return null;
+  const match = text.match(/^开场白(?:\[(.+?)\]|([^\[\]:：\r\n]+))\s*[:：]\s*([^\r\n]*)(?:\r?\n)*/);
+  if (!match) return null;
+  return {
+    role: String(match[1] || match[2] || "").trim(),
+    line: String(match[3] || "").trim(),
+    body: text.slice(match[0].length).replace(/^\s*[\r\n]+/, ""),
+  };
+}
+function stripLeadingOpeningBlocks(input: unknown): string {
+  let text = String(input || "").trim();
+  if (!text) return "";
+  for (let i = 0; i < 8; i += 1) {
+    const extracted = extractOpeningContentParts(text);
+    if (!extracted) break;
+    text = extracted.body.replace(/^\s*[\r\n]+/, "");
+  }
+  return text;
+}
 const chapterBackgroundPath = computed(() =>
   store.resolveMediaPath(
     currentChapter.value?.backgroundPath || store.state.chapterBackground || currentWorld.value?.settings?.coverBgPath || currentWorld.value?.settings?.coverPath || "",
@@ -34,6 +55,18 @@ const chapterConditionHint = computed(() => {
     ? "当前处于调试缓存，发送消息后会按完成条件自动切章，未保存内容也会参与判定。"
     : "正式会话会由服务端决定章节推进，本地仅展示当前章节状态。";
   return `进入条件：${entry}\n完成条件：${completion}\n${modeHint}`;
+});
+const chapterContentText = computed(() => {
+  const openingRole = currentChapter.value?.openingRole || store.state.chapterOpeningRole || "旁白";
+  const openingLine = currentChapter.value?.openingText || store.state.chapterOpeningLine || "";
+  const raw = currentChapter.value?.content || store.state.chapterContent || "";
+  const firstPass = stripLeadingOpeningBlocks(raw);
+  if (!openingLine) return firstPass || "暂无章节内容";
+  const extracted = extractOpeningContentParts(raw);
+  if (!extracted) return firstPass || "暂无章节内容";
+  const roleMatches = !openingRole || !extracted.role || extracted.role === openingRole;
+  const lineMatches = !openingLine || !extracted.line || extracted.line === openingLine;
+  return (roleMatches && lineMatches ? stripLeadingOpeningBlocks(extracted.body) : firstPass) || "暂无章节内容";
 });
 const roleCards = computed(() => {
   const world = currentWorld.value;
@@ -72,6 +105,9 @@ const messageViewport = ref<HTMLElement | null>(null);
 let speechRecognition: any = null;
 
 const displayMessages = computed(() => (playMode.value === "history" ? messages.value : messages.value.slice(-1)));
+const latestSpeakableMessage = computed(() =>
+  [...messages.value].reverse().find((message) => message.roleType !== "player" && message.content.trim()) || null,
+);
 const playStageStyle = computed(() => {
   const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
   if (chapterBackgroundPath.value) {
@@ -115,6 +151,7 @@ const browserSpeechSupported = computed(() => {
   if (typeof window === "undefined") return false;
   return Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 });
+const lastAutoReadKey = ref("");
 
 watch(roleCards, (list) => {
   if (!list.length) {
@@ -147,7 +184,34 @@ watch(
     chapterDetailOpen.value = true;
     closeMenu();
     stopVoiceRecognition();
+    lastAutoReadKey.value = "";
   },
+);
+
+watch(autoVoice, (enabled) => {
+  if (!enabled && typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+});
+
+watch(
+  () => [
+    store.state.currentSessionId,
+    autoVoice.value,
+    latestSpeakableMessage.value?.id,
+    latestSpeakableMessage.value?.createTime,
+    latestSpeakableMessage.value?.content,
+  ],
+  () => {
+    if (!autoVoice.value || playMode.value === "setting" || playMode.value === "tips") return;
+    const message = latestSpeakableMessage.value;
+    if (!message) return;
+    const key = `${store.state.currentSessionId}_${message.id}_${message.createTime}`;
+    if (lastAutoReadKey.value === key) return;
+    lastAutoReadKey.value = key;
+    replay(message.content);
+  },
+  { flush: "post" },
 );
 
 watch(playMode, (mode) => {
@@ -395,14 +459,6 @@ function toggleChapterDetail() {
   chapterDetailOpen.value = !chapterDetailOpen.value;
 }
 
-function debugPrevChapter() {
-  store.jumpDebugChapter(-1);
-}
-
-function debugNextChapter() {
-  store.jumpDebugChapter(1);
-}
-
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
 }
@@ -428,7 +484,7 @@ function openSettingMode() {
 
 function handleStatusAction() {
   if (store.state.debugMode) {
-    store.state.notice = "当前为调试缓存";
+    playMode.value = playMode.value === "setting" ? "live" : "setting";
     return;
   }
   void store.refreshCurrentSession();
@@ -579,8 +635,6 @@ onBeforeUnmount(() => {
       <button type="button" class="play-fav-btn" @click="toggleFavorite">❤</button>
       <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">历史模式</div>
-      <button type="button" class="play-float-btn" @click="toggleTipsMode">{{ playMode === "tips" ? "↩" : "提" }}</button>
-
       <div ref="messageViewport" class="play-thread" :class="{ 'play-thread--history': playMode === 'history' }">
         <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
         <div v-else class="play-thread__inner" :class="{ 'play-thread__inner--history': playMode === 'history' }">
@@ -663,7 +717,7 @@ onBeforeUnmount(() => {
         <div v-if="chapterDetailOpen" class="play-inline-card">
           <div class="play-inline-card__text">故事背景：{{ currentWorld?.settings?.globalBackground || store.state.globalBackground || "暂无世界背景" }}</div>
           <div class="play-inline-card__text">章节：{{ currentChapter?.title || "当前章节" }}</div>
-          <div class="play-inline-card__text">章节内容：{{ currentChapter?.content || store.state.chapterContent || "暂无章节内容" }}</div>
+          <div class="play-inline-card__text">章节内容：{{ chapterContentText }}</div>
           <div class="play-inline-card__text">章节进入条件：{{ chapterEntryText || "无" }}</div>
           <div class="play-inline-card__text">章节完成条件：{{ chapterCompletionText }}</div>
           <pre class="play-state-pre">{{ statePreviewText }}</pre>
@@ -685,20 +739,11 @@ onBeforeUnmount(() => {
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
       </section>
 
-      <div v-if="store.state.debugMode" class="play-debug-panel">
-        <div class="play-debug-panel__meta">
-          <span class="play-debug-badge">调试缓存</span>
-          <span>{{ store.state.debugChapterTitle || "当前章节" }}</span>
-        </div>
-        <div class="play-debug-panel__actions">
-          <button type="button" class="play-mini-btn" @click="debugPrevChapter">上一章</button>
-          <button type="button" class="play-mini-btn" @click="debugNextChapter">下一章</button>
-        </div>
-      </div>
-
       <div class="play-story-footer">
         <div class="play-story-main">
-          <button type="button" class="play-story-entry" @click="openSettingMode">{{ playTitle }} &gt;</button>
+          <button type="button" class="play-story-entry" @click="store.state.debugMode ? exitDebugMode() : openSettingMode()">
+            {{ store.state.debugMode ? "返回编辑" : `${playTitle} >` }}
+          </button>
           <div class="play-story-sub">{{ playHandle }}</div>
         </div>
         <div class="play-story-actions">
@@ -722,6 +767,10 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="play-input-shell" :class="{ 'play-input-shell--text': inputMode === 'text' }">
+        <div class="play-footer-switches">
+          <button type="button" class="play-mini-btn" @click="toggleTipsMode">提示</button>
+          <button type="button" class="play-mini-btn" @click="handleStatusAction">{{ store.state.debugMode ? "状态" : "刷新" }}</button>
+        </div>
         <template v-if="inputMode === 'text'">
           <div class="play-text-bar">
             <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话开始故事"></textarea>
@@ -758,21 +807,21 @@ onBeforeUnmount(() => {
     <div v-if="store.state.debugEndDialog" class="modal-backdrop" @click.self="closeDebugDialog">
       <div class="modal-panel" style="width:min(100%,420px);">
         <div class="modal-header">
-          <button class="button small" type="button" @click="closeDebugDialog">关闭</button>
-          <div style="font-weight:900;">调试结束</div>
+          <button class="button small" type="button" @click="closeDebugDialog">继续查看</button>
+          <div style="font-weight:900;">章节调试结束</div>
           <span class="tiny">{{ store.state.debugEndDialog }}</span>
         </div>
         <div class="modal-body">
           <div class="surface section-block surface-soft">
             <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
             <div class="subtle" style="margin-top:8px;">
-              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回创作继续补章节。' : '当前调试已结束。' }}
+              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : '当前调试已结束。' }}
             </div>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="button" type="button" @click="closeDebugDialog">继续看</button>
-          <button class="button primary" type="button" @click="exitDebugMode">返回创作</button>
+          <button class="button" type="button" @click="closeDebugDialog">继续查看</button>
+          <button class="button primary" type="button" @click="exitDebugMode">返回编辑</button>
         </div>
       </div>
     </div>

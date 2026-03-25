@@ -3535,6 +3535,12 @@ textarea::-webkit-scrollbar-thumb {
   backdrop-filter: blur(10px);
 }
 
+.play-footer-switches {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .play-input-shell--text {
   gap: 0;
 }

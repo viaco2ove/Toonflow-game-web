@@ -4,6 +4,7 @@ import type {
   AiModelMapItem,
   ChapterItem,
   GeneratedImageResult,
+  DebugStepResult,
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
@@ -154,6 +155,10 @@ export class ToonflowApi {
 
   addMessage(payload: Record<string, unknown>) {
     return this.post<Record<string, unknown>>("/game/addMessage", payload);
+  }
+
+  debugStep(payload: Record<string, unknown>) {
+    return this.post<DebugStepResult>("/game/debugStep", payload);
   }
 
   generateImage(payload: Record<string, unknown>) {

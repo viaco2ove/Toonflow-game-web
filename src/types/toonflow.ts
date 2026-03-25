@@ -174,6 +174,14 @@ export interface SessionDetail {
   latestSnapshot?: { state?: Record<string, unknown> | null } | null;
 }
 
+export interface DebugStepResult {
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  endDialog?: string | null;
+  messages?: MessageItem[];
+}
+
 export interface GeneratedImageResult {
   path?: string;
   filePath?: string;

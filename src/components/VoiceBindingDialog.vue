@@ -30,7 +30,8 @@ const referenceAudioPath = ref("");
 const referenceAudioName = ref("");
 const referenceText = ref("");
 const promptText = ref("");
-const previewText = ref("你好，很高兴见到你。");
+const DEFAULT_PREVIEW_TEXT = "你好啊，有什么可以帮到你";
+const previewText = ref(DEFAULT_PREVIEW_TEXT);
 const previewStatus = ref("");
 const previewLoading = ref(false);
 const polishLoading = ref(false);
@@ -65,7 +66,7 @@ watch(
     referenceText.value = props.initialReferenceText || "";
     promptText.value = props.initialPromptText || "";
     mixVoices.value = [...(props.initialMixVoices || [])];
-    previewText.value = props.initialLabel ? `你好，我是${props.initialLabel}` : "你好，很高兴见到你。";
+    previewText.value = DEFAULT_PREVIEW_TEXT;
     previewStatus.value = "";
     previewAudioUrl.value = "";
     await store.fetchVoiceModels();

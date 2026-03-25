@@ -104,24 +104,75 @@ function extractOpeningContentParts(input: unknown): { role: string; line: strin
   return { role, line, body };
 }
 
-function stripOpeningPrefix(input: unknown, openingRole: string, openingLine: string): string {
-  const text = normalizeScalarEditorText(input);
+function stripLeadingOpeningBlocks(input: unknown): string {
+  let text = normalizeScalarEditorText(input);
   if (!text) return "";
-  const extracted = extractOpeningContentParts(text);
-  if (!extracted) return text;
+  for (let i = 0; i < 8; i += 1) {
+    const extracted = extractOpeningContentParts(text);
+    if (!extracted) break;
+    text = extracted.body.replace(/^\s*[\r\n]+/, "");
+  }
+  return text;
+}
+
+function splitParagraphs(input: string): string[] {
+  return String(input || "")
+    .replace(/\r\n/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function stripLeadingOpeningParagraphs(input: string, openingLine: string): string {
+  const openingParagraphs = splitParagraphs(openingLine);
+  if (!openingParagraphs.length) return input.trim();
+  const openingSet = new Set(openingParagraphs);
+  const contentParagraphs = splitParagraphs(input);
+  while (contentParagraphs.length && openingSet.has(contentParagraphs[0])) {
+    contentParagraphs.shift();
+  }
+  return contentParagraphs.join("\n\n").trim();
+}
+
+function stripLeadingOpeningArtifacts(input: unknown, openingRole: string, openingLine: string): string {
+  let text = normalizeScalarEditorText(input);
+  if (!text) return "";
   const expectedRole = normalizeScalarEditorText(openingRole).trim();
   const expectedLine = normalizeScalarEditorText(openingLine).trim();
-  const roleMatches = !expectedRole || !extracted.role || extracted.role === expectedRole;
-  const lineMatches = !expectedLine || !extracted.line || extracted.line === expectedLine;
-  return roleMatches && lineMatches ? extracted.body : text;
+  const expectedParagraphs = splitParagraphs(expectedLine).sort((a, b) => b.length - a.length);
+  for (let i = 0; i < 64; i += 1) {
+    const before = text;
+    const extracted = extractOpeningContentParts(text);
+    if (extracted) {
+      const roleMatches = !expectedRole || !extracted.role || extracted.role === expectedRole;
+      const lineMatches = !expectedLine || !extracted.line || expectedLine.startsWith(extracted.line) || extracted.line === expectedLine;
+      if (roleMatches && lineMatches) {
+        text = extracted.body.replace(/^\s*[\r\n]+/, "");
+      }
+    }
+    if (expectedLine && text.startsWith(expectedLine)) {
+      text = text.slice(expectedLine.length).replace(/^\s*[\r\n]+/, "");
+    }
+    const paragraphMatch = expectedParagraphs.find((item) => item && text.startsWith(item));
+    if (paragraphMatch) {
+      text = text.slice(paragraphMatch.length).replace(/^\s*[\r\n]+/, "");
+    }
+    if (text === before) break;
+  }
+  if (expectedLine) {
+    text = stripLeadingOpeningParagraphs(text, expectedLine);
+  }
+  return text.trim();
+}
+
+function stripOpeningPrefix(input: unknown, openingRole: string, openingLine: string): string {
+  return stripLeadingOpeningArtifacts(input, openingRole, openingLine);
 }
 
 function buildPersistedChapterContent(input: unknown, openingRole: string, openingLine: string, fallbackRole = "旁白"): string {
   const role = normalizeScalarEditorText(openingRole).trim() || fallbackRole;
   const line = normalizeScalarEditorText(openingLine).trim();
-  const body = stripOpeningPrefix(input, role, line).trim();
-  if (!line) return body;
-  return body ? `开场白[${role}]：${line}\n${body}` : `开场白[${role}]：${line}`;
+  return stripLeadingOpeningArtifacts(input, role, line);
 }
 
 function createEmptyWorldState() {
@@ -210,6 +261,7 @@ interface StoryEditorSnapshot {
 }
 
 type ToonflowStore = ReturnType<typeof createToonflowStore>;
+type DebugChapterResult = "continue" | "success" | "failed";
 
 let singletonStore: ToonflowStore | null = null;
 
@@ -288,6 +340,7 @@ function createToonflowStore() {
     debugWorldIntro: "",
     debugChapterId: null as number | null,
     debugChapterTitle: "",
+    debugRuntimeState: {} as Record<string, unknown>,
     debugStatePreview: "{}",
     debugEndDialog: null as string | null,
     messageReactions: safeJsonParse(storageGet("toonflow.messageReactions", "{}"), {} as Record<string, string>),
@@ -411,6 +464,16 @@ function createToonflowStore() {
 
   function applyStoryEditorSnapshot(snapshot: StoryEditorSnapshot) {
     editorPersistMuted = true;
+    const extractedOpening = extractOpeningContentParts(snapshot.chapterContent);
+    const snapshotOpeningRole =
+      normalizeScalarEditorText(snapshot.chapterOpeningRole).trim() ||
+      extractedOpening?.role ||
+      snapshot.narratorName ||
+      "旁白";
+    const snapshotOpeningLine =
+      normalizeScalarEditorText(snapshot.chapterOpeningLine).trim() ||
+      extractedOpening?.line ||
+      "";
     state.createStep = snapshot.createStep;
     state.worldId = snapshot.worldId;
     state.worldName = snapshot.worldName;
@@ -446,11 +509,11 @@ function createToonflowStore() {
     state.chapters = JSON.parse(JSON.stringify(snapshot.chapters || [])) as ChapterItem[];
     state.selectedChapterId = snapshot.selectedChapterId;
     state.chapterTitle = snapshot.chapterTitle;
-    state.chapterContent = snapshot.chapterContent;
-    state.chapterEntryCondition = snapshot.chapterEntryCondition;
-    state.chapterCondition = snapshot.chapterCondition;
-    state.chapterOpeningRole = snapshot.chapterOpeningRole;
-    state.chapterOpeningLine = snapshot.chapterOpeningLine;
+    state.chapterContent = stripOpeningPrefix(snapshot.chapterContent, snapshotOpeningRole, snapshotOpeningLine);
+    state.chapterEntryCondition = normalizeConditionEditorText(snapshot.chapterEntryCondition);
+    state.chapterCondition = normalizeConditionEditorText(snapshot.chapterCondition);
+    state.chapterOpeningRole = snapshotOpeningRole;
+    state.chapterOpeningLine = snapshotOpeningLine;
     state.chapterBackground = snapshot.chapterBackground;
     state.chapterMusic = snapshot.chapterMusic;
     state.chapterConditionVisible = snapshot.chapterConditionVisible;
@@ -632,6 +695,54 @@ function createToonflowStore() {
     });
   }
 
+  function buildEditorChapterSnapshot(): ChapterItem | null {
+    const normalizedTitle = normalizeScalarEditorText(state.chapterTitle).trim();
+    const normalizedBody = stripOpeningPrefix(
+      state.chapterContent,
+      state.chapterOpeningRole,
+      state.chapterOpeningLine,
+    ).trim();
+    const normalizedOpeningRole =
+      normalizeScalarEditorText(state.chapterOpeningRole).trim() ||
+      state.narratorName ||
+      "旁白";
+    const normalizedOpeningLine = normalizeScalarEditorText(state.chapterOpeningLine).trim();
+    const normalizedConditionText = normalizeConditionEditorText(state.chapterCondition);
+    const normalizedEntryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
+    const draftSort = state.selectedChapterId
+      ? state.chapters.find((item) => item.id === state.selectedChapterId)?.sort || 0
+      : Math.max(0, ...state.chapters.map((item) => Number(item.sort || 0))) + 1;
+    const hasContent =
+      normalizedTitle.length > 0 ||
+      normalizedBody.length > 0 ||
+      normalizedOpeningLine.length > 0 ||
+      normalizedConditionText.length > 0 ||
+      normalizedEntryConditionText.length > 0 ||
+      normalizeScalarEditorText(state.chapterBackground).trim().length > 0 ||
+      normalizeScalarEditorText(state.chapterMusic).trim().length > 0;
+    if (!hasContent || draftSort <= 0) return null;
+    return {
+      id: state.selectedChapterId || -Date.now(),
+      worldId: state.worldId || undefined,
+      title: normalizedTitle || `第 ${draftSort} 章`,
+      content: buildPersistedChapterContent(
+        normalizedBody,
+        normalizedOpeningRole,
+        normalizedOpeningLine,
+        state.narratorName || "旁白",
+      ),
+      entryCondition: safeJsonParse(normalizedEntryConditionText, normalizedEntryConditionText || null),
+      completionCondition: safeJsonParse(normalizedConditionText, normalizedConditionText || null),
+      sort: draftSort,
+      status: state.worldPublishStatus || "draft",
+      backgroundPath: normalizeScalarEditorText(state.chapterBackground).trim(),
+      openingRole: normalizedOpeningRole,
+      openingText: normalizedOpeningLine,
+      bgmPath: normalizeScalarEditorText(state.chapterMusic).trim(),
+      showCompletionCondition: state.chapterConditionVisible,
+    };
+  }
+
   function getDebugChapterIndex(): number {
     const list = orderedChapters();
     if (!list.length) return -1;
@@ -652,33 +763,43 @@ function createToonflowStore() {
     if (!chapter) {
       state.debugChapterId = null;
       state.debugChapterTitle = "当前章节";
-      state.debugStatePreview = JSON.stringify(
-        {
-          worldId: state.worldId,
-          chapterId: null,
-          player: state.playerName,
-          narrator: state.narratorName,
-        },
-        null,
-        2,
-      );
+      state.debugRuntimeState = {
+        worldId: state.worldId,
+        chapterId: null,
+        player: state.playerName,
+        narrator: state.narratorName,
+      };
+      state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
       return null;
     }
     state.debugEndDialog = null;
     state.debugChapterId = chapter.id;
     state.debugChapterTitle = chapter.title || `章节 ${chapter.sort || index + 1}`;
-    state.debugStatePreview = JSON.stringify(
-      {
-        worldId: state.worldId,
-        chapterId: chapter.id,
-        chapterTitle: chapter.title || "",
-        player: state.playerName,
-        narrator: state.narratorName,
-      },
-      null,
-      2,
-    );
+    state.debugRuntimeState = {
+      ...state.debugRuntimeState,
+      worldId: state.worldId,
+      chapterId: chapter.id,
+      chapterTitle: chapter.title || "",
+      player: state.playerName,
+      narrator: state.narratorName,
+    };
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     return chapter;
+  }
+
+  function buildDebugChapterSummary(chapter: ChapterItem): string {
+    const extractedOpening = extractOpeningContentParts(chapter.content);
+    const openingRole = normalizeScalarEditorText(chapter.openingRole).trim() || extractedOpening?.role || state.narratorName || "旁白";
+    const openingLine = normalizeScalarEditorText(chapter.openingText).trim() || extractedOpening?.line || "";
+    const chapterBody = stripLeadingOpeningArtifacts(chapter.content, openingRole, openingLine).trim();
+    const lines: string[] = [];
+    if (openingLine) {
+      lines.push(openingLine);
+    }
+    if (chapterBody) {
+      lines.push(chapterBody.slice(0, 120));
+    }
+    return lines.join("\n\n").trim();
   }
 
   function debugChapterContent(): ChapterItem | null {
@@ -773,35 +894,166 @@ function createToonflowStore() {
     return compareConditionValue(left, right, op);
   }
 
-  function advanceDebugChapterIfNeeded(messageContent: string) {
+  function extractDebugOutcome(input: unknown): DebugChapterResult {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return "success";
+    const raw = String(
+      (input as Record<string, unknown>).result ??
+        (input as Record<string, unknown>).status ??
+        (input as Record<string, unknown>).outcome ??
+        (input as Record<string, unknown>).onMatched ??
+        "success",
+    ).trim().toLowerCase();
+    return ["failed", "fail", "failure", "lose", "dead"].includes(raw) ? "failed" : "success";
+  }
+
+  function extractDebugNextChapterId(input: unknown): number | null {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+    const raw = (input as Record<string, unknown>).nextChapterId ?? (input as Record<string, unknown>).nextChapter;
+    const id = Number(raw);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  function evaluateDebugConditionNode(input: unknown, latestMessage: string, currentChapter: ChapterItem): boolean {
+    if (input === null || input === undefined) return false;
+    if (Array.isArray(input)) {
+      if (!input.length) return false;
+      return input.some((item) => evaluateDebugConditionNode(item, latestMessage, currentChapter));
+    }
+    if (typeof input === "string") {
+      const token = input.trim();
+      if (!token) return false;
+      return latestMessage.toLowerCase().includes(token.toLowerCase());
+    }
+    if (typeof input !== "object") return false;
+    const node = input as Record<string, unknown>;
+    if (Array.isArray(node.all)) {
+      return node.all.length > 0 && node.all.every((item) => evaluateDebugConditionNode(item, latestMessage, currentChapter));
+    }
+    if (Array.isArray(node.any)) {
+      return node.any.length > 0 && node.any.some((item) => evaluateDebugConditionNode(item, latestMessage, currentChapter));
+    }
+    if (node.not !== undefined) {
+      return !evaluateDebugConditionNode(node.not, latestMessage, currentChapter);
+    }
+    const type = String(node.type ?? "contains").trim().toLowerCase();
+    const field = String(node.field ?? "message").trim().toLowerCase();
+    const value = String(node.value ?? "").trim();
+    const fullText = state.messages.map((item) => item.content).join("\n");
+    const target = (() => {
+      if (["message", "latest", "latest_message"].includes(field)) return latestMessage;
+      if (["messages", "history", "full", "all"].includes(field)) return fullText;
+      if (["chapter", "chapter_title"].includes(field)) return currentChapter.title || "";
+      if (field === "chapter_content") return currentChapter.content || "";
+      return latestMessage;
+    })();
+    if (!value && !["length_gte", "lengthgte", "length_lte", "lengthlte"].includes(type)) return false;
+    switch (type) {
+      case "contains":
+        return target.toLowerCase().includes(value.toLowerCase());
+      case "not_contains":
+      case "notcontains":
+        return !target.toLowerCase().includes(value.toLowerCase());
+      case "equals":
+      case "eq":
+        return target.trim().toLowerCase() === value.toLowerCase();
+      case "not_equals":
+      case "neq":
+        return target.trim().toLowerCase() !== value.toLowerCase();
+      case "regex":
+        try {
+          return new RegExp(value, "i").test(target);
+        } catch {
+          return false;
+        }
+      case "length_gte":
+      case "lengthgte":
+        return target.length >= Number(value || Number.MAX_SAFE_INTEGER);
+      case "length_lte":
+      case "lengthlte":
+        return target.length <= Number(value || Number.MIN_SAFE_INTEGER);
+      default:
+        return target.toLowerCase().includes(value.toLowerCase());
+    }
+  }
+
+  function resolveNextDebugChapter(currentChapterId: number, explicitNextId: number | null): ChapterItem | null {
     const list = orderedChapters();
-    const currentIndex = getDebugChapterIndex();
-    const currentChapter = list[currentIndex] || null;
+    if (explicitNextId && explicitNextId > 0) {
+      const explicit = list.find((item) => item.id === explicitNextId);
+      if (explicit) return explicit;
+    }
+    const currentIndex = list.findIndex((item) => item.id === currentChapterId);
+    if (currentIndex < 0) return null;
+    return list[currentIndex + 1] || null;
+  }
+
+  function evaluateDebugChapterResult(chapter: ChapterItem, latestMessage: string): { result: DebugChapterResult; nextChapterId: number | null } {
+    const condition = chapter.completionCondition;
+    if (!hasEffectiveCondition(condition)) {
+      return { result: "continue", nextChapterId: null };
+    }
+    if (condition && typeof condition === "object" && !Array.isArray(condition)) {
+      const node = condition as Record<string, unknown>;
+      const failureNode = node.failure ?? node.failed ?? node.fail;
+      if (failureNode !== undefined && evaluateDebugConditionNode(failureNode, latestMessage, chapter)) {
+        return { result: "failed", nextChapterId: extractDebugNextChapterId(node) };
+      }
+      const successNode = node.success ?? node.pass;
+      if (successNode !== undefined && evaluateDebugConditionNode(successNode, latestMessage, chapter)) {
+        return { result: "success", nextChapterId: extractDebugNextChapterId(node) };
+      }
+    }
+    const matched = evaluateDebugConditionNode(condition, latestMessage, chapter);
+    if (!matched) {
+      return { result: "continue", nextChapterId: null };
+    }
+    return {
+      result: extractDebugOutcome(condition),
+      nextChapterId: extractDebugNextChapterId(condition),
+    };
+  }
+
+  function advanceDebugChapterIfNeeded(messageContent: string) {
+    const currentChapter = debugChapterContent();
     if (!currentChapter) {
       state.debugEndDialog = "当前没有章节可调试";
       return;
     }
-    if (!hasEffectiveCondition(currentChapter.completionCondition)) return;
-    const completed = evaluateDebugCondition(currentChapter.completionCondition, {
-      state: state as unknown as Record<string, unknown>,
-      messageContent,
-      eventType: "on_message",
-      meta: {},
-    });
-    if (!completed) return;
-
-    const nextChapter = list[currentIndex + 1] || null;
+    const decision = evaluateDebugChapterResult(currentChapter, messageContent);
+    if (decision.result === "continue") return;
+    if (decision.result === "failed") {
+      state.messages.push({
+        id: Date.now(),
+        role: state.narratorName || "旁白",
+        roleType: "narrator",
+        eventType: "on_debug_failed",
+        content: `章节《${currentChapter.title || "当前章节"}》判定失败，调试结束。`,
+        createTime: Date.now(),
+      });
+      state.debugEndDialog = "已失败";
+      return;
+    }
+    const nextChapter = resolveNextDebugChapter(currentChapter.id, decision.nextChapterId);
     if (!nextChapter) {
+      state.messages.push({
+        id: Date.now(),
+        role: state.narratorName || "旁白",
+        roleType: "narrator",
+        eventType: "on_debug_complete",
+        content: `章节《${currentChapter.title || "当前章节"}》完成，故事已完结。`,
+        createTime: Date.now(),
+      });
       state.debugEndDialog = "已完结";
       return;
     }
-    syncDebugChapter(currentIndex + 1);
+    syncDebugChapter(orderedChapters().findIndex((item) => item.id === nextChapter.id));
+    const summary = buildDebugChapterSummary(nextChapter);
     state.messages.push({
       id: Date.now(),
       role: state.narratorName || "旁白",
       roleType: "narrator",
       eventType: "on_debug_next_chapter",
-      content: `已进入下一章节：《${nextChapter.title || `章节 ${nextChapter.sort || currentIndex + 2}`}》。`,
+      content: summary || `已进入下一章节：《${nextChapter.title || `章节 ${nextChapter.sort || 1}`}》。`,
       createTime: Date.now(),
     });
   }
@@ -1595,7 +1847,7 @@ function createToonflowStore() {
     const extractedOpening = extractOpeningContentParts(chapter.content);
     const openingRole = normalizeScalarEditorText(chapter.openingRole).trim() || extractedOpening?.role || "旁白";
     const openingLine = normalizeScalarEditorText(chapter.openingText).trim() || extractedOpening?.line || "";
-    const chapterBody = stripOpeningPrefix(chapter.content, openingRole, openingLine);
+    const chapterBody = stripLeadingOpeningArtifacts(chapter.content, openingRole, openingLine);
     state.selectedChapterId = chapter.id;
     state.chapterTitle = normalizeScalarEditorText(chapter.title);
     state.chapterContent = chapterBody;
@@ -1633,7 +1885,7 @@ function createToonflowStore() {
       const world = await saveWorldOnly(false);
       state.worldId = world.id;
     }
-    const chapterBody = stripOpeningPrefix(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
+    const chapterBody = stripLeadingOpeningArtifacts(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
     const persistedContent = buildPersistedChapterContent(
       chapterBody,
       state.chapterOpeningRole,
@@ -1763,12 +2015,45 @@ function createToonflowStore() {
     state.messages = detail.messages || [];
   }
 
-  function startDebugCurrentChapter() {
+  async function startDebugCurrentChapter() {
+    if (state.selectedProjectId <= 0) {
+      state.notice = "请先选择项目";
+      return;
+    }
+    if (!state.worldId && !state.worldName.trim() && !state.chapterTitle.trim() && !state.chapterContent.trim() && !state.chapterOpeningLine.trim()) {
+      state.notice = "请先填写当前章节";
+      return;
+    }
+    await saveWorldOnly(false);
+    if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
+      await saveChapterDraft(false, state.worldPublishStatus === "published" ? "published" : "draft");
+    }
+    if (state.worldId) {
+      state.chapters = await api.getChapter(state.worldId).catch(() => state.chapters);
+      if (state.selectedChapterId) {
+        await selectChapter(state.selectedChapterId, false);
+      }
+    }
+    await reloadWorldsAfterSave();
+
+    let preferredDebugChapterId: number | null = state.selectedChapterId;
+    const editorChapter = buildEditorChapterSnapshot();
+    if (editorChapter) {
+      const index = state.chapters.findIndex((item) => item.id === editorChapter.id);
+      if (index >= 0) {
+        state.chapters[index] = editorChapter;
+      } else {
+        state.chapters = [...state.chapters, editorChapter];
+      }
+      preferredDebugChapterId = state.selectedChapterId || editorChapter.id;
+    }
     state.debugMode = true;
+    state.debugChapterId = preferredDebugChapterId;
     state.currentSessionId = `debug_${Date.now()}`;
     state.debugSessionTitle = state.worldName || "调试会话";
     state.debugWorldName = state.worldName || "";
     state.debugWorldIntro = state.worldIntro || "";
+    state.debugRuntimeState = {};
     state.debugEndDialog = null;
     const index = getDebugChapterIndex();
     const chapter = syncDebugChapter(index);
@@ -1779,16 +2064,17 @@ function createToonflowStore() {
       state.activeTab = "play";
       return;
     }
-    state.messages = [
-      {
-        id: Date.now(),
-        role: state.narratorName || "旁白",
-        roleType: "narrator",
-        eventType: "on_enter_debug",
-        content: `调试模式：从《${chapter?.title || state.chapterTitle || "当前章节"}》开始。`,
-        createTime: Date.now(),
-      },
-    ];
+    const result = await api.debugStep({
+      worldId: state.worldId,
+      chapterId: chapter.id,
+      state: state.debugRuntimeState,
+      messages: [],
+    });
+    state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    state.debugChapterId = result.chapterId ?? chapter.id;
+    state.debugChapterTitle = String(result.chapterTitle || chapter.title || state.chapterTitle || "当前章节");
+    state.messages = result.messages || [];
     state.sessionDetail = null;
     state.activeTab = "play";
   }
@@ -1806,16 +2092,26 @@ function createToonflowStore() {
         content,
         createTime: now,
       });
-      state.messages.push({
-        id: now + 1,
-        role: state.narratorName || "旁白",
-        roleType: "narrator",
-        eventType: "on_message",
-        content: `调试回应：已接收“${content}”。`,
-        createTime: now + 1,
-      });
       state.sendText = "";
-      advanceDebugChapterIfNeeded(content);
+      const result = await api.debugStep({
+        worldId: state.worldId,
+        chapterId: state.debugChapterId || undefined,
+        playerContent: content,
+        state: state.debugRuntimeState,
+        messages: state.messages,
+      });
+      state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
+      state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+      if (typeof result.chapterId === "number" && result.chapterId > 0) {
+        state.debugChapterId = result.chapterId;
+      }
+      if (result.chapterTitle) {
+        state.debugChapterTitle = result.chapterTitle;
+      }
+      if (Array.isArray(result.messages) && result.messages.length) {
+        state.messages.push(...result.messages);
+      }
+      state.debugEndDialog = result.endDialog || null;
       return;
     }
     if (!state.currentSessionId) return;
