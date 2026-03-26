@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, RoleParameterCard, StoryRole } from "../types/toonflow";
+import type { MessageItem, RoleParameterCard, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import { fileToDataUrl } from "../utils/file";
 
 const store = useToonflowStore();
 const messages = computed(() => store.state.messages);
@@ -10,6 +11,59 @@ const currentWorld = computed(() => session.value?.world || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
 const currentChapter = computed(() => session.value?.chapter || store.state.chapters[debugChapterIndex.value] || null);
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
+function asMiniRecord(input: unknown): Record<string, unknown> {
+  if (typeof input === "object" && input !== null && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asMiniArray<T = unknown>(input: unknown): T[] {
+  return Array.isArray(input) ? (input as T[]) : [];
+}
+
+function scalarText(input: unknown): string {
+  const text = String(input ?? "").trim();
+  if (!text || text === "null" || text === "undefined") return "";
+  return text;
+}
+
+function stringifyMiniStateValue(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  if (Array.isArray(input)) {
+    return input.map((item) => stringifyMiniStateValue(item)).filter(Boolean).join("、");
+  }
+  if (typeof input === "object") {
+    try {
+      return JSON.stringify(input, null, 2);
+    } catch {
+      return String(input);
+    }
+  }
+  return String(input);
+}
+
+function sanitizeSpeechText(input: unknown): string {
+  return String(input || "")
+    .replace(/（[^）]*）/g, "")
+    .replace(/\([^)]*\)/g, "")
+    .replace(/【[^】]*】/g, "")
+    .replace(/\[[^\]]*]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeChapterTitleLabel(input: unknown, sort?: unknown): string {
+  const raw = scalarText(input);
+  if (raw && !/^章节\s*\d{10,}$/u.test(raw)) return raw;
+  const chapterSort = Number(sort || 0);
+  if (Number.isFinite(chapterSort) && chapterSort > 0) {
+    return `第 ${chapterSort} 章`;
+  }
+  return raw || "当前章节";
+}
+
 function extractOpeningContentParts(input: unknown): { role: string; line: string; body: string } | null {
   const text = String(input || "").trim();
   if (!text) return null;
@@ -56,6 +110,12 @@ const chapterConditionHint = computed(() => {
     : "正式会话会由服务端决定章节推进，本地仅展示当前章节状态。";
   return `进入条件：${entry}\n完成条件：${completion}\n${modeHint}`;
 });
+const chapterOpeningDisplay = computed(() => {
+  const openingRole = currentChapter.value?.openingRole || store.state.chapterOpeningRole || "旁白";
+  const openingLine = currentChapter.value?.openingText || store.state.chapterOpeningLine || "";
+  if (!openingLine) return "无";
+  return `${openingRole}：${openingLine}`;
+});
 const chapterContentText = computed(() => {
   const openingRole = currentChapter.value?.openingRole || store.state.chapterOpeningRole || "旁白";
   const openingLine = currentChapter.value?.openingText || store.state.chapterOpeningLine || "";
@@ -69,7 +129,6 @@ const chapterContentText = computed(() => {
   return (roleMatches && lineMatches ? stripLeadingOpeningBlocks(extracted.body) : firstPass) || "暂无章节内容";
 });
 const roleCards = computed(() => {
-  const world = currentWorld.value;
   const seen = new Set<string>();
   const list: StoryRole[] = [];
   const pushRole = (role?: StoryRole | null) => {
@@ -79,16 +138,114 @@ const roleCards = computed(() => {
     seen.add(key);
     list.push(role);
   };
+  if (store.state.debugMode && !currentWorld.value) {
+    pushRole({
+      id: "player",
+      roleType: "player",
+      name: store.state.playerName || "用户",
+      description: store.state.playerDesc,
+      voice: store.state.playerVoice,
+      voiceMode: store.state.playerVoiceMode,
+      voiceConfigId: store.state.playerVoiceConfigId,
+      voicePresetId: store.state.playerVoicePresetId,
+      voiceReferenceAudioPath: store.state.playerVoiceReferenceAudioPath,
+      voiceReferenceAudioName: store.state.playerVoiceReferenceAudioName,
+      voiceReferenceText: store.state.playerVoiceReferenceText,
+      voicePromptText: store.state.playerVoicePromptText,
+      voiceMixVoices: store.state.playerVoiceMixVoices,
+      avatarPath: store.state.userAvatarPath,
+      avatarBgPath: store.state.userAvatarBgPath,
+      sample: "",
+    } as StoryRole);
+    pushRole({
+      id: "narrator",
+      roleType: "narrator",
+      name: store.state.narratorName || "旁白",
+      description: "",
+      voice: store.state.narratorVoice,
+      voiceMode: store.state.narratorVoiceMode,
+      voiceConfigId: store.state.narratorVoiceConfigId,
+      voicePresetId: store.state.narratorVoicePresetId,
+      voiceReferenceAudioPath: store.state.narratorVoiceReferenceAudioPath,
+      voiceReferenceAudioName: store.state.narratorVoiceReferenceAudioName,
+      voiceReferenceText: store.state.narratorVoiceReferenceText,
+      voicePromptText: store.state.narratorVoicePromptText,
+      voiceMixVoices: store.state.narratorVoiceMixVoices,
+      avatarPath: "",
+      avatarBgPath: "",
+      sample: "",
+    } as StoryRole);
+    (store.state.npcRoles || []).forEach((role) => pushRole(role));
+    return list;
+  }
+  const world = currentWorld.value;
   pushRole(world?.playerRole || null);
   pushRole(world?.narratorRole || null);
   (world?.settings?.roles || []).forEach((role) => pushRole(role));
   return list;
+});
+const runtimeState = computed<Record<string, unknown>>(() => {
+  if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
+  return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
+});
+const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnState));
+const canPlayerSpeak = computed(() => runtimeTurnState.value.canPlayerSpeak !== false);
+const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
+const playInputPlaceholder = computed(() =>
+  canPlayerSpeak.value
+    ? (inputMode.value === "text" ? "输入一句话开始故事" : "按住说话")
+    : `当前轮到${expectedSpeaker.value}发言`,
+);
+const playTurnHint = computed(() => canPlayerSpeak.value ? "" : `当前还没轮到用户发言，等待${expectedSpeaker.value}继续。`);
+const activeMiniGame = computed(() => {
+  const root = asMiniRecord(runtimeState.value.miniGame);
+  const sessionState = asMiniRecord(root.session);
+  const ui = asMiniRecord(root.ui);
+  const status = scalarText(sessionState.status);
+  const playerOptions = asMiniArray<Record<string, unknown>>(ui.player_options || sessionState.player_options);
+  const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
+  if (!scalarText(sessionState.game_type) && !scalarText(sessionState.gameType)) return null;
+  if (!visibleStatuses.has(status) && !playerOptions.length && !sessionState.pending_exit) return null;
+  return {
+    gameType: scalarText(sessionState.game_type || sessionState.gameType),
+    displayName: scalarText(asMiniRecord(root.rulebook).displayName) || scalarText(sessionState.game_type || sessionState.gameType),
+    status,
+    phase: scalarText(sessionState.phase),
+    round: Number(sessionState.round || 0),
+    publicState: asMiniRecord(sessionState.public_state),
+    playerOptions,
+    ruleSummary: scalarText(ui.rule_summary),
+    narration: scalarText(ui.narration),
+    pendingExit: Boolean(sessionState.pending_exit),
+  };
+});
+const miniGameSummaryItems = computed(() => {
+  if (!activeMiniGame.value) return [];
+  return Object.entries(activeMiniGame.value.publicState)
+    .map(([key, value]) => ({
+      key,
+      value: stringifyMiniStateValue(value),
+    }))
+    .filter((item) => item.value.trim().length > 0)
+    .slice(0, 10);
+});
+const miniGameControlOptions = computed(() => {
+  const game = activeMiniGame.value;
+  if (!game) return [];
+  if (game.status === "suspended") {
+    return ["恢复小游戏", "查看状态", "查看规则", "申请退出"];
+  }
+  if (game.pendingExit) {
+    return ["确认退出", "继续", "查看状态"];
+  }
+  return ["查看状态", "查看规则", "暂停", "申请退出"];
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
 const inputMode = ref<"voice" | "text">("voice");
 const autoVoice = ref(true);
 const voiceListening = ref(false);
+const voiceTranscribing = ref(false);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
 const roleDetail = ref<StoryRole | null>(null);
@@ -101,13 +258,30 @@ const menuX = ref(0);
 const menuY = ref(0);
 const pressTimer = ref<number | null>(null);
 const menuVisibleHint = ref("");
+const currentLiveMessage = computed(() =>
+  playMode.value === "history" ? null : (displayMessages.value[displayMessages.value.length - 1] || null),
+);
+const currentLiveFigurePath = computed(() => {
+  const message = currentLiveMessage.value;
+  if (!message || message.roleType === "player") return "";
+  const role = roleCards.value.find((item) => item.name === message.role || item.id === message.role);
+  return store.resolveMediaPath(role?.avatarBgPath || role?.avatarPath || "");
+});
 const messageViewport = ref<HTMLElement | null>(null);
 let speechRecognition: any = null;
-
-const displayMessages = computed(() => (playMode.value === "history" ? messages.value : messages.value.slice(-1)));
-const latestSpeakableMessage = computed(() =>
-  [...messages.value].reverse().find((message) => message.roleType !== "player" && message.content.trim()) || null,
-);
+let mediaRecorder: MediaRecorder | null = null;
+let mediaStream: MediaStream | null = null;
+let mediaChunks: Blob[] = [];
+let discardNextRecording = false;
+let runtimeVoicePlayer: HTMLAudioElement | null = null;
+let runtimeVoiceObjectUrl = "";
+let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
+let runtimeVoiceRequestId = 0;
+const runtimeVoicePreviewCache = new Map<string, string>();
+const runtimeVoiceWarmCache = new Set<string>();
+const revealedMessages = ref<MessageItem[]>([]);
+const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
+const displayMessages = computed(() => (playMode.value === "history" ? messages.value : revealedMessages.value.slice(-1)));
 const playStageStyle = computed(() => {
   const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
   if (chapterBackgroundPath.value) {
@@ -119,7 +293,10 @@ const playStageStyle = computed(() => {
 });
 const playTitle = computed(() => currentWorld.value?.name || session.value?.title || store.state.debugSessionTitle || "当前故事");
 const playSubtitle = computed(() => {
-  const chapterTitle = currentChapter.value?.title || store.state.debugChapterTitle || "当前章节";
+  const chapterTitle = normalizeChapterTitleLabel(
+    currentChapter.value?.title || store.state.debugChapterTitle,
+    currentChapter.value?.sort || undefined,
+  );
   return store.state.debugMode ? `章节：${chapterTitle}（调试）` : `章节：${chapterTitle}`;
 });
 const playHandle = computed(() => {
@@ -149,9 +326,11 @@ const tipOptions = computed(() => {
 });
 const browserSpeechSupported = computed(() => {
   if (typeof window === "undefined") return false;
-  return Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  return Boolean(window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
 });
-const lastAutoReadKey = ref("");
+const debugLoading = computed(() => store.state.debugLoading);
+const debugLoadingStage = computed(() => store.state.debugLoadingStage || "正在初始化调试上下文...");
+const debugAutoAdvancing = ref(false);
 
 watch(roleCards, (list) => {
   if (!list.length) {
@@ -184,34 +363,83 @@ watch(
     chapterDetailOpen.value = true;
     closeMenu();
     stopVoiceRecognition();
-    lastAutoReadKey.value = "";
+    stopRuntimeVoicePlayback();
+    runtimeVoicePreviewCache.clear();
+    runtimeVoiceWarmCache.clear();
+    revealedMessages.value = [];
+    debugAutoAdvancing.value = false;
   },
 );
 
 watch(autoVoice, (enabled) => {
-  if (!enabled && typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+  if (!enabled) {
+    stopRuntimeVoicePlayback();
   }
 });
 
 watch(
-  () => [
-    store.state.currentSessionId,
-    autoVoice.value,
-    latestSpeakableMessage.value?.id,
-    latestSpeakableMessage.value?.createTime,
-    latestSpeakableMessage.value?.content,
-  ],
-  () => {
-    if (!autoVoice.value || playMode.value === "setting" || playMode.value === "tips") return;
-    const message = latestSpeakableMessage.value;
-    if (!message) return;
-    const key = `${store.state.currentSessionId}_${message.id}_${message.createTime}`;
-    if (lastAutoReadKey.value === key) return;
-    lastAutoReadKey.value = key;
-    replay(message.content);
+  () => [store.state.currentSessionId, autoVoice.value, playMode.value],
+  async () => {
+    if (!autoVoice.value || playMode.value === "history" || playMode.value === "tips" || playMode.value === "setting") return;
+    const binding = narratorVoiceBinding() || roleVoiceBinding(roleCards.value.find((item) => item.roleType !== "player"));
+    if (!binding) return;
+    await warmVoiceBinding(binding);
   },
-  { flush: "post" },
+  { immediate: true },
+);
+
+watch(
+  () => [store.state.currentSessionId, liveMessageKeys.value, autoVoice.value, playMode.value, debugLoading.value],
+  async (_, __, onCleanup) => {
+    let cancelled = false;
+    onCleanup(() => {
+      cancelled = true;
+    });
+    if (playMode.value === "history") {
+      revealedMessages.value = [...messages.value];
+      return;
+    }
+    if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) return;
+    const nextMessages = [...messages.value];
+    if (!nextMessages.length) {
+      revealedMessages.value = [];
+      return;
+    }
+    const nextKeys = nextMessages.map((message) => messageUiKey(message));
+    const revealedKeys = revealedMessages.value.map((message) => messageUiKey(message));
+    const mismatched = nextKeys.length < revealedKeys.length || revealedKeys.some((key, index) => nextKeys[index] !== key);
+    if (mismatched) {
+      revealedMessages.value = [...nextMessages];
+      return;
+    }
+    const newMessages = nextMessages.slice(revealedKeys.length);
+    if (!newMessages.length) return;
+    for (const message of newMessages) {
+      if (cancelled) return;
+      revealedMessages.value = [...revealedMessages.value, message];
+      await nextTick();
+      const viewport = messageViewport.value;
+      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      await waitForMessageReveal(message, () => cancelled);
+      if (
+        !cancelled
+        && store.state.debugMode
+        && playMode.value === "live"
+        && !store.state.debugLoading
+        && !store.state.debugEndDialog
+        && !canPlayerSpeak.value
+        && !debugAutoAdvancing.value
+      ) {
+        debugAutoAdvancing.value = true;
+        try {
+          await store.continueDebugNarrative();
+        } finally {
+          debugAutoAdvancing.value = false;
+        }
+      }
+    }
+  },
+  { flush: "post", immediate: true },
 );
 
 watch(playMode, (mode) => {
@@ -220,6 +448,7 @@ watch(playMode, (mode) => {
   }
   if (mode === "tips" || mode === "setting") {
     closeMenu();
+    stopRuntimeVoicePlayback();
   }
 });
 
@@ -261,8 +490,17 @@ function handlePressEnd() {
 }
 
 async function submit() {
+  if (!canPlayerSpeak.value) {
+    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    return;
+  }
   await store.sendMessage();
   playMode.value = "live";
+}
+
+async function submitMiniGameAction(text: string) {
+  store.state.sendText = text;
+  await submit();
 }
 
 function like(id: number) {
@@ -309,13 +547,18 @@ function formatConditionText(input: unknown): string {
   return String(input);
 }
 
-function replay(content: string) {
+function replayWithBrowserSpeech(content: string) {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     menuVisibleHint.value = "当前浏览器不支持朗读";
     return;
   }
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(content);
+  const sanitized = sanitizeSpeechText(content);
+  if (!sanitized) {
+    menuVisibleHint.value = "这条内容没有可朗读文本";
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(sanitized);
   utterance.lang = "zh-CN";
   utterance.rate = 1;
   utterance.pitch = 1;
@@ -329,6 +572,349 @@ function replay(content: string) {
   window.speechSynthesis.speak(utterance);
 }
 
+function messageUiKey(message: MessageItem): string {
+  return `${store.state.currentSessionId}_${message.id}_${message.createTime}_${message.roleType || ""}`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function estimatePlaybackTimeoutMs(text: string): number {
+  const normalized = sanitizeSpeechText(text);
+  const estimated = normalized.length * 180 + 6000;
+  return Math.max(8000, Math.min(45000, estimated));
+}
+
+function estimateRevealDelayMs(text: string): number {
+  const normalized = sanitizeSpeechText(text);
+  const estimated = normalized.length * 90 + 1200;
+  return Math.max(1400, Math.min(4800, estimated));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer = 0;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(label)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function waitForMessageReveal(message: MessageItem, isCancelled: () => boolean) {
+  if (message.roleType === "player") {
+    await sleep(180);
+    return;
+  }
+  if (!autoVoice.value) {
+    await sleep(estimateRevealDelayMs(message.content));
+    return;
+  }
+  if (isCancelled()) return;
+  const played = await playMessageAudio(message, false, true);
+  if (isCancelled()) return;
+  await sleep(played ? 260 : estimateRevealDelayMs(message.content));
+}
+
+function stopRuntimeVoicePlayback() {
+  runtimeVoiceRequestId += 1;
+  runtimeVoiceResolve?.(false);
+  runtimeVoiceResolve = null;
+  if (runtimeVoicePlayer) {
+    runtimeVoicePlayer.pause();
+    runtimeVoicePlayer.currentTime = 0;
+    runtimeVoicePlayer.src = "";
+    runtimeVoicePlayer = null;
+  }
+  if (runtimeVoiceObjectUrl) {
+    URL.revokeObjectURL(runtimeVoiceObjectUrl);
+    runtimeVoiceObjectUrl = "";
+  }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function normalizeBindingMixVoices(input?: VoiceMixItem[] | null): VoiceMixItem[] {
+  return (input || [])
+    .filter((item) => String(item.voiceId || "").trim())
+    .map((item) => ({
+      voiceId: String(item.voiceId || "").trim(),
+      weight: Number.isFinite(Number(item.weight)) ? Number(item.weight) : 0.7,
+    }));
+}
+
+function splitSpeechSegments(input: string): string[] {
+  const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
+  if (!text) return [];
+  const segments: string[] = [];
+  let buffer = "";
+  const push = () => {
+    const value = buffer.trim();
+    if (value) segments.push(value);
+    buffer = "";
+  };
+  for (const char of text) {
+    buffer += char;
+    const length = buffer.replace(/\s/g, "").length;
+    if (/[。！？!?；;\n]/.test(char)) {
+      push();
+      continue;
+    }
+    if (length >= 40) {
+      push();
+    }
+  }
+  push();
+  return segments.filter(Boolean);
+}
+
+function createVoiceBindingDraft(source: {
+  label?: string | null;
+  configId?: number | null;
+  presetId?: string | null;
+  mode?: string | null;
+  referenceAudioPath?: string | null;
+  referenceAudioName?: string | null;
+  referenceText?: string | null;
+  promptText?: string | null;
+  mixVoices?: VoiceMixItem[] | null;
+}): VoiceBindingDraft | null {
+  const draft: VoiceBindingDraft = {
+    label: String(source.label || "").trim(),
+    configId: source.configId ?? null,
+    presetId: String(source.presetId || "").trim(),
+    mode: String(source.mode || "text").trim() || "text",
+    referenceAudioPath: String(source.referenceAudioPath || "").trim(),
+    referenceAudioName: String(source.referenceAudioName || "").trim(),
+    referenceText: String(source.referenceText || "").trim(),
+    promptText: String(source.promptText || "").trim(),
+    mixVoices: normalizeBindingMixVoices(source.mixVoices),
+  };
+  if (!draft.configId) return null;
+  if (draft.mode === "clone" && !draft.referenceAudioPath) return null;
+  if (draft.mode === "mix" && !(draft.mixVoices || []).some((item) => item.voiceId.trim())) return null;
+  if (draft.mode === "prompt_voice" && !draft.promptText) return null;
+  if (draft.mode === "text" && !draft.presetId) return null;
+  return draft;
+}
+
+function runtimeStoryVoiceConfigId(): number | null {
+  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceModel")?.configId;
+  return value && value > 0 ? value : null;
+}
+
+function inferFallbackPreset(roleType: string, name = "", description = ""): string {
+  if (roleType === "narrator") return "story_narrator";
+  const text = `${name} ${description}`.toLowerCase();
+  if (/[女姐妈妹娘妃后妻她]|female|woman|girl|lady/.test(text)) {
+    return "story_std_female";
+  }
+  return "story_std_male";
+}
+
+function narratorVoiceBinding(): VoiceBindingDraft | null {
+  const settings = currentWorld.value?.settings;
+  const narratorRole = currentWorld.value?.narratorRole;
+  const debugConfigId = store.state.narratorVoiceConfigId;
+  const debugModeType = store.state.narratorVoiceMode || "text";
+  const debugPresetId = store.state.narratorVoicePresetId || "";
+  const configId = settings?.narratorVoiceConfigId ?? narratorRole?.voiceConfigId ?? debugConfigId ?? runtimeStoryVoiceConfigId();
+  const mode = settings?.narratorVoiceMode || narratorRole?.voiceMode || "text";
+  const presetId = settings?.narratorVoicePresetId || narratorRole?.voicePresetId || "";
+  const normalizedMode = mode || debugModeType || "text";
+  return createVoiceBindingDraft({
+    label: settings?.narratorVoice || narratorRole?.voice || store.state.narratorVoice || narratorRole?.name || store.state.narratorName || "旁白",
+    configId: configId ?? null,
+    presetId: !presetId && !debugPresetId && configId && normalizedMode === "text" ? "story_narrator" : (presetId || debugPresetId),
+    mode: normalizedMode,
+    referenceAudioPath: settings?.narratorVoiceReferenceAudioPath || narratorRole?.voiceReferenceAudioPath || store.state.narratorVoiceReferenceAudioPath || "",
+    referenceAudioName: settings?.narratorVoiceReferenceAudioName || narratorRole?.voiceReferenceAudioName || store.state.narratorVoiceReferenceAudioName || "",
+    referenceText: settings?.narratorVoiceReferenceText || narratorRole?.voiceReferenceText || store.state.narratorVoiceReferenceText || "",
+    promptText: settings?.narratorVoicePromptText || narratorRole?.voicePromptText || store.state.narratorVoicePromptText || "",
+    mixVoices: settings?.narratorVoiceMixVoices || narratorRole?.voiceMixVoices || store.state.narratorVoiceMixVoices || [],
+  });
+}
+
+function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
+  if (!role) return null;
+  const configId = role.voiceConfigId ?? runtimeStoryVoiceConfigId();
+  const mode = role.voiceMode || "text";
+  const presetId = role.voicePresetId || ((configId && mode === "text") ? inferFallbackPreset(role.roleType, role.name, role.description) : "");
+  return createVoiceBindingDraft({
+    label: role.voice || role.name,
+    configId: configId ?? null,
+    presetId,
+    mode,
+    referenceAudioPath: role.voiceReferenceAudioPath || "",
+    referenceAudioName: role.voiceReferenceAudioName || "",
+    referenceText: role.voiceReferenceText || "",
+    promptText: role.voicePromptText || "",
+    mixVoices: role.voiceMixVoices || [],
+  });
+}
+
+function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {
+  if (message.roleType === "player") return null;
+  if (message.roleType === "narrator") return narratorVoiceBinding();
+  const roleName = String(message.role || "").trim();
+  const matchedRole = roleCards.value.find((role) => {
+    if (!roleName) return role.roleType === message.roleType;
+    return role.name === roleName || role.id === roleName;
+  }) || roleCards.value.find((role) => role.roleType === message.roleType);
+  return roleVoiceBinding(matchedRole);
+}
+
+function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
+  return [
+    binding.configId || "",
+    binding.mode || "text",
+    binding.presetId || "",
+    binding.referenceAudioPath || "",
+    binding.referenceText || "",
+    binding.promptText || "",
+    (binding.mixVoices || []).map((item) => `${item.voiceId}:${item.weight}`).join(";"),
+  ].join("|");
+}
+
+function runtimeVoicePreviewKey(binding: VoiceBindingDraft, text: string): string {
+  return `${runtimeVoiceBindingKey(binding)}|${text}`;
+}
+
+async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string): Promise<string> {
+  const cacheKey = runtimeVoicePreviewKey(binding, text);
+  const cached = runtimeVoicePreviewCache.get(cacheKey);
+  if (cached) return cached;
+  const audioUrl = await withTimeout(
+    store.previewVoice(
+      binding.configId,
+      text,
+      binding.mode,
+      binding.presetId,
+      binding.referenceAudioPath,
+      binding.referenceText,
+      binding.promptText,
+      binding.mixVoices || [],
+    ),
+    15000,
+    "语音生成超时",
+  );
+  if (!audioUrl) {
+    throw new Error("未返回试听音频");
+  }
+  runtimeVoicePreviewCache.set(cacheKey, audioUrl);
+  return audioUrl;
+}
+
+async function warmVoiceBinding(binding: VoiceBindingDraft) {
+  const bindingKey = runtimeVoiceBindingKey(binding);
+  if (runtimeVoiceWarmCache.has(bindingKey)) return;
+  runtimeVoiceWarmCache.add(bindingKey);
+  try {
+    await resolveRuntimeVoiceUrl(binding, "你好啊，有什么可以帮到你");
+  } catch {
+    // 保持静默，预热失败不影响正式播放
+  }
+}
+
+async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
+  const response = await withTimeout(fetch(audioUrl), 10000, "音频下载超时");
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.blob();
+}
+
+async function playRuntimeVoiceBlob(blob: Blob, manual: boolean, waitForCompletion: boolean, speakable: string): Promise<boolean> {
+  runtimeVoiceObjectUrl = URL.createObjectURL(blob);
+  const player = new Audio(runtimeVoiceObjectUrl);
+  player.preload = "auto";
+  runtimeVoicePlayer = player;
+  const completed = await new Promise<boolean>((resolve) => {
+    runtimeVoiceResolve = resolve;
+    let finished = false;
+    const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(speakable) : 8000;
+    const timer = window.setTimeout(() => finalize(false, "朗读超时"), timeoutMs);
+    const finalize = (ok: boolean, hint: string) => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timer);
+      if (runtimeVoicePlayer === player) runtimeVoicePlayer = null;
+      if (runtimeVoiceObjectUrl) {
+        URL.revokeObjectURL(runtimeVoiceObjectUrl);
+        runtimeVoiceObjectUrl = "";
+      }
+      runtimeVoiceResolve = null;
+      if (manual) menuVisibleHint.value = hint;
+      resolve(ok);
+    };
+    player.onplay = () => {
+      if (manual) menuVisibleHint.value = "正在播放试听";
+      if (!waitForCompletion) {
+        finalize(true, "正在播放试听");
+      }
+    };
+    player.onended = () => finalize(true, "朗读完成");
+    player.onerror = () => finalize(false, "朗读失败");
+    void player.play().catch(() => finalize(false, "朗读失败"));
+  });
+  return completed;
+}
+
+async function playMessageAudio(message: MessageItem, manual = false, waitForCompletion = false): Promise<boolean> {
+  const speakable = sanitizeSpeechText(message.content);
+  if (!speakable) {
+    if (manual) menuVisibleHint.value = "这条内容没有可朗读文本";
+    return false;
+  }
+  const binding = resolveMessageVoiceBinding(message);
+  if (!binding) {
+    if (manual) replayWithBrowserSpeech(message.content);
+    return false;
+  }
+  stopRuntimeVoicePlayback();
+  const requestId = runtimeVoiceRequestId;
+  if (manual) {
+    menuVisibleHint.value = "正在生成语音";
+  }
+  try {
+    const segments = splitSpeechSegments(speakable);
+    if (!segments.length) return false;
+    for (const segment of segments) {
+      let segmentPlayed = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (requestId !== runtimeVoiceRequestId) return false;
+        try {
+          const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
+          if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
+          const blob = await fetchRuntimeVoiceBlob(audioUrl);
+          segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment);
+          if (segmentPlayed) break;
+        } catch (error: any) {
+          if (manual) {
+            menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
+          }
+        }
+        await sleep(220);
+      }
+      if (!segmentPlayed) {
+        return false;
+      }
+      if (!waitForCompletion) {
+        return true;
+      }
+      await sleep(120);
+    }
+    return true;
+  } catch (error: any) {
+    if (manual) {
+      menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
+    }
+    return false;
+  }
+}
+
 function menuCopy() {
   if (!menuMessage.value) return;
   copy(menuMessage.value.content);
@@ -337,7 +923,7 @@ function menuCopy() {
 
 function menuReplay() {
   if (!menuMessage.value) return;
-  replay(menuMessage.value.content);
+  void playMessageAudio(menuMessage.value, true, true);
   closeMenu();
 }
 
@@ -482,14 +1068,6 @@ function openSettingMode() {
   playMode.value = playMode.value === "setting" ? "live" : "setting";
 }
 
-function handleStatusAction() {
-  if (store.state.debugMode) {
-    playMode.value = playMode.value === "setting" ? "live" : "setting";
-    return;
-  }
-  void store.refreshCurrentSession();
-}
-
 function toggleInputMode() {
   inputMode.value = inputMode.value === "voice" ? "text" : "voice";
   if (inputMode.value === "text") {
@@ -516,10 +1094,55 @@ function stopVoiceRecognition() {
     }
     speechRecognition = null;
   }
+  if (mediaRecorder) {
+    try {
+      discardNextRecording = true;
+      if (mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+    } catch {
+      // noop
+    }
+    mediaRecorder = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+  }
+  mediaChunks = [];
   voiceListening.value = false;
 }
 
-function startVoiceRecognition() {
+async function transcribeVoiceBlob(blob: Blob) {
+  voiceTranscribing.value = true;
+  try {
+    const audioBase64 = await fileToDataUrl(blob);
+    const text = await store.transcribeRuntimeVoice(audioBase64, store.state.currentSessionId);
+    if (!text) {
+      store.state.notice = "语音识别未返回文本";
+      return;
+    }
+    store.state.sendText = text;
+    await submit();
+  } catch (error: any) {
+    store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
+  } finally {
+    voiceTranscribing.value = false;
+  }
+}
+
+function stopVoiceRecordingAndTranscribe() {
+  const recorder = mediaRecorder;
+  if (!recorder) return;
+  try {
+    recorder.stop();
+  } catch (error: any) {
+    voiceListening.value = false;
+    store.state.notice = `结束录音失败: ${error?.message || "未知错误"}`;
+  }
+}
+
+async function startVoiceRecognition() {
   if (!browserSpeechSupported.value) {
     inputMode.value = "text";
     store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
@@ -529,43 +1152,69 @@ function startVoiceRecognition() {
     });
     return;
   }
-  const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-  if (!SpeechRecognitionCtor) return;
-  const recognition = new SpeechRecognitionCtor();
-  speechRecognition = recognition;
-  recognition.lang = "zh-CN";
-  recognition.interimResults = false;
-  recognition.continuous = false;
-  recognition.onstart = () => {
-    voiceListening.value = true;
-  };
-  recognition.onresult = async (event: any) => {
-    const text = Array.from(event.results || [])
-      .map((result: any) => result?.[0]?.transcript || "")
-      .join("")
-      .trim();
-    if (!text) return;
-    store.state.sendText = text;
-    await submit();
-  };
-  recognition.onerror = () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaStream = stream;
+    mediaChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    mediaRecorder = recorder;
+    recorder.onstart = () => {
+      voiceListening.value = true;
+    };
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        mediaChunks.push(event.data);
+      }
+    };
+    recorder.onerror = () => {
+      voiceListening.value = false;
+      store.state.notice = "语音识别失败";
+    };
+    recorder.onstop = async () => {
+      const chunks = mediaChunks.slice();
+      mediaChunks = [];
+      voiceListening.value = false;
+      mediaRecorder = null;
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+      if (discardNextRecording) {
+        discardNextRecording = false;
+        return;
+      }
+      if (!chunks.length) {
+        store.state.notice = "录音内容为空";
+        return;
+      }
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      await transcribeVoiceBlob(blob);
+    };
+    recorder.start();
+  } catch (error: any) {
+    inputMode.value = "text";
     voiceListening.value = false;
-    store.state.notice = "语音识别失败";
-  };
-  recognition.onend = () => {
-    voiceListening.value = false;
-    speechRecognition = null;
-  };
-  recognition.start();
+    store.state.notice = `无法开始录音: ${error?.message || "未知错误"}`;
+  }
 }
 
 function handleVoicePrimary() {
+  if (!canPlayerSpeak.value) {
+    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    return;
+  }
   if (inputMode.value === "text") {
     void submit();
     return;
   }
+  if (voiceTranscribing.value) return;
   if (voiceListening.value) {
-    stopVoiceRecognition();
+    stopVoiceRecordingAndTranscribe();
     return;
   }
   startVoiceRecognition();
@@ -585,6 +1234,10 @@ function toggleFavorite() {
 }
 
 function pickTip(option: string) {
+  if (!canPlayerSpeak.value) {
+    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    return;
+  }
   store.state.sendText = option;
   void submit();
 }
@@ -592,9 +1245,7 @@ function pickTip(option: string) {
 onBeforeUnmount(() => {
   clearPressTimer();
   stopVoiceRecognition();
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
+  stopRuntimeVoicePlayback();
 });
 </script>
 
@@ -635,9 +1286,29 @@ onBeforeUnmount(() => {
       <button type="button" class="play-fav-btn" @click="toggleFavorite">❤</button>
       <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">历史模式</div>
+      <div
+        v-if="playMode !== 'history' && currentLiveFigurePath"
+        class="play-figure"
+        :style="{ backgroundImage: `url(${currentLiveFigurePath})` }"
+      ></div>
+      <button
+        v-if="playMode !== 'history' && tipOptions.length"
+        type="button"
+        class="play-tip-fab"
+        @click="toggleTipsMode"
+      >
+        提
+      </button>
       <div ref="messageViewport" class="play-thread" :class="{ 'play-thread--history': playMode === 'history' }">
         <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
-        <div v-else class="play-thread__inner" :class="{ 'play-thread__inner--history': playMode === 'history' }">
+        <div
+          v-else
+          class="play-thread__inner"
+          :class="{
+            'play-thread__inner--history': playMode === 'history',
+            'play-thread__inner--single': playMode !== 'history',
+          }"
+        >
           <article
             v-for="message in displayMessages"
             :key="message.id"
@@ -668,6 +1339,13 @@ onBeforeUnmount(() => {
               <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
             </div>
           </article>
+        </div>
+        <div v-if="debugLoading" class="play-loading-mask">
+          <div class="play-loading-card">
+            <div class="play-loading-spinner"></div>
+            <div class="play-loading-title">进入调试中</div>
+            <div class="play-loading-sub">{{ debugLoadingStage }}</div>
+          </div>
         </div>
       </div>
 
@@ -717,7 +1395,8 @@ onBeforeUnmount(() => {
         <div v-if="chapterDetailOpen" class="play-inline-card">
           <div class="play-inline-card__text">故事背景：{{ currentWorld?.settings?.globalBackground || store.state.globalBackground || "暂无世界背景" }}</div>
           <div class="play-inline-card__text">章节：{{ currentChapter?.title || "当前章节" }}</div>
-          <div class="play-inline-card__text">章节内容：{{ chapterContentText }}</div>
+          <div class="play-inline-card__text">开场白：{{ chapterOpeningDisplay }}</div>
+          <div class="play-inline-card__text">章节编排：仅供编排师内部使用，游玩时不直接展示。</div>
           <div class="play-inline-card__text">章节进入条件：{{ chapterEntryText || "无" }}</div>
           <div class="play-inline-card__text">章节完成条件：{{ chapterCompletionText }}</div>
           <pre class="play-state-pre">{{ statePreviewText }}</pre>
@@ -737,6 +1416,49 @@ onBeforeUnmount(() => {
         <div class="play-sheet__title">AI 提示</div>
         <button v-for="option in tipOptions" :key="option" type="button" class="play-tip-option" @click="pickTip(option)">{{ option }}</button>
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
+      </section>
+
+      <section v-if="activeMiniGame && playMode !== 'setting' && playMode !== 'tips'" class="play-mini-game-panel">
+        <div class="play-mini-game-panel__head">
+          <div>
+            <div class="play-mini-game-panel__title">{{ activeMiniGame.displayName }}</div>
+            <div class="play-mini-game-panel__meta">第 {{ activeMiniGame.round || 1 }} 轮 · {{ activeMiniGame.phase || "进行中" }}</div>
+          </div>
+          <div class="play-mini-game-panel__status">{{ activeMiniGame.status || "active" }}</div>
+        </div>
+        <div v-if="activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
+        <div v-if="miniGameSummaryItems.length" class="play-mini-game-panel__state">
+          <div
+            v-for="item in miniGameSummaryItems"
+            :key="item.key"
+            class="play-mini-game-panel__state-item"
+          >
+            <span class="play-mini-game-panel__state-key">{{ item.key }}</span>
+            <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
+          </div>
+        </div>
+        <div class="play-mini-game-panel__actions">
+          <button
+            v-for="option in activeMiniGame.playerOptions"
+            :key="String(option.action_id || option.label || option.desc || '')"
+            type="button"
+            class="play-mini-game-panel__action"
+            @click="submitMiniGameAction(String(option.label || option.action_id || ''))"
+          >
+            {{ option.label || option.action_id }}
+          </button>
+        </div>
+        <div class="play-mini-game-panel__controls">
+          <button
+            v-for="action in miniGameControlOptions"
+            :key="action"
+            type="button"
+            class="play-mini-game-panel__control"
+            @click="submitMiniGameAction(action)"
+          >
+            {{ action }}
+          </button>
+        </div>
       </section>
 
       <div class="play-story-footer">
@@ -767,22 +1489,19 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="play-input-shell" :class="{ 'play-input-shell--text': inputMode === 'text' }">
-        <div class="play-footer-switches">
-          <button type="button" class="play-mini-btn" @click="toggleTipsMode">提示</button>
-          <button type="button" class="play-mini-btn" @click="handleStatusAction">{{ store.state.debugMode ? "状态" : "刷新" }}</button>
-        </div>
+        <div v-if="playTurnHint" class="play-turn-hint">{{ playTurnHint }}</div>
         <template v-if="inputMode === 'text'">
           <div class="play-text-bar">
-            <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话开始故事"></textarea>
+            <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerSpeak"></textarea>
             <button type="button" class="play-mini-round" @click="toggleInputMode">声</button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
-            <button type="button" class="play-send-btn" @click="submit">发送</button>
+            <button type="button" class="play-send-btn" :disabled="!canPlayerSpeak" @click="submit">发送</button>
           </div>
         </template>
         <template v-else>
           <div class="play-voice-bar">
-            <button type="button" class="play-voice-btn" @click="handleVoicePrimary">
-              {{ voiceListening ? "识别中，点击结束" : "按住说话" }}
+            <button type="button" class="play-voice-btn" :disabled="!canPlayerSpeak" @click="handleVoicePrimary">
+              {{ voiceTranscribing ? "识别处理中..." : voiceListening ? "录音中，点击结束" : playInputPlaceholder }}
             </button>
             <button type="button" class="play-mini-round" @click="toggleInputMode">键</button>
             <button type="button" class="play-mini-round" @click="onMiniAction('share')">＋</button>
@@ -815,7 +1534,7 @@ onBeforeUnmount(() => {
           <div class="surface section-block surface-soft">
             <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
             <div class="subtle" style="margin-top:8px;">
-              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : '当前调试已结束。' }}
+              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : store.state.debugEndDialog === '进入自由剧情' ? '当前章节已完成。继续查看后将进入自由剧情，编排师会继续推进故事。' : '当前调试已结束。' }}
             </div>
           </div>
         </div>

@@ -80,6 +80,22 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "aliyun",
+    label: "local阿里云",
+    website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
+    defaults: {
+      voice: "http://127.0.0.1:8000",
+    },
+  },
+  {
+    value: "aliyun_direct",
+    label: "阿里云直连",
+    website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
+    defaults: {
+      voice: "https://dashscope.aliyuncs.com",
+    },
+  },
+  {
     value: "other",
     label: "其他",
     defaults: {},
@@ -116,12 +132,29 @@ export function defaultManufacturerFor(type: ModelConfigKind): string {
   return type === "voice" ? "ai_voice_tts" : "volcengine";
 }
 
-export function defaultBaseUrlFor(manufacturer: string, type: ModelConfigKind): string {
+export function defaultBaseUrlFor(
+  manufacturer: string,
+  type: ModelConfigKind,
+  modelType = defaultModelTypeFor(type),
+): string {
+  if (type === "voice" && manufacturer === "aliyun_direct") {
+    return modelType === "asr"
+      ? "https://dashscope.aliyuncs.com/compatible-mode"
+      : "https://dashscope.aliyuncs.com";
+  }
   return MODEL_MANUFACTURERS.find((item) => item.value === manufacturer)?.defaults[type] || "";
 }
 
-export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind): string {
-  if (type === "voice" && manufacturer === "ai_voice_tts") return "ai_voice_tts";
+export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind, modelType = defaultModelTypeFor(type)): string {
+  if (type === "voice" && manufacturer === "ai_voice_tts") {
+    return modelType === "tts" ? "ai_voice_tts" : "";
+  }
+  if (type === "voice" && manufacturer === "aliyun") {
+    return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
+  }
+  if (type === "voice" && manufacturer === "aliyun_direct") {
+    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3.5-flash";
+  }
   return "";
 }
 

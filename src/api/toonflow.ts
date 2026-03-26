@@ -240,6 +240,10 @@ export class ToonflowApi {
     return this.post<{ audioUrl: string; data: unknown }>("/voice/preview", payload);
   }
 
+  transcribeVoice(payload: Record<string, unknown>) {
+    return this.post<{ text: string; segments?: unknown[]; confidence?: number | null }>("/voice/transcribe", payload);
+  }
+
   polishVoicePrompt(text: string, style = "") {
     return this.post<{ prompt: string }>("/voice/polishPrompt", { text, style });
   }

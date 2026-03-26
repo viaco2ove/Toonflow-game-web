@@ -11,6 +11,13 @@ yarn dev
 
 默认地址：`http://localhost:5173`
 
+## 构建
+```bash
+yarn build
+```
+## wsl
+[test_wsl.md](md/wsl/test_wsl.md)
+
 ## 页面说明
 
 - 主页：随机推荐 + 一句话开玩

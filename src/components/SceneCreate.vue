@@ -31,6 +31,8 @@ const imageDialogNpcIndex = ref<number | null>(null);
 const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
 const showDeleteNpcConfirm = ref(false);
+let runtimeAudioUnlockContext: AudioContext | null = null;
+let runtimeAudioUnlockElement: HTMLAudioElement | null = null;
 
 const coverAiPrompt = computed(() => store.state.worldIntro || store.state.worldName || "故事封面");
 const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
@@ -38,7 +40,6 @@ const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
 const mentionRoles = computed(() => store.mentionRoleNames());
 const chapterUsed = computed(() => (store.state.chapterContent || "").length);
 const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
-const showGlobalBackground = computed(() => store.state.chapters.length > 1 || !!store.state.globalBackground.trim());
 const currentNpcRole = computed<StoryRole | null>(() => {
   const index = editingNpcIndex.value;
   if (typeof index !== "number") return null;
@@ -417,6 +418,48 @@ async function addNextChapter() {
   await store.saveStoryEditor(false, true, "当前章节已保存，并已新建下一章节草稿");
 }
 
+async function primeRuntimeAudioUnlock() {
+  if (typeof window === "undefined") return;
+  try {
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (AudioCtx) {
+      if (!runtimeAudioUnlockContext) {
+        runtimeAudioUnlockContext = new AudioCtx();
+      }
+      if (runtimeAudioUnlockContext.state === "suspended") {
+        await runtimeAudioUnlockContext.resume();
+      }
+      const buffer = runtimeAudioUnlockContext.createBuffer(1, 1, 22050);
+      const source = runtimeAudioUnlockContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(runtimeAudioUnlockContext.destination);
+      source.start(0);
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (!runtimeAudioUnlockElement) {
+      runtimeAudioUnlockElement = new Audio(
+        "data:audio/wav;base64,UklGRjwAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQgAAAAAAAAAAAAA",
+      );
+      runtimeAudioUnlockElement.preload = "auto";
+      runtimeAudioUnlockElement.volume = 0;
+      runtimeAudioUnlockElement.muted = true;
+    }
+    runtimeAudioUnlockElement.currentTime = 0;
+    await runtimeAudioUnlockElement.play().catch(() => void 0);
+    runtimeAudioUnlockElement.pause();
+  } catch {
+    // 浏览器自动播放策略差异较大，这里只做静默预热
+  }
+}
+
+async function startDebug() {
+  await primeRuntimeAudioUnlock();
+  await store.startDebugCurrentChapter();
+}
+
 async function selectChapter(targetChapterId: number | null) {
   await store.saveCurrentChapterAndSelect(targetChapterId);
 }
@@ -551,7 +594,7 @@ function cancelRemoveCurrentNpc() {
         </div>
       </section>
 
-      <section v-if="showGlobalBackground" class="create-section">
+      <section class="create-section">
         <div class="create-card create-card--compact">
           <div class="create-card-title">全局背景（选填）</div>
           <div class="field">
@@ -603,7 +646,7 @@ function cancelRemoveCurrentNpc() {
         <div class="create-card create-card--compact">
           <div class="create-section-head">
             <div class="create-card-title">故事内容（章节内容）</div>
-            <button class="create-link-btn create-debug-btn" type="button" @click="store.startDebugCurrentChapter()">调试</button>
+            <button class="create-link-btn create-debug-btn" type="button" @click="startDebug">调试</button>
           </div>
           <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼</div>
           <div class="field">

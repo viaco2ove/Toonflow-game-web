@@ -1,4 +1,4 @@
-export function fileToDataUrl(file: File): Promise<string> {
+export function fileToDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("文件读取失败"));
@@ -7,7 +7,7 @@ export function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export function fileToBase64Payload(file: File): Promise<string> {
+export function fileToBase64Payload(file: Blob): Promise<string> {
   return fileToDataUrl(file);
 }
 

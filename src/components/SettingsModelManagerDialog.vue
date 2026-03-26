@@ -31,6 +31,29 @@ const emit = defineEmits<{
 
 const store = useToonflowStore();
 
+function defaultSlotManufacturer(): string {
+  if (props.configType === "voice" && props.slotKey === "storyAsrModel") {
+    return "aliyun_direct";
+  }
+  return defaultManufacturerFor(props.configType);
+}
+
+function defaultSlotModelType(): string {
+  if (props.configType === "voice" && props.slotKey === "storyAsrModel") {
+    return "asr";
+  }
+  return defaultModelTypeFor(props.configType);
+}
+
+function rowMatchesSlot(item: ModelConfigItem): boolean {
+  if (props.configType !== "voice") return true;
+  const modelType = String(item.modelType || "").trim() || "tts";
+  if (props.slotKey === "storyAsrModel") {
+    return modelType === "asr";
+  }
+  return modelType !== "asr";
+}
+
 const keyword = ref("");
 const selectedId = ref<number | null>(props.selectedId ?? null);
 const showEditor = ref(false);
@@ -38,10 +61,10 @@ const editingId = ref<number | null>(null);
 const testingId = ref<number | null>(null);
 const visibleKeys = reactive<Record<number, boolean>>({});
 const form = reactive({
-  manufacturer: defaultManufacturerFor(props.configType),
-  modelType: defaultModelTypeFor(props.configType),
-  model: defaultModelNameFor(defaultManufacturerFor(props.configType), props.configType),
-  baseUrl: defaultBaseUrlFor(defaultManufacturerFor(props.configType), props.configType),
+  manufacturer: defaultSlotManufacturer(),
+  modelType: defaultSlotModelType(),
+  model: defaultModelNameFor(defaultSlotManufacturer(), props.configType, defaultSlotModelType()),
+  baseUrl: defaultBaseUrlFor(defaultSlotManufacturer(), props.configType, defaultSlotModelType()),
   apiKey: "",
 });
 
@@ -51,6 +74,15 @@ const testResult = reactive({
   content: "",
   title: "",
 });
+
+const manufacturerOptions = computed(() =>
+  MODEL_MANUFACTURERS.filter((item) => {
+    if (props.configType === "voice") {
+      return item.value !== "qwen";
+    }
+    return item.value !== "ai_voice_tts" && item.value !== "aliyun" && item.value !== "aliyun_direct";
+  }),
+);
 
 watch(
   () => props.modelValue,
@@ -70,11 +102,19 @@ watch(
 );
 
 watch(
-  () => [form.manufacturer, props.configType] as const,
-  ([manufacturer, configType], [prevManufacturer]) => {
-    if (manufacturer !== prevManufacturer && !editingId.value) {
-      form.baseUrl = defaultBaseUrlFor(manufacturer, configType);
-      form.model = defaultModelNameFor(manufacturer, configType);
+  () => [form.manufacturer, form.modelType, props.configType] as const,
+  ([manufacturer, modelType, configType], [prevManufacturer, prevModelType]) => {
+    const prevDefaultModel = defaultModelNameFor(prevManufacturer, configType, prevModelType);
+    if ((manufacturer !== prevManufacturer || modelType !== prevModelType) && (!editingId.value || !form.baseUrl.trim())) {
+      form.baseUrl = defaultBaseUrlFor(manufacturer, configType, modelType);
+    }
+    if (
+      manufacturer !== prevManufacturer ||
+      modelType !== prevModelType
+    ) {
+      if (!editingId.value || !form.model.trim() || form.model === prevDefaultModel) {
+        form.model = defaultModelNameFor(manufacturer, configType, modelType);
+      }
     }
   },
 );
@@ -82,6 +122,7 @@ watch(
 const rows = computed(() =>
   store
     .settingsConfigOptions(props.configType)
+    .filter((item) => rowMatchesSlot(item))
     .filter((item) => {
       const q = keyword.value.trim().toLowerCase();
       if (!q) return true;
@@ -101,10 +142,10 @@ function close() {
 
 function openCreate() {
   editingId.value = null;
-  form.manufacturer = defaultManufacturerFor(props.configType);
-  form.modelType = defaultModelTypeFor(props.configType);
-  form.model = defaultModelNameFor(form.manufacturer, props.configType);
-  form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType);
+  form.manufacturer = defaultSlotManufacturer();
+  form.modelType = defaultSlotModelType();
+  form.model = defaultModelNameFor(form.manufacturer, props.configType, form.modelType);
+  form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = "";
   showEditor.value = true;
 }
@@ -270,9 +311,9 @@ async function confirmBinding() {
       <div class="modal-body settings-account-body">
         <div class="field">
           <label>厂商</label>
-          <select v-model="form.manufacturer" class="select">
-            <option v-for="item in MODEL_MANUFACTURERS" :key="item.value" :value="item.value">{{ item.label }}</option>
-          </select>
+            <select v-model="form.manufacturer" class="select">
+              <option v-for="item in manufacturerOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+            </select>
           <a v-if="manufacturerWebsite(form.manufacturer)" :href="manufacturerWebsite(form.manufacturer)" class="settings-help-link" target="_blank" rel="noreferrer">
             点击获取厂商 API
           </a>

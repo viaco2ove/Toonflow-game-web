@@ -108,7 +108,8 @@ async function submitAccountDialog() {
   showAccountDialog.value = false;
 }
 
-function openModelManager(key: string) {
+async function openModelManager(key: string) {
+  await store.ensureSettingsPanelData(true);
   activeModelKey.value = key;
   showModelManager.value = true;
 }

@@ -25,9 +25,6 @@ const sessions = computed(() => store.state.sessions);
           variant="plain"
         />
         <div class="history-card-body">
-          <div class="history-chip-row">
-            <span class="history-project-chip" v-if="item.projectName">{{ item.projectName }}</span>
-          </div>
           <h3 class="history-card-title">{{ item.title || item.worldName }}</h3>
           <div class="history-card-meta">{{ item.worldName }}<span v-if="item.chapterTitle"> · {{ item.chapterTitle }}</span></div>
           <p class="history-card-desc">{{ item.latestMessage?.content || item.worldIntro || "点击继续聊" }}</p>

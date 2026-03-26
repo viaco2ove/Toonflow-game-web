@@ -64,16 +64,6 @@ export interface VoiceBindingDraft {
   mixVoices?: VoiceMixItem[];
 }
 
-export interface MiniGameState {
-  gameType: string;
-  status: string;
-  round: number;
-  stage: string;
-  winner: string;
-  rewards: string[];
-  notes: string;
-}
-
 export interface ChapterExtra {
   chapterId?: number | null;
   sort?: number;
@@ -100,7 +90,6 @@ export interface WorldSettings {
   coverBgPath?: string;
   allowRoleView?: boolean;
   allowChatShare?: boolean;
-  miniGameState?: MiniGameState;
   publishStatus?: string;
   chapterExtras?: ChapterExtra[];
 }

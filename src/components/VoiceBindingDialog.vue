@@ -40,6 +40,7 @@ const mixVoices = ref<VoiceMixItem[]>([]);
 const previewAudioUrl = ref("");
 const previewPlayer = ref<HTMLAudioElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+let previewObjectUrl = "";
 const modeOptions = [
   { key: "text", label: "预设音色" },
   { key: "clone", label: "克隆音色" },
@@ -50,6 +51,18 @@ const modeOptions = [
 const presets = computed(() => store.voicePresetsForConfig(selectedConfigId.value));
 const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === selectedConfigId.value) || null);
 const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
+const currentManufacturer = computed(() => String(selectedModel.value?.manufacturer || "").trim());
+const runtimeStoryVoiceConfigId = computed(() => {
+  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceModel")?.configId;
+  return value && value > 0 ? value : null;
+});
+const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value ?? props.initialConfigId ?? selectedConfigId.value ?? null);
+const availableModeOptions = computed(() => {
+  if (currentManufacturer.value === "aliyun" || currentManufacturer.value === "aliyun_direct") {
+    return modeOptions.filter((item) => item.key === "text" || item.key === "prompt_voice");
+  }
+  return modeOptions;
+});
 
 watch(
   () => props.open,
@@ -70,9 +83,10 @@ watch(
     previewStatus.value = "";
     previewAudioUrl.value = "";
     await store.fetchVoiceModels();
-    if (!selectedConfigId.value && store.state.voiceModels.length) {
-      selectedConfigId.value = store.state.voiceModels[0].id;
-    }
+    selectedConfigId.value = runtimeStoryVoiceConfigId.value
+      ?? props.initialConfigId
+      ?? store.state.voiceModels[0]?.id
+      ?? null;
     if (selectedConfigId.value) {
       await store.fetchVoicePresets(selectedConfigId.value);
     }
@@ -85,6 +99,26 @@ watch(selectedConfigId, async (configId) => {
     await store.fetchVoicePresets(configId);
   }
 });
+
+watch(
+  runtimeStoryVoiceConfigId,
+  async (configId) => {
+    if (!props.open || !configId || configId === selectedConfigId.value) return;
+    selectedConfigId.value = configId;
+    await store.fetchVoicePresets(configId);
+  },
+  { immediate: true },
+);
+
+watch(
+  availableModeOptions,
+  (nextModes) => {
+    if (!nextModes.some((item) => item.key === selectedMode.value)) {
+      selectedMode.value = nextModes[0]?.key || "text";
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   [presets, selectedMode],
@@ -113,13 +147,20 @@ function labelForSelected() {
 }
 
 function validate(): string | null {
-  if (!selectedConfigId.value) return "请先选择语音模型";
+  if (!effectiveConfigId.value) return "请先在设置里配置语音生成模型";
   if (selectedMode.value === "text" && !selectedPresetId.value) return "请先选择音色预设";
   if (selectedMode.value === "clone" && !referenceAudioPath.value) return "克隆模式需要上传参考音频";
   if (selectedMode.value === "mix" && !mixVoices.value.some((item) => item.voiceId)) return "混合模式至少选择一个音色";
   if (selectedMode.value === "prompt_voice" && !promptText.value.trim()) return "提示词模式需要填写提示词";
   if (!previewText.value.trim()) return "请输入试听文本";
   return null;
+}
+
+function revokePreviewObjectUrl() {
+  if (previewObjectUrl) {
+    URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = "";
+  }
 }
 
 async function chooseAudio(e: Event) {
@@ -149,7 +190,7 @@ async function playPreview() {
   previewStatus.value = "";
   try {
     const audioUrl = await store.previewVoice(
-      selectedConfigId.value,
+      effectiveConfigId.value,
       previewText.value.trim(),
       selectedMode.value,
       selectedPresetId.value,
@@ -159,15 +200,34 @@ async function playPreview() {
       mixVoices.value,
     );
     if (!audioUrl) throw new Error("未返回试听音频");
-    previewAudioUrl.value = audioUrl;
+    const response = await fetch(audioUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const contentType = String(response.headers.get("content-type") || "").trim().toLowerCase();
+    if (contentType && !contentType.startsWith("audio/") && contentType !== "application/octet-stream") {
+      const detail = (await response.text().catch(() => "")).trim();
+      throw new Error(detail || `返回了非音频内容: ${contentType}`);
+    }
+    const blob = await response.blob();
+    if (!blob.size) {
+      throw new Error("返回的音频内容为空");
+    }
+    const playableBlob = blob.type ? blob : new Blob([blob], { type: "audio/wav" });
+    revokePreviewObjectUrl();
+    previewObjectUrl = URL.createObjectURL(playableBlob);
+    previewAudioUrl.value = previewObjectUrl;
     await nextTick();
     const audio = previewPlayer.value;
     if (!audio) throw new Error("播放器初始化失败");
     audio.pause();
     audio.currentTime = 0;
+    audio.load();
     audio.onplay = () => (previewStatus.value = "正在播放试听");
     audio.onended = () => (previewStatus.value = "试听完成");
     audio.onerror = () => {
+      previewAudioUrl.value = "";
+      revokePreviewObjectUrl();
       previewStatus.value = "试听播放失败";
       previewLoading.value = false;
     };
@@ -184,6 +244,8 @@ function stopPreview() {
     previewPlayer.value.pause();
     previewPlayer.value.currentTime = 0;
   }
+  revokePreviewObjectUrl();
+  previewAudioUrl.value = "";
   previewLoading.value = false;
   previewStatus.value = "已停止试听";
 }
@@ -254,7 +316,7 @@ function confirm() {
   }
   emit("confirm", {
     label: labelForSelected(),
-    configId: selectedConfigId.value,
+    configId: effectiveConfigId.value,
     presetId: selectedPresetId.value,
     mode: selectedMode.value,
     referenceAudioPath: referenceAudioPath.value,
@@ -292,6 +354,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopPreview();
+  revokePreviewObjectUrl();
 });
 </script>
 
@@ -306,27 +369,10 @@ onBeforeUnmount(() => {
       <div class="modal-body voice-dialog-body">
         <div class="dialog-stack voice-dialog-stack">
           <section class="voice-dialog-section">
-            <div class="voice-dialog-section__title">语音模型</div>
-            <div v-if="store.state.voiceModels.length" class="voice-dialog-list">
-              <button
-                v-for="model in store.state.voiceModels"
-                :key="model.id"
-                class="voice-dialog-select"
-                :class="{ 'is-active': selectedConfigId === model.id }"
-                type="button"
-                @click="selectedConfigId = model.id; selectedPresetId = ''"
-              >
-                {{ model.model || "未命名模型" }} <span v-if="model.manufacturer">· {{ model.manufacturer }}</span>
-              </button>
-            </div>
-            <div v-else class="voice-dialog-note">未加载到语音模型，请先在设置中配置 voice 模型。</div>
-          </section>
-
-          <section class="voice-dialog-section">
             <div class="voice-dialog-section__title">绑定模式</div>
             <div class="voice-dialog-list">
               <button
-                v-for="mode in modeOptions"
+                v-for="mode in availableModeOptions"
                 :key="mode.key"
                 class="voice-dialog-select"
                 :class="{ 'is-active': selectedMode === mode.key }"
@@ -340,7 +386,8 @@ onBeforeUnmount(() => {
 
           <section v-if="selectedMode === 'text'" class="voice-dialog-section">
             <div class="voice-dialog-section__title">音色预设</div>
-            <div v-if="!presets.length" class="voice-dialog-note">当前模型还没有返回可用音色。</div>
+            <div v-if="!selectedConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
+            <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
             <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"
@@ -381,7 +428,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="voice-dialog-section__title voice-dialog-section__title--sub">可选预设</div>
-            <div v-if="!presets.length" class="voice-dialog-note">当前模型还没有返回可用音色。</div>
+            <div v-if="!selectedConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
+            <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
             <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"
