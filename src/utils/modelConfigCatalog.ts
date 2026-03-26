@@ -1,4 +1,4 @@
-export type ModelConfigKind = "text" | "image" | "voice";
+export type ModelConfigKind = "text" | "image" | "voice" | "voice_design";
 
 export interface ManufacturerOption {
   value: string;
@@ -77,6 +77,7 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
     defaults: {
       text: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      voice_design: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
     },
   },
   {
@@ -115,12 +116,16 @@ export const MODEL_TYPE_OPTIONS: Record<ModelConfigKind, ModelTypeOption[]> = {
     { value: "tts", label: "语音tts" },
     { value: "asr", label: "语音识别" },
   ],
+  voice_design: [
+    { value: "voice_design", label: "语音设计" },
+  ],
 };
 
 export function modelKindLabel(type: string): string {
   if (type === "text") return "文本模型";
   if (type === "image") return "图像模型";
   if (type === "voice") return "语音模型";
+  if (type === "voice_design") return "语音设计模型";
   return "未知模型";
 }
 
@@ -129,6 +134,7 @@ export function defaultModelTypeFor(type: ModelConfigKind): string {
 }
 
 export function defaultManufacturerFor(type: ModelConfigKind): string {
+  if (type === "voice_design") return "qwen";
   return type === "voice" ? "ai_voice_tts" : "volcengine";
 }
 
@@ -137,6 +143,9 @@ export function defaultBaseUrlFor(
   type: ModelConfigKind,
   modelType = defaultModelTypeFor(type),
 ): string {
+  if (type === "voice_design" && manufacturer === "qwen") {
+    return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
+  }
   if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr"
       ? "https://dashscope.aliyuncs.com/compatible-mode"
@@ -146,6 +155,9 @@ export function defaultBaseUrlFor(
 }
 
 export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind, modelType = defaultModelTypeFor(type)): string {
+  if (type === "voice_design" && manufacturer === "qwen") {
+    return "qwen3-tts-vd-2026-01-26";
+  }
   if (type === "voice" && manufacturer === "ai_voice_tts") {
     return modelType === "tts" ? "ai_voice_tts" : "";
   }

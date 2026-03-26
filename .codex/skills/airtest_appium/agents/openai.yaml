@@ -1,0 +1,7 @@
+interface:
+  display_name: "Airtest + Appium"
+  short_description: "用 Airtest、Poco、Appium 测安卓界面"
+  default_prompt: "Use $airtest_appium to inspect an Android screen, choose Appium or Airtest, and run a minimal reproducible UI test."
+
+policy:
+  allow_implicit_invocation: true

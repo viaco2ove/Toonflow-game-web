@@ -184,6 +184,7 @@ export interface VoiceModelConfig {
   manufacturer?: string;
   baseUrl?: string;
   apiKey?: string;
+  modes?: string[];
   createTime?: number;
 }
 
@@ -213,7 +214,7 @@ export interface ModelConfigItem {
 
 export interface ModelConfigPayload {
   id?: number;
-  type: "text" | "image" | "voice";
+  type: "text" | "image" | "voice" | "voice_design";
   model: string;
   modelType: string;
   manufacturer: string;
@@ -261,7 +262,6 @@ export function createDefaultPlayerRole(): StoryRole {
     description: "用户在故事中的主视角角色",
     voice: "",
     voiceMode: "text",
-    voiceConfigId: null,
     voicePresetId: "",
     voiceReferenceAudioPath: "",
     voiceReferenceAudioName: "",
@@ -283,7 +283,6 @@ export function createDefaultNarratorRole(): StoryRole {
     description: "负责环境推进、规则提示与节奏控制",
     voice: "混合（清朗温润）",
     voiceMode: "text",
-    voiceConfigId: null,
     voicePresetId: "",
     voiceReferenceAudioPath: "",
     voiceReferenceAudioName: "",
@@ -298,7 +297,6 @@ export function createDefaultNarratorRole(): StoryRole {
 export function createEmptyVoiceBinding(label = "", mode = "text"): VoiceBindingDraft {
   return {
     label,
-    configId: null,
     presetId: "",
     mode,
     referenceAudioPath: "",

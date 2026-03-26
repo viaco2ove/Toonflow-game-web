@@ -96,7 +96,6 @@ const voiceDialogState = computed(() => {
       return {
         title: "选择用户音色",
         initialLabel: store.state.playerVoice,
-        initialConfigId: store.state.playerVoiceConfigId,
         initialPresetId: store.state.playerVoicePresetId,
         initialMode: store.state.playerVoiceMode,
         initialReferenceAudioPath: store.state.playerVoiceReferenceAudioPath,
@@ -109,7 +108,6 @@ const voiceDialogState = computed(() => {
       return {
         title: "选择旁白音色",
         initialLabel: store.state.narratorVoice,
-        initialConfigId: store.state.narratorVoiceConfigId,
         initialPresetId: store.state.narratorVoicePresetId,
         initialMode: store.state.narratorVoiceMode,
         initialReferenceAudioPath: store.state.narratorVoiceReferenceAudioPath,
@@ -123,7 +121,6 @@ const voiceDialogState = computed(() => {
       return {
         title: "选择角色音色",
         initialLabel: role?.voice || "",
-        initialConfigId: role?.voiceConfigId ?? null,
         initialPresetId: role?.voicePresetId || "",
         initialMode: role?.voiceMode || "text",
         initialReferenceAudioPath: role?.voiceReferenceAudioPath || "",
@@ -137,7 +134,6 @@ const voiceDialogState = computed(() => {
       return {
         title: "选择音色",
         initialLabel: "角色",
-        initialConfigId: null,
         initialPresetId: "",
         initialMode: "text",
         initialReferenceAudioPath: "",
@@ -161,7 +157,6 @@ watch(
     playerName: store.state.playerName,
     playerDesc: store.state.playerDesc,
     playerVoice: store.state.playerVoice,
-    playerVoiceConfigId: store.state.playerVoiceConfigId,
     playerVoicePresetId: store.state.playerVoicePresetId,
     playerVoiceMode: store.state.playerVoiceMode,
     playerVoiceReferenceAudioPath: store.state.playerVoiceReferenceAudioPath,
@@ -171,7 +166,6 @@ watch(
     playerVoiceMixVoices: store.state.playerVoiceMixVoices,
     narratorName: store.state.narratorName,
     narratorVoice: store.state.narratorVoice,
-    narratorVoiceConfigId: store.state.narratorVoiceConfigId,
     narratorVoicePresetId: store.state.narratorVoicePresetId,
     narratorVoiceMode: store.state.narratorVoiceMode,
     narratorVoiceReferenceAudioPath: store.state.narratorVoiceReferenceAudioPath,
@@ -190,7 +184,6 @@ watch(
       description: role.description,
       voice: role.voice,
       voiceMode: role.voiceMode,
-      voiceConfigId: role.voiceConfigId,
       voicePresetId: role.voicePresetId,
       voiceReferenceAudioPath: role.voiceReferenceAudioPath,
       voiceReferenceAudioName: role.voiceReferenceAudioName,
@@ -882,7 +875,6 @@ function cancelRemoveCurrentNpc() {
       :open="voiceDialogOpen"
       :title="voiceDialogState.title"
       :initial-label="voiceDialogState.initialLabel"
-      :initial-config-id="voiceDialogState.initialConfigId"
       :initial-preset-id="voiceDialogState.initialPresetId"
       :initial-mode="voiceDialogState.initialMode"
       :initial-reference-audio-path="voiceDialogState.initialReferenceAudioPath"

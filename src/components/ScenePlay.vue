@@ -95,6 +95,15 @@ const chapterCompletionText = computed(() => {
   if (currentChapter.value?.showCompletionCondition === false) return "对用户隐藏";
   return formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "无";
 });
+const chapterObjectiveText = computed(() => {
+  if (currentChapter.value?.showCompletionCondition === false) return "";
+  return (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim();
+});
+const chapterObjectivePreview = computed(() => {
+  const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > 20 ? `${normalized.slice(0, 20)}...` : normalized;
+});
 const chapterStatusItems = computed(() => [
   { label: "章节状态", value: currentChapter.value?.status || "draft" },
   { label: "完成条件", value: currentChapter.value?.showCompletionCondition === false ? "隐藏" : "可见" },
@@ -146,7 +155,6 @@ const roleCards = computed(() => {
       description: store.state.playerDesc,
       voice: store.state.playerVoice,
       voiceMode: store.state.playerVoiceMode,
-      voiceConfigId: store.state.playerVoiceConfigId,
       voicePresetId: store.state.playerVoicePresetId,
       voiceReferenceAudioPath: store.state.playerVoiceReferenceAudioPath,
       voiceReferenceAudioName: store.state.playerVoiceReferenceAudioName,
@@ -164,7 +172,6 @@ const roleCards = computed(() => {
       description: "",
       voice: store.state.narratorVoice,
       voiceMode: store.state.narratorVoiceMode,
-      voiceConfigId: store.state.narratorVoiceConfigId,
       voicePresetId: store.state.narratorVoicePresetId,
       voiceReferenceAudioPath: store.state.narratorVoiceReferenceAudioPath,
       voiceReferenceAudioName: store.state.narratorVoiceReferenceAudioName,
@@ -331,6 +338,10 @@ const browserSpeechSupported = computed(() => {
 const debugLoading = computed(() => store.state.debugLoading);
 const debugLoadingStage = computed(() => store.state.debugLoadingStage || "正在初始化调试上下文...");
 const debugAutoAdvancing = ref(false);
+const runtimeVoiceMessageKey = ref("");
+const runtimeVoicePhase = ref<"" | "loading" | "playing">("");
+const runtimeVoiceIndicator = ref(".");
+let runtimeVoiceIndicatorTimer = 0;
 
 watch(roleCards, (list) => {
   if (!list.length) {
@@ -376,6 +387,28 @@ watch(autoVoice, (enabled) => {
     stopRuntimeVoicePlayback();
   }
 });
+
+watch(
+  () => [runtimeVoiceMessageKey.value, runtimeVoicePhase.value],
+  ([messageKey, phase]) => {
+    if (runtimeVoiceIndicatorTimer) {
+      window.clearInterval(runtimeVoiceIndicatorTimer);
+      runtimeVoiceIndicatorTimer = 0;
+    }
+    if (!messageKey || !phase) {
+      runtimeVoiceIndicator.value = ".";
+      return;
+    }
+    const frames = phase === "playing" ? [".", "。", "."] : [".", "。"];
+    let index = 0;
+    runtimeVoiceIndicator.value = frames[index];
+    runtimeVoiceIndicatorTimer = window.setInterval(() => {
+      index = (index + 1) % frames.length;
+      runtimeVoiceIndicator.value = frames[index];
+    }, 260);
+  },
+  { immediate: true },
+);
 
 watch(
   () => [store.state.currentSessionId, autoVoice.value, playMode.value],
@@ -623,6 +656,7 @@ function stopRuntimeVoicePlayback() {
   runtimeVoiceRequestId += 1;
   runtimeVoiceResolve?.(false);
   runtimeVoiceResolve = null;
+  clearRuntimeVoiceIndicator();
   if (runtimeVoicePlayer) {
     runtimeVoicePlayer.pause();
     runtimeVoicePlayer.currentTime = 0;
@@ -636,6 +670,25 @@ function stopRuntimeVoicePlayback() {
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
+}
+
+function clearRuntimeVoiceIndicator() {
+  runtimeVoiceMessageKey.value = "";
+  runtimeVoicePhase.value = "";
+  runtimeVoiceIndicator.value = ".";
+  if (runtimeVoiceIndicatorTimer) {
+    window.clearInterval(runtimeVoiceIndicatorTimer);
+    runtimeVoiceIndicatorTimer = 0;
+  }
+}
+
+function setRuntimeVoiceIndicator(message: MessageItem | null, phase: "" | "loading" | "playing") {
+  if (!message || !phase) {
+    clearRuntimeVoiceIndicator();
+    return;
+  }
+  runtimeVoiceMessageKey.value = messageUiKey(message);
+  runtimeVoicePhase.value = phase;
 }
 
 function normalizeBindingMixVoices(input?: VoiceMixItem[] | null): VoiceMixItem[] {
@@ -692,9 +745,8 @@ function createVoiceBindingDraft(source: {
     referenceAudioName: String(source.referenceAudioName || "").trim(),
     referenceText: String(source.referenceText || "").trim(),
     promptText: String(source.promptText || "").trim(),
-    mixVoices: normalizeBindingMixVoices(source.mixVoices),
+  mixVoices: normalizeBindingMixVoices(source.mixVoices),
   };
-  if (!draft.configId) return null;
   if (draft.mode === "clone" && !draft.referenceAudioPath) return null;
   if (draft.mode === "mix" && !(draft.mixVoices || []).some((item) => item.voiceId.trim())) return null;
   if (draft.mode === "prompt_voice" && !draft.promptText) return null;
@@ -719,17 +771,14 @@ function inferFallbackPreset(roleType: string, name = "", description = ""): str
 function narratorVoiceBinding(): VoiceBindingDraft | null {
   const settings = currentWorld.value?.settings;
   const narratorRole = currentWorld.value?.narratorRole;
-  const debugConfigId = store.state.narratorVoiceConfigId;
-  const debugModeType = store.state.narratorVoiceMode || "text";
-  const debugPresetId = store.state.narratorVoicePresetId || "";
-  const configId = settings?.narratorVoiceConfigId ?? narratorRole?.voiceConfigId ?? debugConfigId ?? runtimeStoryVoiceConfigId();
-  const mode = settings?.narratorVoiceMode || narratorRole?.voiceMode || "text";
-  const presetId = settings?.narratorVoicePresetId || narratorRole?.voicePresetId || "";
-  const normalizedMode = mode || debugModeType || "text";
+  const debugConfigId = store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null;
+  const configId = settings?.narratorVoiceConfigId ?? narratorRole?.voiceConfigId ?? debugConfigId;
+  const normalizedMode = settings?.narratorVoiceMode || narratorRole?.voiceMode || store.state.narratorVoiceMode || "text";
+  const presetId = settings?.narratorVoicePresetId || narratorRole?.voicePresetId || store.state.narratorVoicePresetId || "";
   return createVoiceBindingDraft({
     label: settings?.narratorVoice || narratorRole?.voice || store.state.narratorVoice || narratorRole?.name || store.state.narratorName || "旁白",
     configId: configId ?? null,
-    presetId: !presetId && !debugPresetId && configId && normalizedMode === "text" ? "story_narrator" : (presetId || debugPresetId),
+    presetId: !presetId && normalizedMode === "text" ? "story_narrator" : presetId,
     mode: normalizedMode,
     referenceAudioPath: settings?.narratorVoiceReferenceAudioPath || narratorRole?.voiceReferenceAudioPath || store.state.narratorVoiceReferenceAudioPath || "",
     referenceAudioName: settings?.narratorVoiceReferenceAudioName || narratorRole?.voiceReferenceAudioName || store.state.narratorVoiceReferenceAudioName || "",
@@ -741,9 +790,9 @@ function narratorVoiceBinding(): VoiceBindingDraft | null {
 
 function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
   if (!role) return null;
-  const configId = role.voiceConfigId ?? runtimeStoryVoiceConfigId();
+  const configId = role.voiceConfigId ?? (store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null);
   const mode = role.voiceMode || "text";
-  const presetId = role.voicePresetId || ((configId && mode === "text") ? inferFallbackPreset(role.roleType, role.name, role.description) : "");
+  const presetId = role.voicePresetId || (mode === "text" ? inferFallbackPreset(role.roleType, role.name, role.description) : "");
   return createVoiceBindingDraft({
     label: role.voice || role.name,
     configId: configId ?? null,
@@ -769,8 +818,9 @@ function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | n
 }
 
 function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
+  const runtimeContextKey = binding.configId || currentWorld.value?.id || store.state.currentSessionId || "runtime";
   return [
-    binding.configId || "",
+    runtimeContextKey,
     binding.mode || "text",
     binding.presetId || "",
     binding.referenceAudioPath || "",
@@ -826,7 +876,13 @@ async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
   return response.blob();
 }
 
-async function playRuntimeVoiceBlob(blob: Blob, manual: boolean, waitForCompletion: boolean, speakable: string): Promise<boolean> {
+async function playRuntimeVoiceBlob(
+  blob: Blob,
+  manual: boolean,
+  waitForCompletion: boolean,
+  speakable: string,
+  onPlay?: () => void,
+): Promise<boolean> {
   runtimeVoiceObjectUrl = URL.createObjectURL(blob);
   const player = new Audio(runtimeVoiceObjectUrl);
   player.preload = "auto";
@@ -850,6 +906,7 @@ async function playRuntimeVoiceBlob(blob: Blob, manual: boolean, waitForCompleti
       resolve(ok);
     };
     player.onplay = () => {
+      onPlay?.();
       if (manual) menuVisibleHint.value = "正在播放试听";
       if (!waitForCompletion) {
         finalize(true, "正在播放试听");
@@ -881,15 +938,19 @@ async function playMessageAudio(message: MessageItem, manual = false, waitForCom
   try {
     const segments = splitSpeechSegments(speakable);
     if (!segments.length) return false;
+    setRuntimeVoiceIndicator(message, "loading");
     for (const segment of segments) {
       let segmentPlayed = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         if (requestId !== runtimeVoiceRequestId) return false;
         try {
+          setRuntimeVoiceIndicator(message, "loading");
           const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
           if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
           const blob = await fetchRuntimeVoiceBlob(audioUrl);
-          segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment);
+          segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
+            setRuntimeVoiceIndicator(message, "playing");
+          });
           if (segmentPlayed) break;
         } catch (error: any) {
           if (manual) {
@@ -912,6 +973,10 @@ async function playMessageAudio(message: MessageItem, manual = false, waitForCom
       menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
     }
     return false;
+  } finally {
+    if (runtimeVoiceMessageKey.value === messageUiKey(message)) {
+      clearRuntimeVoiceIndicator();
+    }
   }
 }
 
@@ -1064,8 +1129,18 @@ function toggleTipsMode() {
   playMode.value = playMode.value === "tips" ? "live" : "tips";
 }
 
+function openChapterObjective() {
+  chapterDetailOpen.value = true;
+  playMode.value = "setting";
+}
+
 function openSettingMode() {
   playMode.value = playMode.value === "setting" ? "live" : "setting";
+}
+
+function messageVoiceTail(message: MessageItem): string {
+  if (runtimeVoiceMessageKey.value !== messageUiKey(message) || !runtimeVoicePhase.value) return "";
+  return runtimeVoiceIndicator.value;
 }
 
 function toggleInputMode() {
@@ -1083,6 +1158,14 @@ function toggleInputMode() {
 function openHall() {
   stopVoiceRecognition();
   store.setTab("hall");
+}
+
+function handleTopBackAction() {
+  if (store.state.debugMode) {
+    exitDebugMode();
+    return;
+  }
+  openHall();
 }
 
 function stopVoiceRecognition() {
@@ -1246,6 +1329,7 @@ onBeforeUnmount(() => {
   clearPressTimer();
   stopVoiceRecognition();
   stopRuntimeVoicePlayback();
+  clearRuntimeVoiceIndicator();
 });
 </script>
 
@@ -1256,17 +1340,23 @@ onBeforeUnmount(() => {
       <div class="play-stage__shade"></div>
 
       <header class="play-head">
-        <div class="play-head__meta">
-          <button type="button" class="play-title-btn" @click="openSettingMode">{{ playTitle }} &gt;</button>
-          <div class="play-head__sub">{{ playSubtitle }}</div>
-        </div>
-        <div class="play-head__actions">
-          <button type="button" class="play-circle-btn" aria-label="进入故事大厅" @click="openHall">
+        <div class="play-head__lead">
+          <button
+            type="button"
+            class="play-circle-btn play-circle-btn--back"
+            :aria-label="store.state.debugMode ? '返回编辑' : '返回故事大厅'"
+            @click="handleTopBackAction"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="6"></circle>
-              <path d="M20 20l-4-4"></path>
+              <path d="M15 18l-6-6 6-6"></path>
             </svg>
           </button>
+          <div class="play-head__meta">
+            <div class="play-head__eyebrow">{{ store.state.debugMode ? "章节调试" : "故事游玩" }}</div>
+            <div class="play-head__sub">{{ playSubtitle }}</div>
+          </div>
+        </div>
+        <div class="play-head__actions">
           <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="autoVoice = !autoVoice">
             <svg v-if="autoVoice" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 10v4h4l5 4V6l-5 4H5z"></path>
@@ -1283,32 +1373,26 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="play-ai-mark">内容由 AI 生成</div>
-      <button type="button" class="play-fav-btn" @click="toggleFavorite">❤</button>
       <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">历史模式</div>
       <div
         v-if="playMode !== 'history' && currentLiveFigurePath"
-        class="play-figure"
-        :style="{ backgroundImage: `url(${currentLiveFigurePath})` }"
-      ></div>
-      <button
-        v-if="playMode !== 'history' && tipOptions.length"
-        type="button"
-        class="play-tip-fab"
-        @click="toggleTipsMode"
+        class="play-figure-stage"
       >
-        提
-      </button>
-      <div ref="messageViewport" class="play-thread" :class="{ 'play-thread--history': playMode === 'history' }">
-        <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
+        <div class="play-figure-stage__glow"></div>
         <div
-          v-else
-          class="play-thread__inner"
-          :class="{
-            'play-thread__inner--history': playMode === 'history',
-            'play-thread__inner--single': playMode !== 'history',
-          }"
-        >
+          class="play-figure"
+          :style="{ backgroundImage: `url(${currentLiveFigurePath})` }"
+        ></div>
+        <div class="play-figure-stage__fade"></div>
+      </div>
+      <div
+        ref="messageViewport"
+        class="play-thread"
+        :class="{ 'play-thread--history': playMode === 'history', 'play-thread--single-mode': playMode !== 'history' }"
+      >
+        <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
+        <div v-else-if="playMode === 'history'" class="play-thread__history">
           <article
             v-for="message in displayMessages"
             :key="message.id"
@@ -1329,7 +1413,14 @@ onBeforeUnmount(() => {
             <div class="play-bubble-wrap">
               <div class="play-bubble-title">{{ messageTitle(message) }}</div>
               <div class="play-bubble" :class="{ 'play-bubble--player': message.roleType === 'player' }">
-                {{ message.content || "（空消息）" }}
+                <span>{{ message.content || "（空消息）" }}</span>
+                <span
+                  v-if="messageVoiceTail(message)"
+                  class="play-bubble-voice-tail"
+                  :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                >
+                  {{ messageVoiceTail(message) }}
+                </span>
               </div>
               <div v-if="messageReactionText(message)" class="play-bubble-reaction">{{ messageReactionText(message) }}</div>
             </div>
@@ -1339,6 +1430,55 @@ onBeforeUnmount(() => {
               <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
             </div>
           </article>
+        </div>
+        <div v-else class="play-thread__single">
+          <div class="play-thread__single-stage">
+            <button
+              v-if="chapterObjectivePreview && playMode !== 'setting' && playMode !== 'tips'"
+              type="button"
+              class="play-objective-chip"
+              :title="chapterConditionHint"
+              @click="openChapterObjective"
+            >
+              当前目标：{{ chapterObjectivePreview }}
+            </button>
+            <article
+              v-if="currentLiveMessage"
+              class="play-live-card"
+              :class="{ 'play-live-card--player': currentLiveMessage.roleType === 'player' }"
+              @dblclick.stop="openMenu(currentLiveMessage, $event)"
+              @contextmenu.prevent.stop="openMenu(currentLiveMessage, $event)"
+              @pointerdown="handlePressStart(currentLiveMessage, $event)"
+              @pointerup="handlePressEnd"
+              @pointerleave="handlePressEnd"
+              @pointercancel="handlePressEnd"
+            >
+              <div class="play-live-card__title">{{ messageTitle(currentLiveMessage) }}</div>
+              <div class="play-live-card__body">
+                <span>{{ currentLiveMessage.content || "（空消息）" }}</span>
+                <span
+                  v-if="messageVoiceTail(currentLiveMessage)"
+                  class="play-bubble-voice-tail"
+                  :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                >
+                  {{ messageVoiceTail(currentLiveMessage) }}
+                </span>
+              </div>
+              <div v-if="messageReactionText(currentLiveMessage)" class="play-bubble-reaction play-bubble-reaction--live">
+                {{ messageReactionText(currentLiveMessage) }}
+              </div>
+            </article>
+            <button
+              v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips' && tipOptions.length"
+              type="button"
+              class="play-tip-fab"
+              @click="toggleTipsMode"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"></path>
+              </svg>
+            </button>
+          </div>
         </div>
         <div v-if="debugLoading" class="play-loading-mask">
           <div class="play-loading-card">
@@ -1464,25 +1604,51 @@ onBeforeUnmount(() => {
       <div class="play-story-footer">
         <div class="play-story-main">
           <button type="button" class="play-story-entry" @click="store.state.debugMode ? exitDebugMode() : openSettingMode()">
-            {{ store.state.debugMode ? "返回编辑" : `${playTitle} >` }}
+            <span>{{ store.state.debugMode ? "返回编辑" : playTitle }}</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 6l6 6-6 6"></path>
+            </svg>
           </button>
           <div class="play-story-sub">{{ playHandle }}</div>
         </div>
         <div class="play-story-actions">
           <button type="button" class="play-story-action" @click="toggleFavorite">
-            <span class="play-story-action__icon">❤</span>
+            <span class="play-story-action__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 20s-6.7-4.4-9-8.2C1.3 8.9 2.5 5.5 5.8 4.5c2-.6 4 .1 5.2 1.7 1.2-1.6 3.2-2.3 5.2-1.7 3.3 1 4.5 4.4 2.8 7.3C18.7 15.6 12 20 12 20z"></path>
+              </svg>
+            </span>
             <span>{{ playLikeCount }}</span>
           </button>
           <button type="button" class="play-story-action" @click="onMiniAction('share')">
-            <span class="play-story-action__icon">↗</span>
+            <span class="play-story-action__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M14 5h5v5"></path>
+                <path d="M10 14L19 5"></path>
+                <path d="M19 14v5H5V5h5"></path>
+              </svg>
+            </span>
             <span>分享</span>
           </button>
           <button type="button" class="play-story-action" @click="onMiniAction('comment')">
-            <span class="play-story-action__icon">💬</span>
+            <span class="play-story-action__icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 6h14a2 2 0 012 2v7a2 2 0 01-2 2H9l-4 3v-3H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
+              </svg>
+            </span>
             <span>评论</span>
           </button>
           <button type="button" class="play-story-action" @click="toggleHistoryMode">
-            <span class="play-story-action__icon">{{ playMode === "history" ? "↩" : "◷" }}</span>
+            <span class="play-story-action__icon">
+              <svg v-if="playMode === 'history'" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M10 7l-5 5 5 5"></path>
+                <path d="M19 12H6"></path>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="8"></circle>
+                <path d="M12 8v5l3 2"></path>
+              </svg>
+            </span>
             <span>{{ playMode === "history" ? "返回" : "历史" }}</span>
           </button>
         </div>
@@ -1604,7 +1770,6 @@ onBeforeUnmount(() => {
               <div class="tiny">音色信息</div>
               <div class="dialog-stack" style="margin-top:6px;">
                 <div class="tiny">预设：{{ roleDetail.voicePresetId || "无" }}</div>
-                <div class="tiny">模型配置：{{ roleDetail.voiceConfigId ?? "无" }}</div>
                 <div class="tiny">参考音频：{{ roleDetail.voiceReferenceAudioName || roleDetail.voiceReferenceAudioPath || "无" }}</div>
                 <div class="tiny">参考文本：{{ roleDetail.voiceReferenceText || "无" }}</div>
                 <div class="tiny">提示词：{{ roleDetail.voicePromptText || "无" }}</div>

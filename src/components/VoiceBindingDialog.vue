@@ -7,7 +7,6 @@ const props = defineProps<{
   open: boolean;
   title: string;
   initialLabel: string;
-  initialConfigId?: number | null;
   initialPresetId?: string;
   initialMode?: string;
   initialReferenceAudioPath?: string;
@@ -23,7 +22,6 @@ const emit = defineEmits<{
 }>();
 
 const store = useToonflowStore();
-const selectedConfigId = ref<number | null>(null);
 const selectedPresetId = ref("");
 const selectedMode = ref("text");
 const referenceAudioPath = ref("");
@@ -48,21 +46,102 @@ const modeOptions = [
   { key: "prompt_voice", label: "提示词音色" },
 ];
 
-const presets = computed(() => store.voicePresetsForConfig(selectedConfigId.value));
-const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === selectedConfigId.value) || null);
-const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
-const currentManufacturer = computed(() => String(selectedModel.value?.manufacturer || "").trim());
 const runtimeStoryVoiceConfigId = computed(() => {
   const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceModel")?.configId;
   return value && value > 0 ? value : null;
 });
-const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value ?? props.initialConfigId ?? selectedConfigId.value ?? null);
-const availableModeOptions = computed(() => {
-  if (currentManufacturer.value === "aliyun" || currentManufacturer.value === "aliyun_direct") {
-    return modeOptions.filter((item) => item.key === "text" || item.key === "prompt_voice");
-  }
-  return modeOptions;
+const runtimeVoiceDesignConfigId = computed(() => {
+  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceDesignModel")?.configId;
+  return value && value > 0 ? value : null;
 });
+const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value);
+const presets = computed(() => store.voicePresetsForConfig(effectiveConfigId.value));
+const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === effectiveConfigId.value) || null);
+const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
+const hasVoiceDesignModel = computed(() => !!runtimeVoiceDesignConfigId.value);
+const modelSupportedModes = computed(() => resolveModelSupportedModes(selectedModel.value));
+const supportedModes = computed(() => {
+  const modes = new Set(modelSupportedModes.value);
+  if (hasVoiceDesignModel.value) {
+    modes.add("prompt_voice");
+  } else {
+    modes.delete("prompt_voice");
+  }
+  return Array.from(modes);
+});
+const modeSupportNote = computed(() => {
+  const notes: string[] = [];
+  const supportedModelLabels = modeOptions
+    .filter((item) => item.key !== "prompt_voice" && modelSupportedModes.value.includes(item.key))
+    .map((item) => item.label);
+  const unsupportedModelLabels = modeOptions.filter((item) => item.key !== "prompt_voice" && !modelSupportedModes.value.includes(item.key));
+  if (unsupportedModelLabels.length && supportedModelLabels.length) {
+    notes.push(`当前模型仅支持：${supportedModelLabels.join("、")}`);
+  }
+  if (!hasVoiceDesignModel.value) {
+    notes.push("提示词音色需要先在设置里配置语音设计模型");
+  }
+  return notes.join("；");
+});
+
+function isAliyunDirectCosyVoiceModel(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return [
+    "cosyvoice-v3-flash",
+    "cosyvoice-v3-plus",
+    "cosyvoice-v3.5-flash",
+    "cosyvoice-v3.5-plus",
+  ].includes(normalized);
+}
+
+function resolveModelSupportedModes(model: { manufacturer?: string | null; model?: string | null; modes?: string[] | null } | null): string[] {
+  const declaredModes = Array.isArray(model?.modes)
+    ? model.modes.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (declaredModes.length) return declaredModes;
+  if (String(model?.manufacturer || "").trim() === "aliyun_direct" && isAliyunDirectCosyVoiceModel(model?.model)) {
+    return ["text", "clone", "mix"];
+  }
+  return modeOptions.map((item) => item.key);
+}
+
+function unsupportedModeReason(mode: string): string {
+  const normalizedMode = String(mode || "").trim();
+  if (normalizedMode === "prompt_voice") {
+    return hasVoiceDesignModel.value ? "" : "请先在设置里配置语音设计模型";
+  }
+  if (!normalizedMode || supportedModes.value.includes(normalizedMode)) {
+    return "";
+  }
+  return "当前语音模型不支持该绑定模式";
+}
+
+function fallbackSupportedMode(): string {
+  return supportedModes.value.includes("text") ? "text" : supportedModes.value[0] || "text";
+}
+
+function ensureSelectedModeSupported(mode?: string | null) {
+  const nextMode = modeOptions.some((item) => item.key === mode) ? String(mode) : selectedMode.value || "text";
+  const reason = unsupportedModeReason(nextMode);
+  if (!reason) {
+    selectedMode.value = nextMode;
+    return;
+  }
+  selectedMode.value = fallbackSupportedMode();
+  if (props.open) {
+    previewStatus.value = reason;
+  }
+}
+
+function selectMode(mode: string) {
+  const reason = unsupportedModeReason(mode);
+  if (reason) {
+    previewStatus.value = reason;
+    return;
+  }
+  selectedMode.value = mode;
+  previewStatus.value = "";
+}
 
 watch(
   () => props.open,
@@ -71,9 +150,9 @@ watch(
       stopPreview();
       return;
     }
-    selectedConfigId.value = props.initialConfigId ?? null;
+    await store.ensureSettingsPanelData();
     selectedPresetId.value = props.initialPresetId || "";
-    selectedMode.value = props.initialMode || "text";
+    selectedMode.value = modeOptions.some((item) => item.key === props.initialMode) ? (props.initialMode as string) : "text";
     referenceAudioPath.value = props.initialReferenceAudioPath || "";
     referenceAudioName.value = props.initialReferenceAudioName || "";
     referenceText.value = props.initialReferenceText || "";
@@ -83,39 +162,28 @@ watch(
     previewStatus.value = "";
     previewAudioUrl.value = "";
     await store.fetchVoiceModels();
-    selectedConfigId.value = runtimeStoryVoiceConfigId.value
-      ?? props.initialConfigId
-      ?? store.state.voiceModels[0]?.id
-      ?? null;
-    if (selectedConfigId.value) {
-      await store.fetchVoicePresets(selectedConfigId.value);
+    if (effectiveConfigId.value) {
+      await store.fetchVoicePresets(effectiveConfigId.value);
     }
+    ensureSelectedModeSupported(props.initialMode || selectedMode.value);
   },
   { immediate: true },
 );
-
-watch(selectedConfigId, async (configId) => {
-  if (configId) {
-    await store.fetchVoicePresets(configId);
-  }
-});
 
 watch(
   runtimeStoryVoiceConfigId,
   async (configId) => {
-    if (!props.open || !configId || configId === selectedConfigId.value) return;
-    selectedConfigId.value = configId;
+    if (!props.open || !configId) return;
     await store.fetchVoicePresets(configId);
   },
   { immediate: true },
 );
 
 watch(
-  availableModeOptions,
-  (nextModes) => {
-    if (!nextModes.some((item) => item.key === selectedMode.value)) {
-      selectedMode.value = nextModes[0]?.key || "text";
-    }
+  selectedModel,
+  () => {
+    if (!props.open) return;
+    ensureSelectedModeSupported(selectedMode.value);
   },
   { immediate: true },
 );
@@ -147,7 +215,10 @@ function labelForSelected() {
 }
 
 function validate(): string | null {
+  if (selectedMode.value === "prompt_voice" && !hasVoiceDesignModel.value) return "请先在设置里配置语音设计模型";
   if (!effectiveConfigId.value) return "请先在设置里配置语音生成模型";
+  const modeReason = unsupportedModeReason(selectedMode.value);
+  if (modeReason) return modeReason;
   if (selectedMode.value === "text" && !selectedPresetId.value) return "请先选择音色预设";
   if (selectedMode.value === "clone" && !referenceAudioPath.value) return "克隆模式需要上传参考音频";
   if (selectedMode.value === "mix" && !mixVoices.value.some((item) => item.voiceId)) return "混合模式至少选择一个音色";
@@ -316,7 +387,6 @@ function confirm() {
   }
   emit("confirm", {
     label: labelForSelected(),
-    configId: effectiveConfigId.value,
     presetId: selectedPresetId.value,
     mode: selectedMode.value,
     referenceAudioPath: referenceAudioPath.value,
@@ -372,21 +442,22 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-section__title">绑定模式</div>
             <div class="voice-dialog-list">
               <button
-                v-for="mode in availableModeOptions"
+                v-for="mode in modeOptions"
                 :key="mode.key"
                 class="voice-dialog-select"
-                :class="{ 'is-active': selectedMode === mode.key }"
+                :class="{ 'is-active': selectedMode === mode.key, 'is-disabled': !!unsupportedModeReason(mode.key) }"
                 type="button"
-                @click="selectedMode = mode.key"
+                @click="selectMode(mode.key)"
               >
                 {{ mode.label }}
               </button>
             </div>
+            <div v-if="modeSupportNote" class="voice-dialog-note voice-dialog-note--warn">{{ modeSupportNote }}</div>
           </section>
 
           <section v-if="selectedMode === 'text'" class="voice-dialog-section">
             <div class="voice-dialog-section__title">音色预设</div>
-            <div v-if="!selectedConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
+            <div v-if="!effectiveConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
             <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
             <div v-else class="voice-dialog-list">
               <button
@@ -428,7 +499,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="voice-dialog-section__title voice-dialog-section__title--sub">可选预设</div>
-            <div v-if="!selectedConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
+            <div v-if="!effectiveConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
             <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
             <div v-else class="voice-dialog-list">
               <button

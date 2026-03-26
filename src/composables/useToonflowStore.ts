@@ -23,7 +23,7 @@ import {
   createDefaultPlayerRole,
   createEmptyChapter,
 } from "../types/toonflow";
-import { fileToBase64Payload } from "../utils/file";
+import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 
 type Loadable<T> = T | null;
 
@@ -55,6 +55,123 @@ function normalizeAliyunDirectConfigFields(manufacturer: string, modelType: stri
     model: model.trim() || (modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash"),
     baseUrl: modelType === "asr" ? "https://dashscope.aliyuncs.com/compatible-mode" : "https://dashscope.aliyuncs.com",
   };
+}
+
+const AVATAR_STD_SIZE = 512;
+const AVATAR_BG_SIZE = 768;
+const COVER_STD_WIDTH = 1280;
+const COVER_STD_HEIGHT = 720;
+const COVER_BG_WIDTH = 1536;
+const COVER_BG_HEIGHT = 864;
+
+type EditorImageTarget = "account" | "user" | "npc" | "cover" | "chapter";
+
+function buildSafeUploadBaseName(input: string, fallback: string): string {
+  const normalized = String(input || "")
+    .trim()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || fallback;
+}
+
+function fileNameFromSource(source: File | string, fallback: string): string {
+  if (source instanceof File) {
+    return String(source.name || "").trim() || fallback;
+  }
+  const raw = String(source || "").trim();
+  if (!raw) return fallback;
+  const clean = raw.split("#")[0]?.split("?")[0] || raw;
+  const tail = clean.split("/").pop() || "";
+  return tail.trim() || fallback;
+}
+
+function looksLikeGifName(input: string): boolean {
+  const raw = String(input || "").trim();
+  if (!raw) return false;
+  const clean = raw.split("#")[0]?.split("?")[0] || raw;
+  return /\.gif$/i.test(clean);
+}
+
+function cropRectForTarget(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) {
+  const sourceRatio = sourceWidth / Math.max(sourceHeight, 1);
+  const targetRatio = targetWidth / Math.max(targetHeight, 1);
+  if (sourceRatio > targetRatio) {
+    const width = sourceHeight * targetRatio;
+    return {
+      sx: (sourceWidth - width) / 2,
+      sy: 0,
+      sw: width,
+      sh: sourceHeight,
+    };
+  }
+  const height = sourceWidth / targetRatio;
+  return {
+    sx: 0,
+    sy: (sourceHeight - height) / 2,
+    sw: sourceWidth,
+    sh: height,
+  };
+}
+
+async function loadHtmlImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("图片解码失败"));
+      image.src = objectUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function loadImageSourceAsset(
+  baseUrl: string,
+  source: File | string,
+  fallbackName: string,
+): Promise<{ blob: Blob; image: HTMLImageElement; isGif: boolean }> {
+  const sourceName = fileNameFromSource(source, fallbackName);
+  let blob: Blob;
+  let isGif = looksLikeGifName(sourceName);
+  if (source instanceof File) {
+    blob = source;
+    isGif = isGif || String(source.type || "").trim().toLowerCase() === "image/gif";
+  } else {
+    const resolved = resolveMediaUrl(baseUrl, source);
+    if (!resolved) {
+      throw new Error("未找到可处理的图片资源");
+    }
+    const response = await fetch(resolved);
+    if (!response.ok) {
+      throw new Error(`图片下载失败: HTTP ${response.status}`);
+    }
+    blob = await response.blob();
+    isGif = isGif || String(blob.type || "").trim().toLowerCase() === "image/gif" || looksLikeGifName(source);
+  }
+  const image = await loadHtmlImageFromBlob(blob);
+  return { blob, image, isGif };
+}
+
+function renderCroppedPngDataUrl(image: HTMLImageElement, targetWidth: number, targetHeight: number): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("当前浏览器不支持图片标准化");
+  }
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error("图片尺寸无效");
+  }
+  const { sx, sy, sw, sh } = cropRectForTarget(sourceWidth, sourceHeight, targetWidth, targetHeight);
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+  return canvas.toDataURL("image/png");
 }
 
 function normalizeVoiceModelConfig(input: VoiceModelConfig): VoiceModelConfig {
@@ -283,7 +400,6 @@ function createEmptyWorldState() {
     playerName: "用户",
     playerDesc: "",
     playerVoice: "",
-    playerVoiceConfigId: null as number | null,
     playerVoicePresetId: "",
     playerVoiceMode: "text",
     playerVoiceReferenceAudioPath: "",
@@ -293,7 +409,6 @@ function createEmptyWorldState() {
     playerVoiceMixVoices: [] as VoiceMixItem[],
     narratorName: "旁白",
     narratorVoice: "混合（清朗温润）",
-    narratorVoiceConfigId: null as number | null,
     narratorVoicePresetId: "",
     narratorVoiceMode: "text",
     narratorVoiceReferenceAudioPath: "",
@@ -322,7 +437,6 @@ interface StoryEditorSnapshot {
   playerName: string;
   playerDesc: string;
   playerVoice: string;
-  playerVoiceConfigId: number | null;
   playerVoicePresetId: string;
   playerVoiceMode: string;
   playerVoiceReferenceAudioPath: string;
@@ -332,7 +446,6 @@ interface StoryEditorSnapshot {
   playerVoiceMixVoices: VoiceMixItem[];
   narratorName: string;
   narratorVoice: string;
-  narratorVoiceConfigId: number | null;
   narratorVoicePresetId: string;
   narratorVoiceMode: string;
   narratorVoiceReferenceAudioPath: string;
@@ -367,6 +480,7 @@ const GAME_MODEL_SLOTS = [
   { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
+  { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
   { key: "storyVoiceModel", label: "语音生成", configType: "voice" },
   { key: "storyAsrModel", label: "语音识别", configType: "voice" },
 ] as const;
@@ -379,6 +493,16 @@ const STORY_PROMPT_CODES = [
   "story-mini-game",
   "story-safety",
 ] as const;
+
+function stripRoleVoiceConfig(role: StoryRole): StoryRole {
+  const cloned = JSON.parse(JSON.stringify(role || {})) as StoryRole & { voiceConfigId?: number | null };
+  delete cloned.voiceConfigId;
+  cloned.voiceMixVoices = (cloned.voiceMixVoices || []).map((item) => ({
+    voiceId: String(item?.voiceId || ""),
+    weight: Number.isFinite(Number(item?.weight)) ? Number(item.weight) : 0.7,
+  }));
+  return cloned;
+}
 
 function createToonflowStore() {
   const state = reactive({
@@ -411,6 +535,7 @@ function createToonflowStore() {
     settingsPanelLoaded: false,
     settingsTextConfigs: [] as ModelConfigItem[],
     settingsImageConfigs: [] as ModelConfigItem[],
+    settingsVoiceDesignConfigs: [] as ModelConfigItem[],
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
     storyPrompts: [] as PromptItem[],
@@ -485,6 +610,7 @@ function createToonflowStore() {
     state.settingsPanelLoaded = false;
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
+    state.settingsVoiceDesignConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
     state.storyPrompts = [];
@@ -527,7 +653,6 @@ function createToonflowStore() {
       playerName: state.playerName,
       playerDesc: state.playerDesc,
       playerVoice: state.playerVoice,
-      playerVoiceConfigId: state.playerVoiceConfigId,
       playerVoicePresetId: state.playerVoicePresetId,
       playerVoiceMode: state.playerVoiceMode,
       playerVoiceReferenceAudioPath: state.playerVoiceReferenceAudioPath,
@@ -537,7 +662,6 @@ function createToonflowStore() {
       playerVoiceMixVoices: JSON.parse(JSON.stringify(state.playerVoiceMixVoices || [])) as VoiceMixItem[],
       narratorName: state.narratorName,
       narratorVoice: state.narratorVoice,
-      narratorVoiceConfigId: state.narratorVoiceConfigId,
       narratorVoicePresetId: state.narratorVoicePresetId,
       narratorVoiceMode: state.narratorVoiceMode,
       narratorVoiceReferenceAudioPath: state.narratorVoiceReferenceAudioPath,
@@ -590,7 +714,6 @@ function createToonflowStore() {
     state.playerName = snapshot.playerName;
     state.playerDesc = snapshot.playerDesc;
     state.playerVoice = snapshot.playerVoice;
-    state.playerVoiceConfigId = snapshot.playerVoiceConfigId;
     state.playerVoicePresetId = snapshot.playerVoicePresetId;
     state.playerVoiceMode = snapshot.playerVoiceMode;
     state.playerVoiceReferenceAudioPath = snapshot.playerVoiceReferenceAudioPath;
@@ -600,7 +723,6 @@ function createToonflowStore() {
     state.playerVoiceMixVoices = JSON.parse(JSON.stringify(snapshot.playerVoiceMixVoices || [])) as VoiceMixItem[];
     state.narratorName = snapshot.narratorName;
     state.narratorVoice = snapshot.narratorVoice;
-    state.narratorVoiceConfigId = snapshot.narratorVoiceConfigId;
     state.narratorVoicePresetId = snapshot.narratorVoicePresetId;
     state.narratorVoiceMode = snapshot.narratorVoiceMode;
     state.narratorVoiceReferenceAudioPath = snapshot.narratorVoiceReferenceAudioPath;
@@ -612,7 +734,7 @@ function createToonflowStore() {
     state.allowRoleView = snapshot.allowRoleView;
     state.allowChatShare = snapshot.allowChatShare;
     state.worldPublishStatus = snapshot.worldPublishStatus;
-    state.npcRoles = JSON.parse(JSON.stringify(snapshot.npcRoles || [])) as StoryRole[];
+    state.npcRoles = (JSON.parse(JSON.stringify(snapshot.npcRoles || [])) as StoryRole[]).map(stripRoleVoiceConfig);
     state.chapters = JSON.parse(JSON.stringify(snapshot.chapters || [])) as ChapterItem[];
     state.selectedChapterId = snapshot.selectedChapterId;
     const selectedSort = state.selectedChapterId
@@ -1201,7 +1323,6 @@ function createToonflowStore() {
 
   function setPlayerVoiceBinding(binding: VoiceBindingDraft) {
     state.playerVoice = binding.label;
-    state.playerVoiceConfigId = binding.configId ?? null;
     state.playerVoicePresetId = binding.presetId || "";
     state.playerVoiceMode = binding.mode || "text";
     state.playerVoiceReferenceAudioPath = binding.referenceAudioPath || "";
@@ -1213,7 +1334,6 @@ function createToonflowStore() {
 
   function setNarratorVoiceBinding(binding: VoiceBindingDraft) {
     state.narratorVoice = binding.label;
-    state.narratorVoiceConfigId = binding.configId ?? null;
     state.narratorVoicePresetId = binding.presetId || "";
     state.narratorVoiceMode = binding.mode || "text";
     state.narratorVoiceReferenceAudioPath = binding.referenceAudioPath || "";
@@ -1227,7 +1347,6 @@ function createToonflowStore() {
     const role = state.npcRoles[index];
     if (!role) return;
     role.voice = binding.label;
-    role.voiceConfigId = binding.configId ?? null;
     role.voicePresetId = binding.presetId || "";
     role.voiceMode = binding.mode || "text";
     role.voiceReferenceAudioPath = binding.referenceAudioPath || "";
@@ -1272,7 +1391,6 @@ function createToonflowStore() {
       description: "",
       voice: "",
       voiceMode: "text",
-      voiceConfigId: null,
       voicePresetId: "",
       voiceReferenceAudioPath: "",
       voiceReferenceAudioName: "",
@@ -1332,9 +1450,10 @@ function createToonflowStore() {
     return state.userId === 1 || state.userName.trim().toLowerCase() === "admin";
   }
 
-  function settingsConfigOptions(type: "text" | "image" | "voice"): ModelConfigItem[] {
+  function settingsConfigOptions(type: "text" | "image" | "voice" | "voice_design"): ModelConfigItem[] {
     if (type === "text") return state.settingsTextConfigs;
     if (type === "image") return state.settingsImageConfigs;
+    if (type === "voice_design") return state.settingsVoiceDesignConfigs;
     return state.settingsVoiceConfigs.map((item) => ({
       id: item.id,
       type: item.type || "voice",
@@ -1426,17 +1545,53 @@ function createToonflowStore() {
     return result.filePath || result.path || "";
   }
 
-  async function uploadImage(target: "account" | "user" | "npc" | "cover" | "chapter", file: File): Promise<string> {
+  async function uploadImagePayload(target: EditorImageTarget, fileName: string, base64Data: string): Promise<string> {
     if (target !== "account" && state.selectedProjectId <= 0) {
       throw new Error("请先选择项目后再上传图片");
     }
     const result = await api.uploadImage({
       projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
       type: target === "cover" || target === "chapter" ? "scene" : "role",
-      fileName: file.name || undefined,
-      base64Data: await fileToBase64Payload(file),
+      fileName,
+      base64Data,
     });
     return result.filePath || result.path || "";
+  }
+
+  async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
+    const safeBaseName = buildSafeUploadBaseName(baseName, target);
+    const asset = await loadImageSourceAsset(state.baseUrl, source, safeBaseName);
+    const version = Date.now();
+    const isWide = target === "cover" || target === "chapter";
+    const keepAnimatedForeground = !isWide && asset.isGif;
+    const path = keepAnimatedForeground
+      ? await uploadImagePayload(
+        target,
+        `${safeBaseName}_${version}_fg.gif`,
+        await fileToDataUrl(asset.blob),
+      )
+      : await uploadImagePayload(
+        target,
+        `${safeBaseName}_${version}_fg.png`,
+        renderCroppedPngDataUrl(
+          asset.image,
+          isWide ? COVER_STD_WIDTH : AVATAR_STD_SIZE,
+          isWide ? COVER_STD_HEIGHT : AVATAR_STD_SIZE,
+        ),
+      );
+    if (target === "chapter") {
+      return { path, bgPath: "" };
+    }
+    const bgPath = await uploadImagePayload(
+      target,
+      `${safeBaseName}_${version}_bg.png`,
+      renderCroppedPngDataUrl(
+        asset.image,
+        isWide ? COVER_BG_WIDTH : AVATAR_BG_SIZE,
+        isWide ? COVER_BG_HEIGHT : AVATAR_BG_SIZE,
+      ),
+    );
+    return { path, bgPath };
   }
 
   async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
@@ -1446,50 +1601,53 @@ function createToonflowStore() {
       if (!path) {
         throw new Error("未生成图片");
       }
+      const prepared = await uploadStandardizedImageAsset(target, path, name || target);
       if (target === "account") {
-        state.accountAvatarPath = path;
-        state.accountAvatarBgPath = path;
+        state.accountAvatarPath = prepared.path;
+        state.accountAvatarBgPath = prepared.bgPath || prepared.path;
         await persistAccountAvatar();
       } else if (target === "user") {
-        state.userAvatarPath = path;
-        state.userAvatarBgPath = path;
+        state.userAvatarPath = prepared.path;
+        state.userAvatarBgPath = prepared.bgPath || prepared.path;
       } else if (target === "npc") {
-        onReady?.(path, path);
+        onReady?.(prepared.path, prepared.bgPath || prepared.path);
       } else if (target === "cover") {
-        state.worldCoverPath = path;
-        state.worldCoverBgPath = path;
+        state.worldCoverPath = prepared.path;
+        state.worldCoverBgPath = prepared.bgPath || prepared.path;
       } else if (target === "chapter") {
-        state.chapterBackground = path;
+        state.chapterBackground = prepared.path;
       }
-      return path;
+      return prepared.path;
     } finally {
       state.aiGenerating = false;
     }
   }
 
   async function updateAvatarFromFile(target: "account" | "user" | "npc", file: File, onReady?: (path: string, bgPath?: string) => void, roleIndex?: number) {
-    const path = await uploadImage(target, file);
+    const prepared = await uploadStandardizedImageAsset(target, file, file.name || target);
     if (target === "account") {
-      state.accountAvatarPath = path;
-      state.accountAvatarBgPath = path;
+      state.accountAvatarPath = prepared.path;
+      state.accountAvatarBgPath = prepared.bgPath || prepared.path;
       await persistAccountAvatar();
     } else if (target === "user") {
-      state.userAvatarPath = path;
-      state.userAvatarBgPath = path;
+      state.userAvatarPath = prepared.path;
+      state.userAvatarBgPath = prepared.bgPath || prepared.path;
     } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
-      state.npcRoles[roleIndex].avatarPath = path;
-      state.npcRoles[roleIndex].avatarBgPath = path;
-      onReady?.(path, path);
+      state.npcRoles[roleIndex].avatarPath = prepared.path;
+      state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath || prepared.path;
+      onReady?.(prepared.path, prepared.bgPath || prepared.path);
     }
   }
 
   async function updateCoverFromFile(file: File) {
-    state.worldCoverPath = await uploadImage("cover", file);
-    state.worldCoverBgPath = state.worldCoverPath;
+    const prepared = await uploadStandardizedImageAsset("cover", file, file.name || "story_cover");
+    state.worldCoverPath = prepared.path;
+    state.worldCoverBgPath = prepared.bgPath || prepared.path;
   }
 
   async function updateChapterBackgroundFromFile(file: File) {
-    state.chapterBackground = await uploadImage("chapter", file);
+    const prepared = await uploadStandardizedImageAsset("chapter", file, file.name || "chapter_bg");
+    state.chapterBackground = prepared.path;
   }
 
   async function ensureSettingsPanelData(force = false) {
@@ -1506,6 +1664,7 @@ function createToonflowStore() {
       ]);
       state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
       state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
+      state.settingsVoiceDesignConfigs = configs.filter((item) => String(item.type || "").trim() === "voice_design");
       state.settingsVoiceConfigs = (voiceConfigs || [])
         .map(normalizeVoiceModelConfig)
         .filter((item) => String(item.type || "voice").trim() === "voice");
@@ -1550,6 +1709,18 @@ function createToonflowStore() {
   async function testManagedModelConfig(config: ModelConfigItem): Promise<ModelTestResult> {
     const type = String(config.type || "").trim();
     const modelType = String(config.modelType || "").trim();
+    if (type === "voice_design") {
+      const result = await api.testVoiceDesignModel({
+        modelName: String(config.model || "").trim(),
+        apiKey: String(config.apiKey || "").trim(),
+        baseURL: String(config.baseUrl || "").trim() || undefined,
+        manufacturer: String(config.manufacturer || "").trim(),
+      });
+      return {
+        kind: "audio",
+        content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
+      };
+    }
     if (type === "text") {
       const result = await api.testTextModel({
         modelName: String(config.model || "").trim(),
@@ -1650,10 +1821,9 @@ function createToonflowStore() {
       }
     }
     return {
-      roles: state.npcRoles,
+      roles: state.npcRoles.map(stripRoleVoiceConfig),
       narratorVoice: state.narratorVoice,
       narratorVoiceMode: state.narratorVoiceMode,
-      narratorVoiceConfigId: state.narratorVoiceConfigId,
       narratorVoicePresetId: state.narratorVoicePresetId,
       narratorVoiceReferenceAudioPath: state.narratorVoiceReferenceAudioPath,
       narratorVoiceReferenceAudioName: state.narratorVoiceReferenceAudioName,
@@ -1679,7 +1849,6 @@ function createToonflowStore() {
       description: state.playerDesc,
       voice: state.playerVoice,
       voiceMode: state.playerVoiceMode,
-      voiceConfigId: state.playerVoiceConfigId,
       voicePresetId: state.playerVoicePresetId,
       voiceReferenceAudioPath: state.playerVoiceReferenceAudioPath,
       voiceReferenceAudioName: state.playerVoiceReferenceAudioName,
@@ -1695,7 +1864,6 @@ function createToonflowStore() {
       name: state.narratorName,
       voice: state.narratorVoice,
       voiceMode: state.narratorVoiceMode,
-      voiceConfigId: state.narratorVoiceConfigId,
       voicePresetId: state.narratorVoicePresetId,
       voiceReferenceAudioPath: state.narratorVoiceReferenceAudioPath,
       voiceReferenceAudioName: state.narratorVoiceReferenceAudioName,
@@ -1827,6 +1995,7 @@ function createToonflowStore() {
     state.settingsPanelLoaded = false;
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
+    state.settingsVoiceDesignConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
     state.storyPrompts = [];
@@ -1886,7 +2055,6 @@ function createToonflowStore() {
       state.userAvatarBgPath = worldDetail.playerRole?.avatarBgPath || "";
       state.playerVoice = worldDetail.playerRole?.voice || "";
       state.playerVoiceMode = worldDetail.playerRole?.voiceMode || "text";
-      state.playerVoiceConfigId = worldDetail.playerRole?.voiceConfigId ?? null;
       state.playerVoicePresetId = worldDetail.playerRole?.voicePresetId || "";
       state.playerVoiceReferenceAudioPath = worldDetail.playerRole?.voiceReferenceAudioPath || "";
       state.playerVoiceReferenceAudioName = worldDetail.playerRole?.voiceReferenceAudioName || "";
@@ -1896,14 +2064,15 @@ function createToonflowStore() {
       state.narratorName = worldDetail.narratorRole?.name || "旁白";
       state.narratorVoice = worldDetail.narratorRole?.voice || "混合（清朗温润）";
       state.narratorVoiceMode = worldDetail.narratorRole?.voiceMode || "text";
-      state.narratorVoiceConfigId = worldDetail.narratorRole?.voiceConfigId ?? null;
       state.narratorVoicePresetId = worldDetail.narratorRole?.voicePresetId || "";
       state.narratorVoiceReferenceAudioPath = worldDetail.narratorRole?.voiceReferenceAudioPath || "";
       state.narratorVoiceReferenceAudioName = worldDetail.narratorRole?.voiceReferenceAudioName || "";
       state.narratorVoiceReferenceText = worldDetail.narratorRole?.voiceReferenceText || "";
       state.narratorVoicePromptText = worldDetail.narratorRole?.voicePromptText || "";
       state.narratorVoiceMixVoices = worldDetail.narratorRole?.voiceMixVoices || [];
-      state.npcRoles = (worldDetail.settings?.roles || []).filter((item) => item.id !== "player" && item.id !== "narrator");
+      state.npcRoles = (worldDetail.settings?.roles || [])
+        .filter((item) => item.id !== "player" && item.id !== "narrator")
+        .map(stripRoleVoiceConfig);
       state.chapters = chapters || [];
       const firstChapter = state.chapters[0] || null;
       if (firstChapter) {

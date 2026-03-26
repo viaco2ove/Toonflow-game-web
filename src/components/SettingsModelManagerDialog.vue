@@ -31,7 +31,29 @@ const emit = defineEmits<{
 
 const store = useToonflowStore();
 
+function isVoiceDesignSlot(): boolean {
+  return props.configType === "voice_design" || props.slotKey === "storyVoiceDesignModel";
+}
+
+function isVoiceDesignModel(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return !!normalized && (
+    normalized === "qwen-voice-design"
+    || normalized.startsWith("qwen3-tts-vd")
+    || normalized === "voice-enrollment"
+    || normalized.startsWith("cosyvoice-v3")
+    || normalized.startsWith("cosyvoice-v3.5")
+  );
+}
+
+function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim() === "qwen";
+}
+
 function defaultSlotManufacturer(): string {
+  if (isVoiceDesignSlot()) {
+    return "qwen";
+  }
   if (props.configType === "voice" && props.slotKey === "storyAsrModel") {
     return "aliyun_direct";
   }
@@ -39,19 +61,46 @@ function defaultSlotManufacturer(): string {
 }
 
 function defaultSlotModelType(): string {
+  if (isVoiceDesignSlot()) {
+    return "voice_design";
+  }
   if (props.configType === "voice" && props.slotKey === "storyAsrModel") {
     return "asr";
   }
   return defaultModelTypeFor(props.configType);
 }
 
+function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelType = defaultSlotModelType()): string {
+  if (isVoiceDesignSlot() && manufacturer === "qwen") {
+    return "qwen3-tts-vd-2026-01-26";
+  }
+  return defaultModelNameFor(manufacturer, props.configType, modelType);
+}
+
 function rowMatchesSlot(item: ModelConfigItem): boolean {
+  if (isVoiceDesignSlot()) {
+    return isVoiceDesignManufacturer(item.manufacturer) && isVoiceDesignModel(item.model);
+  }
   if (props.configType !== "voice") return true;
   const modelType = String(item.modelType || "").trim() || "tts";
   if (props.slotKey === "storyAsrModel") {
     return modelType === "asr";
   }
   return modelType !== "asr";
+}
+
+function displayKindLabel(type: string, slotKey = props.slotKey): string {
+  if (slotKey === "storyVoiceDesignModel") {
+    return "语音设计模型";
+  }
+  return modelKindLabel(type);
+}
+
+function displayModelTypeLabel(type: string, slotKey = props.slotKey): string {
+  if (slotKey === "storyVoiceDesignModel") {
+    return "voice_design";
+  }
+  return type;
 }
 
 const keyword = ref("");
@@ -63,7 +112,7 @@ const visibleKeys = reactive<Record<number, boolean>>({});
 const form = reactive({
   manufacturer: defaultSlotManufacturer(),
   modelType: defaultSlotModelType(),
-  model: defaultModelNameFor(defaultSlotManufacturer(), props.configType, defaultSlotModelType()),
+  model: defaultSlotModelName(),
   baseUrl: defaultBaseUrlFor(defaultSlotManufacturer(), props.configType, defaultSlotModelType()),
   apiKey: "",
 });
@@ -77,6 +126,9 @@ const testResult = reactive({
 
 const manufacturerOptions = computed(() =>
   MODEL_MANUFACTURERS.filter((item) => {
+    if (isVoiceDesignSlot()) {
+      return item.value === "qwen";
+    }
     if (props.configType === "voice") {
       return item.value !== "qwen";
     }
@@ -84,12 +136,25 @@ const manufacturerOptions = computed(() =>
   }),
 );
 
+const modelTypeOptions = computed(() => {
+  if (isVoiceDesignSlot()) {
+    return [{ value: "voice_design", label: "语音设计" }];
+  }
+  return MODEL_TYPE_OPTIONS[props.configType];
+});
+
+const slotRows = computed(() =>
+  store
+    .settingsConfigOptions(props.configType)
+    .filter((item) => rowMatchesSlot(item)),
+);
+
 watch(
   () => props.modelValue,
   (value) => {
     if (value) {
       keyword.value = "";
-      selectedId.value = props.selectedId ?? null;
+      selectedId.value = slotRows.value.some((item) => item.id === (props.selectedId ?? null)) ? (props.selectedId ?? null) : null;
     }
   },
 );
@@ -97,14 +162,14 @@ watch(
 watch(
   () => props.selectedId,
   (value) => {
-    selectedId.value = value ?? null;
+    selectedId.value = slotRows.value.some((item) => item.id === (value ?? null)) ? (value ?? null) : null;
   },
 );
 
 watch(
   () => [form.manufacturer, form.modelType, props.configType] as const,
   ([manufacturer, modelType, configType], [prevManufacturer, prevModelType]) => {
-    const prevDefaultModel = defaultModelNameFor(prevManufacturer, configType, prevModelType);
+    const prevDefaultModel = defaultSlotModelName(prevManufacturer, prevModelType);
     if ((manufacturer !== prevManufacturer || modelType !== prevModelType) && (!editingId.value || !form.baseUrl.trim())) {
       form.baseUrl = defaultBaseUrlFor(manufacturer, configType, modelType);
     }
@@ -113,16 +178,14 @@ watch(
       modelType !== prevModelType
     ) {
       if (!editingId.value || !form.model.trim() || form.model === prevDefaultModel) {
-        form.model = defaultModelNameFor(manufacturer, configType, modelType);
+        form.model = defaultSlotModelName(manufacturer, modelType);
       }
     }
   },
 );
 
 const rows = computed(() =>
-  store
-    .settingsConfigOptions(props.configType)
-    .filter((item) => rowMatchesSlot(item))
+  slotRows.value
     .filter((item) => {
       const q = keyword.value.trim().toLowerCase();
       if (!q) return true;
@@ -144,7 +207,7 @@ function openCreate() {
   editingId.value = null;
   form.manufacturer = defaultSlotManufacturer();
   form.modelType = defaultSlotModelType();
-  form.model = defaultModelNameFor(form.manufacturer, props.configType, form.modelType);
+  form.model = defaultSlotModelName(form.manufacturer, form.modelType);
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = "";
   showEditor.value = true;
@@ -152,20 +215,28 @@ function openCreate() {
 
 function openEdit(row: ModelConfigItem) {
   editingId.value = row.id;
-  form.manufacturer = row.manufacturer || "other";
-  form.modelType = row.modelType || defaultModelTypeFor(props.configType);
-  form.model = row.model || "";
-  form.baseUrl = row.baseUrl || "";
+  form.manufacturer = isVoiceDesignSlot() && !isVoiceDesignManufacturer(row.manufacturer)
+    ? defaultSlotManufacturer()
+    : (row.manufacturer || "other");
+  form.modelType = isVoiceDesignSlot()
+    ? defaultSlotModelType()
+    : (row.modelType || defaultSlotModelType());
+  form.model = isVoiceDesignSlot() && !isVoiceDesignModel(row.model)
+    ? defaultSlotModelName(form.manufacturer, form.modelType)
+    : (row.model || "");
+  form.baseUrl = row.baseUrl || defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = row.apiKey || "";
   showEditor.value = true;
 }
 
 async function submitEditor() {
+  const manufacturer = isVoiceDesignSlot() ? defaultSlotManufacturer() : form.manufacturer;
+  const modelType = isVoiceDesignSlot() ? defaultSlotModelType() : form.modelType;
   if (!form.model.trim()) {
     store.state.notice = "模型名称不能为空";
     return;
   }
-  if (isApiKeyRequiredFor(form.manufacturer, props.configType) && !form.apiKey.trim()) {
+  if (isApiKeyRequiredFor(manufacturer, props.configType) && !form.apiKey.trim()) {
     store.state.notice = "API Key 不能为空";
     return;
   }
@@ -173,8 +244,8 @@ async function submitEditor() {
     await store.updateManagedModelConfig({
       id: editingId.value,
       type: props.configType,
-      manufacturer: form.manufacturer,
-      modelType: form.modelType,
+      manufacturer,
+      modelType,
       model: form.model.trim(),
       baseUrl: form.baseUrl.trim(),
       apiKey: form.apiKey.trim(),
@@ -182,8 +253,8 @@ async function submitEditor() {
   } else {
     await store.addManagedModelConfig({
       type: props.configType,
-      manufacturer: form.manufacturer,
-      modelType: form.modelType,
+      manufacturer,
+      modelType,
       model: form.model.trim(),
       baseUrl: form.baseUrl.trim(),
       apiKey: form.apiKey.trim(),
@@ -214,7 +285,7 @@ async function testRow(row: ModelConfigItem) {
 }
 
 async function confirmBinding() {
-  if (!selectedId.value) {
+  if (!selectedId.value || !slotRows.value.some((row) => row.id === selectedId.value)) {
     store.state.notice = "请先选中一个模型配置";
     return;
   }
@@ -228,9 +299,9 @@ async function confirmBinding() {
   <div v-if="modelValue" class="modal-backdrop" @click.self="close">
     <section class="modal-panel settings-model-manager">
       <div class="modal-header settings-modal-header settings-manager-header">
-        <div>
+          <div>
           <div class="modal-title">模型数据管理</div>
-          <div class="settings-manager-subtitle">{{ slotLabel }} · {{ modelKindLabel(configType) }}</div>
+          <div class="settings-manager-subtitle">{{ slotLabel }} · {{ displayKindLabel(configType) }}</div>
         </div>
         <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="close">×</button>
       </div>
@@ -265,8 +336,8 @@ async function confirmBinding() {
                   <span class="settings-manager-tag">{{ manufacturerLabel(row.manufacturer || "") }}</span>
                 </td>
                 <td>
-                  <span class="settings-manager-type">{{ modelKindLabel(row.type || configType) }}</span>
-                  <span class="settings-manager-model-type">{{ row.modelType || defaultModelTypeFor(configType) }}</span>
+                  <span class="settings-manager-type">{{ displayKindLabel(row.type || configType) }}</span>
+                  <span class="settings-manager-model-type">{{ displayModelTypeLabel(row.modelType || defaultModelTypeFor(configType)) }}</span>
                 </td>
                 <td>{{ row.model || `配置${row.id}` }}</td>
                 <td class="settings-manager-url">{{ row.baseUrl || "默认" }}</td>
@@ -321,7 +392,7 @@ async function confirmBinding() {
         <div class="field">
           <label>类型</label>
           <select v-model="form.modelType" class="select">
-            <option v-for="item in MODEL_TYPE_OPTIONS[configType]" :key="item.value" :value="item.value">{{ item.label }}</option>
+            <option v-for="item in modelTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </div>
         <div class="field">

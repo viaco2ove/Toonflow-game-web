@@ -259,4 +259,8 @@ export class ToonflowApi {
   testImageModel(payload: { modelName?: string; apiKey: string; baseURL?: string; manufacturer: string }) {
     return this.post<string>("/other/testImage", payload);
   }
+
+  testVoiceDesignModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+    return this.post<string>("/other/testVoiceDesign", payload);
+  }
 }

@@ -9,7 +9,7 @@ rsync -av --delete \
   --exclude .git \
   --exclude dist \
   --exclude '*.log' \
-  --node_modules_wsl' \
+  --exclude node_modules_wsl \
   ./ node_modules_wsl/
 cd node_modules_wsl
 yarn install
