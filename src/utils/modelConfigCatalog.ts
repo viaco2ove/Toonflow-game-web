@@ -153,7 +153,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
     return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
   }
   if (type === "voice" && manufacturer === "aliyun_direct") {
-    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3.5-flash";
+    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
   }
   return "";
 }

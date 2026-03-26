@@ -52,7 +52,7 @@ function normalizeAliyunDirectConfigFields(manufacturer: string, modelType: stri
     return { model, baseUrl };
   }
   return {
-    model: modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3.5-flash",
+    model: model.trim() || (modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash"),
     baseUrl: modelType === "asr" ? "https://dashscope.aliyuncs.com/compatible-mode" : "https://dashscope.aliyuncs.com",
   };
 }
