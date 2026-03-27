@@ -3252,7 +3252,7 @@ textarea::-webkit-scrollbar-thumb {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 72px;
+  bottom: 0px;
   width: 100%;
   min-height: 224px;
   display: flex;
