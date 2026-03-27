@@ -62,9 +62,7 @@ const hasVoiceDesignModel = computed(() => !!runtimeVoiceDesignConfigId.value);
 const modelSupportedModes = computed(() => resolveModelSupportedModes(selectedModel.value));
 const supportedModes = computed(() => {
   const modes = new Set(modelSupportedModes.value);
-  if (hasVoiceDesignModel.value) {
-    modes.add("prompt_voice");
-  } else {
+  if (!hasVoiceDesignModel.value) {
     modes.delete("prompt_voice");
   }
   return Array.from(modes);
@@ -94,23 +92,46 @@ function isAliyunDirectCosyVoiceModel(model?: string | null): boolean {
   ].includes(normalized);
 }
 
+function isAliyunDirectQwenVoiceCloneModel(model?: string | null): boolean {
+  return String(model || "").trim().toLowerCase().startsWith("qwen3-tts-vc");
+}
+
+function isAliyunDirectQwenVoiceDesignModel(model?: string | null): boolean {
+  return String(model || "").trim().toLowerCase().startsWith("qwen3-tts-vd");
+}
+
 function resolveModelSupportedModes(model: { manufacturer?: string | null; model?: string | null; modes?: string[] | null } | null): string[] {
   const declaredModes = Array.isArray(model?.modes)
     ? model.modes.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
   if (declaredModes.length) return declaredModes;
-  if (String(model?.manufacturer || "").trim() === "aliyun_direct" && isAliyunDirectCosyVoiceModel(model?.model)) {
-    return ["text", "clone", "mix"];
+  if (String(model?.manufacturer || "").trim() === "aliyun_direct") {
+    const normalizedModel = String(model?.model || "").trim().toLowerCase();
+    if (isAliyunDirectCosyVoiceModel(model?.model)) {
+      return normalizedModel.startsWith("cosyvoice-v3.5")
+        ? ["clone", "mix", "prompt_voice"]
+        : ["text", "clone", "mix", "prompt_voice"];
+    }
+    if (isAliyunDirectQwenVoiceCloneModel(model?.model)) {
+      return ["clone", "mix"];
+    }
+    if (isAliyunDirectQwenVoiceDesignModel(model?.model)) {
+      return ["prompt_voice"];
+    }
+    return ["text"];
   }
   return modeOptions.map((item) => item.key);
 }
 
 function unsupportedModeReason(mode: string): string {
   const normalizedMode = String(mode || "").trim();
-  if (normalizedMode === "prompt_voice") {
-    return hasVoiceDesignModel.value ? "" : "请先在设置里配置语音设计模型";
+  if (!normalizedMode || !modelSupportedModes.value.includes(normalizedMode)) {
+    return normalizedMode ? "当前语音模型不支持该绑定模式" : "";
   }
-  if (!normalizedMode || supportedModes.value.includes(normalizedMode)) {
+  if (normalizedMode === "prompt_voice" && !hasVoiceDesignModel.value) {
+    return "请先在设置里配置语音设计模型";
+  }
+  if (supportedModes.value.includes(normalizedMode)) {
     return "";
   }
   return "当前语音模型不支持该绑定模式";

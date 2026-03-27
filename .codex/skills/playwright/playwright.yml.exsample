@@ -1,0 +1,8 @@
+platform:
+  os: "Ubuntu 24.04.3 LTS"
+  runtime: "WSL2"
+  shell: "bash"
+wsl-test:
+  demo:
+    - "powershell.exe -Command \"node D:\Users\xxx\tools\Toonflow-game\Toonflow-game-web\test\playwright\playwright-demo\demo.js\""
+    - "powershell.exe -Command \"cd D:\Users\xxx\tools\Toonflow-game\Toonflow-game-web\test\playwright\playwright-demo; npx playwright test --project=chromium\""

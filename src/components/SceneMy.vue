@@ -33,11 +33,15 @@ const draftMenuWorld = ref<WorldItem | null>(null);
 const accountDialogTitle = computed(() => "创建角色");
 const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
 
-function onAvatarFile(e: Event) {
+async function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (file) {
-    void store.updateAvatarFromFile("account", file);
+    try {
+      await store.updateAvatarFromFile("account", file);
+    } catch (err) {
+      store.state.notice = `头像分离失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
   }
   input.value = "";
 }

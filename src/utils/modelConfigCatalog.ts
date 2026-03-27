@@ -155,6 +155,9 @@ export function defaultBaseUrlFor(
 }
 
 export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind, modelType = defaultModelTypeFor(type)): string {
+  if (type === "text" && manufacturer === "volcengine") {
+    return "doubao-seed-2-0-lite-260215";
+  }
   if (type === "voice_design" && manufacturer === "qwen") {
     return "qwen3-tts-vd-2026-01-26";
   }

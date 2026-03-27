@@ -11,6 +11,7 @@ import {
   ModelTestResult,
   ProjectItem,
   PromptItem,
+  RuntimeRetryMessageMeta,
   SessionDetail,
   SessionItem,
   StoryRole,
@@ -26,6 +27,12 @@ import {
 import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 
 type Loadable<T> = T | null;
+const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
+
+type RuntimeRetryTask = {
+  token: string;
+  run: () => Promise<void>;
+};
 
 function storageGet(key: string, fallback = ""): string {
   try {
@@ -134,6 +141,16 @@ async function loadImageSourceAsset(
   source: File | string,
   fallbackName: string,
 ): Promise<{ blob: Blob; image: HTMLImageElement; isGif: boolean }> {
+  const binary = await loadBinaryImageAsset(baseUrl, source, fallbackName);
+  const image = await loadHtmlImageFromBlob(binary.blob);
+  return { blob: binary.blob, image, isGif: binary.isGif };
+}
+
+async function loadBinaryImageAsset(
+  baseUrl: string,
+  source: File | string,
+  fallbackName: string,
+): Promise<{ blob: Blob; fileName: string; isGif: boolean }> {
   const sourceName = fileNameFromSource(source, fallbackName);
   let blob: Blob;
   let isGif = looksLikeGifName(sourceName);
@@ -152,8 +169,7 @@ async function loadImageSourceAsset(
     blob = await response.blob();
     isGif = isGif || String(blob.type || "").trim().toLowerCase() === "image/gif" || looksLikeGifName(source);
   }
-  const image = await loadHtmlImageFromBlob(blob);
-  return { blob, image, isGif };
+  return { blob, fileName: sourceName, isGif };
 }
 
 function renderCroppedPngDataUrl(image: HTMLImageElement, targetWidth: number, targetHeight: number): string {
@@ -208,6 +224,29 @@ function resolveMediaUrl(baseUrl: string, input: string): string {
   return `${base}/${raw}`;
 }
 
+function asUiErrorMessage(error: unknown, fallback = "未知错误"): string {
+  if (error instanceof Error) {
+    const text = String(error.message || "").trim();
+    if (text) return text;
+  }
+  const text = String(error || "").trim();
+  return text || fallback;
+}
+
+function isRuntimeRetryMeta(input: unknown): input is RuntimeRetryMessageMeta {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
+  const meta = input as Record<string, unknown>;
+  return meta.kind === "runtime_retry" && typeof meta.token === "string";
+}
+
+function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
+  return Boolean(message && message.eventType === RUNTIME_RETRY_EVENT && isRuntimeRetryMeta(message.meta));
+}
+
+function stripRuntimeRetryMessages(messages: MessageItem[]): MessageItem[] {
+  return messages.filter((message) => !isRuntimeRetryMessage(message));
+}
+
 function safeJsonParse<T>(text: string, fallback: T): T {
   if (!text.trim()) return fallback;
   try {
@@ -226,6 +265,20 @@ function normalizeScalarEditorText(input: unknown): string {
   return raw;
 }
 
+function extractSimpleConditionText(input: unknown): string {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return "";
+  const node = input as Record<string, unknown>;
+  const allowedKeys = new Set(["type", "op", "field", "left", "value", "right"]);
+  if (Object.keys(node).some((key) => !allowedKeys.has(key))) return "";
+  const op = String(node.type ?? node.op ?? "contains").trim().toLowerCase();
+  const field = String(node.field ?? node.left ?? "message").trim().toLowerCase();
+  const value = normalizeScalarEditorText(node.value ?? node.right).trim();
+  if (!value) return "";
+  if (!["contains", "equals", "eq"].includes(op)) return "";
+  if (!["message", "message.content", "latest", "latest_message"].includes(field)) return "";
+  return value;
+}
+
 function normalizeConditionEditorText(input: unknown): string {
   if (input === null || input === undefined) return "";
   if (typeof input === "string") {
@@ -235,11 +288,15 @@ function normalizeConditionEditorText(input: unknown): string {
       const parsed = JSON.parse(scalar) as unknown;
       if (parsed === null || parsed === undefined || parsed === "") return "";
       if (typeof parsed === "string") return normalizeScalarEditorText(parsed).trim();
+      const simple = extractSimpleConditionText(parsed);
+      if (simple) return simple;
       return JSON.stringify(parsed, null, 2);
     } catch {
       return scalar;
     }
   }
+  const simple = extractSimpleConditionText(input);
+  if (simple) return simple;
   return JSON.stringify(input, null, 2);
 }
 
@@ -570,6 +627,9 @@ function createToonflowStore() {
     debugLoadingStage: "",
     messageReactions: safeJsonParse(storageGet("toonflow.messageReactions", "{}"), {} as Record<string, string>),
   });
+  let runtimeRetryTask: RuntimeRetryTask | null = null;
+  let runtimeRetrySeed = 0;
+  let runtimeRetrying = false;
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
   let editorAutoPersistTimer: number | null = null;
@@ -577,6 +637,84 @@ function createToonflowStore() {
   let lastPersistedEditorSnapshot: StoryEditorSnapshot | null = null;
   let lastPersistedEditorSignature = "";
   let undoEditorSnapshot: StoryEditorSnapshot | null = null;
+
+  function createRuntimeRetryToken() {
+    runtimeRetrySeed += 1;
+    return `runtime_retry_${Date.now()}_${runtimeRetrySeed}`;
+  }
+
+  function clearRuntimeRetryMessage() {
+    const nextMessages = stripRuntimeRetryMessages(state.messages);
+    if (nextMessages.length !== state.messages.length) {
+      state.messages = nextMessages;
+    }
+  }
+
+  function clearRuntimeRetryState() {
+    runtimeRetryTask = null;
+    clearRuntimeRetryMessage();
+  }
+
+  function conversationMessages(): MessageItem[] {
+    return stripRuntimeRetryMessages(state.messages);
+  }
+
+  function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
+    const token = createRuntimeRetryToken();
+    const now = Date.now();
+    const retryMessage: MessageItem = {
+      id: -now,
+      role: "系统",
+      roleType: "system",
+      eventType: RUNTIME_RETRY_EVENT,
+      content: message,
+      createTime: now,
+      meta: {
+        kind: "runtime_retry",
+        token,
+        retryLabel,
+      } satisfies RuntimeRetryMessageMeta,
+    };
+    runtimeRetryTask = { token, run };
+    state.notice = "";
+    state.activeTab = "play";
+    state.messages = [...conversationMessages(), retryMessage];
+  }
+
+  function createRuntimeRetryRunner(
+    task: () => Promise<void>,
+    options?: {
+      retryLabel?: string;
+      formatErrorMessage?: (message: string) => string;
+    },
+  ) {
+    const retryLabel = options?.retryLabel || "重试";
+    const formatErrorMessage = options?.formatErrorMessage;
+    return async () => {
+      try {
+        await task();
+      } catch (error) {
+        const message = asUiErrorMessage(error);
+        showRuntimeRetryMessage(
+          formatErrorMessage ? formatErrorMessage(message) : message,
+          createRuntimeRetryRunner(task, options),
+          retryLabel,
+        );
+      }
+    };
+  }
+
+  async function retryRuntimeFailure() {
+    if (!runtimeRetryTask || runtimeRetrying) return;
+    const task = runtimeRetryTask;
+    runtimeRetrying = true;
+    clearRuntimeRetryState();
+    try {
+      await task.run();
+    } finally {
+      runtimeRetrying = false;
+    }
+  }
 
   function saveSettings() {
     storageSet("toonflow.baseUrl", state.baseUrl.trim());
@@ -598,6 +736,7 @@ function createToonflowStore() {
   }
 
   function clearRuntime() {
+    clearRuntimeRetryState();
     state.userName = "";
     state.userId = 0;
     state.projects = [];
@@ -1559,26 +1698,22 @@ function createToonflowStore() {
   }
 
   async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
+    if (target === "account" || target === "user" || target === "npc") {
+      return await separateRoleImageAsset(target, source, baseName);
+    }
     const safeBaseName = buildSafeUploadBaseName(baseName, target);
     const asset = await loadImageSourceAsset(state.baseUrl, source, safeBaseName);
     const version = Date.now();
     const isWide = target === "cover" || target === "chapter";
-    const keepAnimatedForeground = !isWide && asset.isGif;
-    const path = keepAnimatedForeground
-      ? await uploadImagePayload(
-        target,
-        `${safeBaseName}_${version}_fg.gif`,
-        await fileToDataUrl(asset.blob),
-      )
-      : await uploadImagePayload(
-        target,
-        `${safeBaseName}_${version}_fg.png`,
-        renderCroppedPngDataUrl(
-          asset.image,
-          isWide ? COVER_STD_WIDTH : AVATAR_STD_SIZE,
-          isWide ? COVER_STD_HEIGHT : AVATAR_STD_SIZE,
-        ),
-      );
+    const path = await uploadImagePayload(
+      target,
+      `${safeBaseName}_${version}_fg.png`,
+      renderCroppedPngDataUrl(
+        asset.image,
+        isWide ? COVER_STD_WIDTH : AVATAR_STD_SIZE,
+        isWide ? COVER_STD_HEIGHT : AVATAR_STD_SIZE,
+      ),
+    );
     if (target === "chapter") {
       return { path, bgPath: "" };
     }
@@ -1591,6 +1726,26 @@ function createToonflowStore() {
         isWide ? COVER_BG_HEIGHT : AVATAR_BG_SIZE,
       ),
     );
+    return { path, bgPath };
+  }
+
+  async function separateRoleImageAsset(target: "account" | "user" | "npc", source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
+    if (target !== "account" && state.selectedProjectId <= 0) {
+      throw new Error("请先选择项目后再上传图片");
+    }
+    const safeBaseName = buildSafeUploadBaseName(baseName, target);
+    const asset = await loadBinaryImageAsset(state.baseUrl, source, safeBaseName);
+    const separated = await api.separateRoleAvatar({
+      projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
+      fileName: asset.fileName || `${safeBaseName}${asset.isGif ? ".gif" : ".png"}`,
+      name: safeBaseName,
+      base64Data: await fileToDataUrl(asset.blob),
+    });
+    const path = String(separated.foregroundFilePath || separated.foregroundPath || "").trim();
+    const bgPath = String(separated.backgroundFilePath || separated.backgroundPath || "").trim();
+    if (!path || !bgPath) {
+      throw new Error("图像模型分离失败，未返回主体或背景图片");
+    }
     return { path, bgPath };
   }
 
@@ -2287,21 +2442,25 @@ function createToonflowStore() {
   }
 
   async function startFromWorld(world: WorldItem, quickText = "") {
-    const chapters = await api.getChapter(world.id).catch(() => []);
-    const startChapter = chapters[0] || null;
-    const session = await api.startSession({
-      worldId: world.id,
-      projectId: world.projectId,
-      chapterId: startChapter?.id || undefined,
-      title: world.name || "会话",
-      initialState: null,
-    });
-    await openSession(session.sessionId);
-    if (quickText.trim()) {
-      state.sendText = quickText.trim();
-      await sendMessage();
+    try {
+      const chapters = await api.getChapter(world.id).catch(() => []);
+      const startChapter = chapters[0] || null;
+      const session = await api.startSession({
+        worldId: world.id,
+        projectId: world.projectId,
+        chapterId: startChapter?.id || undefined,
+        title: world.name || "会话",
+        initialState: null,
+      });
+      await openSession(session.sessionId);
+      if (quickText.trim()) {
+        state.sendText = quickText.trim();
+        await sendMessage();
+      }
+      state.activeTab = "play";
+    } catch (error) {
+      state.notice = `进入游玩失败: ${asUiErrorMessage(error)}`;
     }
-    state.activeTab = "play";
   }
 
   async function quickStart() {
@@ -2315,6 +2474,7 @@ function createToonflowStore() {
   }
 
   async function openSession(sessionId: string) {
+    clearRuntimeRetryState();
     state.debugMode = false;
     state.debugLoading = false;
     state.currentSessionId = sessionId;
@@ -2366,7 +2526,7 @@ function createToonflowStore() {
     state.activeTab = "play";
   }
 
-  async function startDebugCurrentChapter() {
+  async function performStartDebugCurrentChapter() {
     if (state.selectedProjectId <= 0) {
       state.notice = "请先选择项目";
       return;
@@ -2432,66 +2592,92 @@ function createToonflowStore() {
         messages: [],
       });
       state.debugLoadingStage = "准备剧情编排完毕";
+      clearRuntimeRetryState();
       applyDebugStepResult(result, chapter, false);
-    } catch (error: any) {
-      state.debugMode = false;
-      state.currentSessionId = "";
-      state.debugChapterId = null;
-      state.messages = [];
-      state.sessionDetail = null;
-      state.activeTab = "create";
-      state.notice = `进入调试失败: ${error?.message || "未知错误"}`;
     } finally {
       state.debugLoading = false;
       state.debugLoadingStage = "";
     }
   }
 
-  async function continueDebugNarrative() {
+  async function startDebugCurrentChapter() {
+    clearRuntimeRetryState();
+    try {
+      await performStartDebugCurrentChapter();
+    } catch (error) {
+      showRuntimeRetryMessage(
+        `进入调试失败：${asUiErrorMessage(error)}`,
+        createRuntimeRetryRunner(performStartDebugCurrentChapter, {
+          formatErrorMessage: (message) => `进入调试失败：${message}`,
+        }),
+      );
+    }
+  }
+
+  async function performContinueDebugNarrative() {
     if (!state.debugMode || !state.worldId) return;
     for (let step = 0; step < 3; step += 1) {
       const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
-      const beforeCount = state.messages.length;
+      const beforeCount = conversationMessages().length;
       const result = await api.debugStep({
         worldId: state.worldId,
         chapterId: state.debugChapterId || undefined,
         state: state.debugRuntimeState,
-        messages: state.messages,
+        messages: conversationMessages(),
         playerContent: null,
       });
+      clearRuntimeRetryState();
       applyDebugStepResult(result, currentChapter, true);
       const canPlayerSpeak = (state.debugRuntimeState as Record<string, any>)?.turnState?.canPlayerSpeak !== false;
-      if (state.messages.length > beforeCount || state.debugEndDialog || canPlayerSpeak) {
+      if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak) {
         break;
       }
     }
   }
 
-  async function sendMessage() {
-    const content = state.sendText.trim();
-    if (!content) return;
-    if (state.debugMode) {
-      const now = Date.now();
-      state.messages.push({
-        id: now,
-        role: state.playerName || "用户",
-        roleType: "player",
-        eventType: "on_message",
-        content,
-        createTime: now,
-      });
-      state.sendText = "";
-      const result = await api.debugStep({
-        worldId: state.worldId,
-        chapterId: state.debugChapterId || undefined,
-        playerContent: content,
-        state: state.debugRuntimeState,
-        messages: state.messages,
-      });
-      const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
-      applyDebugStepResult(result, currentChapter, true);
-      return;
+  async function continueDebugNarrative() {
+    clearRuntimeRetryState();
+    try {
+      await performContinueDebugNarrative();
+    } catch (error) {
+      showRuntimeRetryMessage(
+        `继续调试失败：${asUiErrorMessage(error)}`,
+        createRuntimeRetryRunner(performContinueDebugNarrative, {
+          formatErrorMessage: (message) => `继续调试失败：${message}`,
+        }),
+      );
     }
+  }
+
+  async function performDebugPlayerMessage(content: string, appendPlayerMessage: boolean) {
+    if (appendPlayerMessage) {
+      const now = Date.now();
+      state.messages = [
+        ...conversationMessages(),
+        {
+          id: now,
+          role: state.playerName || "用户",
+          roleType: "player",
+          eventType: "on_message",
+          content,
+          createTime: now,
+        },
+      ];
+      state.sendText = "";
+    }
+    const result = await api.debugStep({
+      worldId: state.worldId,
+      chapterId: state.debugChapterId || undefined,
+      playerContent: content,
+      state: state.debugRuntimeState,
+      messages: conversationMessages(),
+    });
+    const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
+    clearRuntimeRetryState();
+    applyDebugStepResult(result, currentChapter, true);
+  }
+
+  async function performSessionPlayerMessage(content: string) {
     if (!state.currentSessionId) return;
     await api.addMessage({
       sessionId: state.currentSessionId,
@@ -2501,7 +2687,31 @@ function createToonflowStore() {
       eventType: "on_message",
     });
     state.sendText = "";
+    clearRuntimeRetryState();
     await refreshCurrentSession();
+  }
+
+  async function sendMessage() {
+    const content = state.sendText.trim();
+    if (!content) return;
+    clearRuntimeRetryState();
+    try {
+      if (state.debugMode) {
+        await performDebugPlayerMessage(content, true);
+        return;
+      }
+      await performSessionPlayerMessage(content);
+    } catch (error) {
+      const message = `发送失败：${asUiErrorMessage(error)}`;
+      const retryTask = state.debugMode
+        ? createRuntimeRetryRunner(() => performDebugPlayerMessage(content, false), {
+          formatErrorMessage: (text) => `发送失败：${text}`,
+        })
+        : createRuntimeRetryRunner(() => performSessionPlayerMessage(content), {
+          formatErrorMessage: (text) => `发送失败：${text}`,
+        });
+      showRuntimeRetryMessage(message, retryTask);
+    }
   }
 
   function copyMessageText(text: string) {
@@ -2566,6 +2776,7 @@ function createToonflowStore() {
     refreshCurrentSession,
     startDebugCurrentChapter,
     continueDebugNarrative,
+    retryRuntimeFailure,
     advanceDebugChapterIfNeeded,
     jumpDebugChapter,
     getDebugChapterIndex,

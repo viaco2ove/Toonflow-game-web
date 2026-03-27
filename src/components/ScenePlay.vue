@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, RoleParameterCard, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, RoleParameterCard, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 
 const store = useToonflowStore();
@@ -26,6 +26,18 @@ function scalarText(input: unknown): string {
   const text = String(input ?? "").trim();
   if (!text || text === "null" || text === "undefined") return "";
   return text;
+}
+
+function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
+  if (!message || message.eventType !== "on_runtime_retry_error") return false;
+  const meta = asMiniRecord(message.meta);
+  return meta.kind === "runtime_retry" && typeof meta.token === "string";
+}
+
+function runtimeRetryLabel(message: MessageItem | null | undefined): string {
+  if (!isRuntimeRetryMessage(message)) return "重试";
+  const label = scalarText(message.meta.retryLabel);
+  return label || "重试";
 }
 
 function stringifyMiniStateValue(input: unknown): string {
@@ -270,7 +282,7 @@ const currentLiveMessage = computed(() =>
 );
 const currentLiveFigurePath = computed(() => {
   const message = currentLiveMessage.value;
-  if (!message || message.roleType === "player") return "";
+  if (!message || message.roleType === "player" || isRuntimeRetryMessage(message)) return "";
   const role = roleCards.value.find((item) => item.name === message.role || item.id === message.role);
   return store.resolveMediaPath(role?.avatarBgPath || role?.avatarPath || "");
 });
@@ -453,6 +465,9 @@ watch(
       await nextTick();
       const viewport = messageViewport.value;
       if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      if (isRuntimeRetryMessage(message)) {
+        continue;
+      }
       await waitForMessageReveal(message, () => cancelled);
       if (
         !cancelled
@@ -492,6 +507,7 @@ function closeMenu() {
 }
 
 function openMenu(message: MessageItem, event: MouseEvent | PointerEvent) {
+  if (isRuntimeRetryMessage(message)) return;
   menuMessage.value = message;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -511,6 +527,7 @@ function clearPressTimer() {
 }
 
 function handlePressStart(message: MessageItem, event: PointerEvent) {
+  if (isRuntimeRetryMessage(message)) return;
   if (event.pointerType === "mouse") return;
   clearPressTimer();
   pressTimer.value = window.setTimeout(() => {
@@ -529,6 +546,11 @@ async function submit() {
   }
   await store.sendMessage();
   playMode.value = "live";
+}
+
+async function retryRuntimeMessage() {
+  playMode.value = "live";
+  await store.retryRuntimeFailure();
 }
 
 async function submitMiniGameAction(text: string) {
@@ -567,10 +589,32 @@ function rewrite(content: string) {
 
 function formatConditionText(input: unknown): string {
   if (input === null || input === undefined) return "";
-  if (typeof input === "string") return input.trim();
+  if (typeof input === "string") {
+    const text = input.trim();
+    if (!text) return "";
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      return formatConditionText(parsed) || text;
+    } catch {
+      return text;
+    }
+  }
   if (typeof input === "boolean") return input ? "true" : "false";
   if (Array.isArray(input)) return input.map((item) => formatConditionText(item)).filter(Boolean).join(" 且 ");
   if (typeof input === "object") {
+    const node = input as Record<string, unknown>;
+    const allowedKeys = new Set(["type", "op", "field", "left", "value", "right"]);
+    const op = String(node.type ?? node.op ?? "contains").trim().toLowerCase();
+    const field = String(node.field ?? node.left ?? "message").trim().toLowerCase();
+    const value = String(node.value ?? node.right ?? "").trim();
+    if (
+      value
+      && Object.keys(node).every((key) => allowedKeys.has(key))
+      && ["contains", "equals", "eq"].includes(op)
+      && ["message", "message.content", "latest", "latest_message"].includes(field)
+    ) {
+      return value;
+    }
     try {
       return JSON.stringify(input, null, 2);
     } catch {
@@ -638,6 +682,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 async function waitForMessageReveal(message: MessageItem, isCancelled: () => boolean) {
+  if (isRuntimeRetryMessage(message)) {
+    await sleep(120);
+    return;
+  }
   if (message.roleType === "player") {
     await sleep(180);
     return;
@@ -1051,6 +1099,7 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
 }
 
 function messageAvatarPath(message: MessageItem): string {
+  if (isRuntimeRetryMessage(message)) return "";
   if (message.roleType === "player") {
     return store.resolveMediaPath(currentWorld.value?.playerRole?.avatarPath || store.state.userAvatarPath || "");
   }
@@ -1352,7 +1401,7 @@ onBeforeUnmount(() => {
             </svg>
           </button>
           <div class="play-head__meta">
-            <div class="play-head__eyebrow">{{ store.state.debugMode ? "章节调试" : "故事游玩" }}</div>
+            <div class="play-head__eyebrow">{{ playTitle }}</div>
             <div class="play-head__sub">{{ playSubtitle }}</div>
           </div>
         </div>
@@ -1393,91 +1442,105 @@ onBeforeUnmount(() => {
       >
         <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
         <div v-else-if="playMode === 'history'" class="play-thread__history">
-          <article
-            v-for="message in displayMessages"
-            :key="message.id"
-            class="play-bubble-item"
-            :class="{ 'play-bubble-item--player': message.roleType === 'player' }"
-            @dblclick.stop="openMenu(message, $event)"
-            @contextmenu.prevent.stop="openMenu(message, $event)"
-            @pointerdown="handlePressStart(message, $event)"
-            @pointerup="handlePressEnd"
-            @pointerleave="handlePressEnd"
-            @pointercancel="handlePressEnd"
-          >
-            <div v-if="message.roleType !== 'player'" class="play-bubble-avatar">
-              <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
-              <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
-            </div>
-
-            <div class="play-bubble-wrap">
-              <div class="play-bubble-title">{{ messageTitle(message) }}</div>
-              <div class="play-bubble" :class="{ 'play-bubble--player': message.roleType === 'player' }">
-                <span>{{ message.content || "（空消息）" }}</span>
-                <span
-                  v-if="messageVoiceTail(message)"
-                  class="play-bubble-voice-tail"
-                  :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
-                >
-                  {{ messageVoiceTail(message) }}
-                </span>
-              </div>
-              <div v-if="messageReactionText(message)" class="play-bubble-reaction">{{ messageReactionText(message) }}</div>
-            </div>
-
-            <div v-if="message.roleType === 'player'" class="play-bubble-avatar">
-              <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
-              <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
-            </div>
-          </article>
-        </div>
-        <div v-else class="play-thread__single">
-          <div class="play-thread__single-stage">
-            <button
-              v-if="chapterObjectivePreview && playMode !== 'setting' && playMode !== 'tips'"
-              type="button"
-              class="play-objective-chip"
-              :title="chapterConditionHint"
-              @click="openChapterObjective"
-            >
-              当前目标：{{ chapterObjectivePreview }}
-            </button>
+          <template v-for="message in displayMessages" :key="message.id">
             <article
-              v-if="currentLiveMessage"
-              class="play-live-card"
-              :class="{ 'play-live-card--player': currentLiveMessage.roleType === 'player' }"
-              @dblclick.stop="openMenu(currentLiveMessage, $event)"
-              @contextmenu.prevent.stop="openMenu(currentLiveMessage, $event)"
-              @pointerdown="handlePressStart(currentLiveMessage, $event)"
+              v-if="isRuntimeRetryMessage(message)"
+              class="play-runtime-retry play-runtime-retry--history"
+            >
+              <div class="play-runtime-retry__title">{{ messageTitle(message) }}</div>
+              <div class="play-runtime-retry__content">{{ message.content || "模型调用失败" }}</div>
+              <button type="button" class="play-runtime-retry__button" @click="retryRuntimeMessage">
+                {{ runtimeRetryLabel(message) }}
+              </button>
+            </article>
+            <article
+              v-else
+              class="play-bubble-item"
+              :class="{ 'play-bubble-item--player': message.roleType === 'player' }"
+              @dblclick.stop="openMenu(message, $event)"
+              @contextmenu.prevent.stop="openMenu(message, $event)"
+              @pointerdown="handlePressStart(message, $event)"
               @pointerup="handlePressEnd"
               @pointerleave="handlePressEnd"
               @pointercancel="handlePressEnd"
             >
-              <div class="play-live-card__title">{{ messageTitle(currentLiveMessage) }}</div>
-              <div class="play-live-card__body">
-                <span>{{ currentLiveMessage.content || "（空消息）" }}</span>
-                <span
-                  v-if="messageVoiceTail(currentLiveMessage)"
-                  class="play-bubble-voice-tail"
-                  :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
-                >
-                  {{ messageVoiceTail(currentLiveMessage) }}
-                </span>
+              <div v-if="message.roleType !== 'player'" class="play-bubble-avatar">
+                <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
+                <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
               </div>
-              <div v-if="messageReactionText(currentLiveMessage)" class="play-bubble-reaction play-bubble-reaction--live">
-                {{ messageReactionText(currentLiveMessage) }}
+
+              <div class="play-bubble-wrap">
+                <div class="play-bubble-title">{{ messageTitle(message) }}</div>
+                <div class="play-bubble" :class="{ 'play-bubble--player': message.roleType === 'player' }">
+                  <span>{{ message.content || "（空消息）" }}</span>
+                  <span
+                    v-if="messageVoiceTail(message)"
+                    class="play-bubble-voice-tail"
+                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                  >
+                    {{ messageVoiceTail(message) }}
+                  </span>
+                </div>
+                <div v-if="messageReactionText(message)" class="play-bubble-reaction">{{ messageReactionText(message) }}</div>
+              </div>
+
+              <div v-if="message.roleType === 'player'" class="play-bubble-avatar">
+                <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
+                <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
               </div>
             </article>
-            <button
-              v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips' && tipOptions.length"
-              type="button"
-              class="play-tip-fab"
-              @click="toggleTipsMode"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"></path>
-              </svg>
-            </button>
+          </template>
+        </div>
+        <div v-else class="play-thread__single">
+          <div class="play-thread__single-stage">
+            <div class="play-live-stack">
+              <article
+                v-if="currentLiveMessage && isRuntimeRetryMessage(currentLiveMessage)"
+                class="play-live-card play-live-card--runtime-retry"
+              >
+                <div class="play-live-card__title">{{ messageTitle(currentLiveMessage) }}</div>
+                <div class="play-runtime-retry__content">{{ currentLiveMessage.content || "模型调用失败" }}</div>
+                <button type="button" class="play-runtime-retry__button" @click="retryRuntimeMessage">
+                  {{ runtimeRetryLabel(currentLiveMessage) }}
+                </button>
+              </article>
+              <article
+                v-else-if="currentLiveMessage"
+                class="play-live-card"
+                :class="{ 'play-live-card--player': currentLiveMessage.roleType === 'player' }"
+                @dblclick.stop="openMenu(currentLiveMessage, $event)"
+                @contextmenu.prevent.stop="openMenu(currentLiveMessage, $event)"
+                @pointerdown="handlePressStart(currentLiveMessage, $event)"
+                @pointerup="handlePressEnd"
+                @pointerleave="handlePressEnd"
+                @pointercancel="handlePressEnd"
+              >
+                <div class="play-live-card__title">{{ messageTitle(currentLiveMessage) }}</div>
+                <div class="play-live-card__body">
+                  <span>{{ currentLiveMessage.content || "（空消息）" }}</span>
+                  <span
+                    v-if="messageVoiceTail(currentLiveMessage)"
+                    class="play-bubble-voice-tail"
+                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                  >
+                    {{ messageVoiceTail(currentLiveMessage) }}
+                  </span>
+                </div>
+                <div v-if="messageReactionText(currentLiveMessage)" class="play-bubble-reaction play-bubble-reaction--live">
+                  {{ messageReactionText(currentLiveMessage) }}
+                </div>
+              </article>
+              <button
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips' && tipOptions.length"
+                type="button"
+                class="play-tip-fab"
+                @click="toggleTipsMode"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"></path>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
         <div v-if="debugLoading" class="play-loading-mask">
@@ -1603,8 +1666,17 @@ onBeforeUnmount(() => {
 
       <div class="play-story-footer">
         <div class="play-story-main">
-          <button type="button" class="play-story-entry" @click="store.state.debugMode ? exitDebugMode() : openSettingMode()">
-            <span>{{ store.state.debugMode ? "返回编辑" : playTitle }}</span>
+          <button
+            v-if="chapterObjectivePreview && playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+            type="button"
+            class="play-objective-chip play-story-objective"
+            :title="chapterConditionHint"
+            @click="openChapterObjective"
+          >
+            当前目标：{{ chapterObjectivePreview }}
+          </button>
+          <button type="button" class="play-story-entry" @click="openSettingMode">
+            <span class="play-story-entry__label">{{ playTitle }}</span>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M9 6l6 6-6 6"></path>
             </svg>

@@ -135,6 +135,12 @@ export interface MessageItem {
   meta?: unknown;
 }
 
+export interface RuntimeRetryMessageMeta {
+  kind: "runtime_retry";
+  token: string;
+  retryLabel?: string;
+}
+
 export interface SessionItem {
   sessionId: string;
   worldId: number;
@@ -174,6 +180,13 @@ export interface DebugStepResult {
 export interface GeneratedImageResult {
   path?: string;
   filePath?: string;
+}
+
+export interface SeparatedRoleImageResult {
+  foregroundPath?: string;
+  foregroundFilePath?: string;
+  backgroundPath?: string;
+  backgroundFilePath?: string;
 }
 
 export interface VoiceModelConfig {

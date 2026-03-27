@@ -3144,8 +3144,8 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-tip-fab {
   position: absolute;
-  right: 0;
-  bottom: 10px;
+  right: -2px;
+  bottom: 18px;
   width: 28px;
   height: 28px;
   display: grid;
@@ -3252,43 +3252,52 @@ textarea::-webkit-scrollbar-thumb {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 14px;
+  bottom: 72px;
   width: 100%;
-  min-height: 168px;
+  min-height: 224px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 0 44px;
+  padding: 0 14px;
+}
+
+.play-live-stack {
+  position: relative;
+  width: min(100%, clamp(264px, 86vw, 640px));
+  display: grid;
+  gap: 0;
+  padding-right: 38px;
 }
 
 .play-objective-chip {
-  position: absolute;
-  left: 0;
-  bottom: 8px;
-  width: clamp(88px, 24vw, 124px);
-  min-height: 80px;
+  position: relative;
+  justify-self: start;
+  max-width: min(252px, calc(100% - 68px));
   margin: 0;
-  padding: 12px 14px;
-  border-radius: 18px;
+  padding: 9px 16px;
+  border-radius: 999px;
   border: 1px solid rgba(216, 229, 247, 0.32);
   background: rgba(8, 20, 36, 0.54);
   color: rgba(239, 246, 255, 0.96);
   font-size: 12px;
   font-weight: 800;
-  line-height: 1.45;
+  line-height: 1.2;
   text-align: left;
-  white-space: normal;
-  word-break: break-word;
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
   box-shadow: 0 12px 28px rgba(5, 14, 26, 0.2);
   backdrop-filter: blur(8px);
 }
 
 .play-live-card {
+  position: relative;
   display: grid;
-  gap: 10px;
-  width: clamp(220px, 66vw, 520px);
-  max-width: calc(100% - 108px);
-  padding: 16px 18px 18px;
+  gap: 8px;
+  width: 100%;
+  max-width: none;
+  padding: 14px 22px 20px;
   border-radius: 22px;
   border: 1px solid rgba(219, 232, 248, 0.22);
   background:
@@ -3308,20 +3317,28 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-live-card__title {
+  position: absolute;
+  top: -24px;
+  left: 11px;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  min-height: 28px;
-  padding: 0 12px;
+  min-height: 24px;
+  padding: 0 11px;
   border-radius: 10px;
-  background: rgba(27, 47, 78, 0.88);
+  border: 1px solid rgba(205, 220, 242, 0.12);
+  background: rgba(36, 54, 85, 0.74);
   color: #ebf5ff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 900;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 16px rgba(6, 14, 26, 0.14);
 }
 
 .play-live-card--player .play-live-card__title {
-  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .play-live-card__body {
@@ -3330,6 +3347,63 @@ textarea::-webkit-scrollbar-thumb {
   font-weight: 600;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.play-live-card--runtime-retry {
+  gap: 12px;
+  border-color: rgba(255, 201, 122, 0.42);
+  background:
+    linear-gradient(180deg, rgba(43, 27, 9, 0.94), rgba(30, 20, 8, 0.9)),
+    linear-gradient(135deg, rgba(255, 179, 71, 0.16), rgba(95, 55, 16, 0.1));
+  color: #fff5e6;
+}
+
+.play-runtime-retry {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 201, 122, 0.34);
+  background: rgba(34, 23, 10, 0.82);
+  color: #fff5e6;
+  box-shadow: 0 16px 34px rgba(7, 16, 28, 0.24);
+}
+
+.play-runtime-retry--history {
+  max-width: calc(100% - 52px);
+  margin-left: 52px;
+}
+
+.play-runtime-retry__title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #ffd28b;
+}
+
+.play-runtime-retry__content {
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.play-runtime-retry__button {
+  justify-self: start;
+  min-width: 92px;
+  height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ffd07a, #ffb74d);
+  color: #31200c;
+  font-size: 14px;
+  font-weight: 900;
+  box-shadow: 0 12px 24px rgba(255, 183, 77, 0.18);
+}
+
+.play-runtime-retry__button:active {
+  transform: translateY(1px);
 }
 
 .play-empty {
@@ -3848,7 +3922,13 @@ textarea::-webkit-scrollbar-thumb {
 .play-story-main {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 5px;
+  flex: 1;
+}
+
+.play-story-objective {
+  justify-self: start;
+  max-width: min(252px, 100%);
 }
 
 .play-story-entry {
@@ -3859,10 +3939,19 @@ textarea::-webkit-scrollbar-thumb {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   font-size: 24px;
   font-weight: 800;
   line-height: 1;
   text-align: left;
+}
+
+.play-story-entry__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .play-story-entry svg {
@@ -3884,6 +3973,7 @@ textarea::-webkit-scrollbar-thumb {
   display: flex;
   gap: 6px;
   align-items: flex-end;
+  flex-shrink: 0;
 }
 
 .play-story-action {
@@ -4047,25 +4137,84 @@ textarea::-webkit-scrollbar-thumb {
   }
 
   .play-thread__single-stage {
-    bottom: 12px;
-    min-height: 152px;
-    padding: 0 36px;
+    bottom: 0px;
+    min-height: 206px;
+    padding: 0 12px;
+  }
+
+  .play-live-stack {
+    width: min(100%, 100%);
+    gap: 0;
+    padding-right: 34px;
   }
 
   .play-objective-chip {
-    width: clamp(80px, 26vw, 112px);
-    min-height: 74px;
-    padding: 10px 12px;
+    max-width: min(220px, calc(100% - 58px));
+    padding: 8px 14px;
   }
 
   .play-live-card {
-    width: clamp(208px, 64vw, 420px);
-    max-width: calc(100% - 92px);
-    padding: 14px 14px 16px;
+    padding: 14px 18px 18px;
   }
 
   .play-live-card__body {
     font-size: 16px;
+  }
+
+  .play-runtime-retry--history {
+    max-width: calc(100% - 44px);
+    margin-left: 44px;
+  }
+
+  .play-runtime-retry__button {
+    height: 36px;
+    padding: 0 16px;
+  }
+
+  .play-story-entry {
+    gap: 4px;
+    font-size: 17px;
+  }
+
+  .play-story-main {
+    max-width: calc(100% - 146px);
+  }
+
+  .play-story-objective {
+    max-width: min(220px, 100%);
+  }
+
+  .play-story-entry svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .play-story-sub {
+    font-size: 12px;
+  }
+
+  .play-story-actions {
+    gap: 2px;
+  }
+
+  .play-story-action {
+    min-width: 30px;
+    font-size: 10px;
+  }
+
+  .play-story-action__icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .play-story-action__icon svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .play-tip-fab {
+    right: 0;
+    bottom: 16px;
   }
 }
 

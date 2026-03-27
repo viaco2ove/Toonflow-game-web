@@ -3,13 +3,14 @@ import type {
   ApiEnvelope,
   AiModelMapItem,
   ChapterItem,
-  GeneratedImageResult,
   DebugStepResult,
+  GeneratedImageResult,
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
   ProjectItem,
   PromptItem,
+  SeparatedRoleImageResult,
   SessionDetail,
   SessionItem,
   StoryRole,
@@ -38,6 +39,15 @@ function normalizeToken(input: string): string {
 export class ToonflowApi {
   constructor(private getConfig: () => RequestConfig) {}
 
+  private requestErrorMessage(err: unknown): string {
+    if (axios.isAxiosError(err)) {
+      const responseData = err.response?.data as Record<string, any> | undefined;
+      const message = String(responseData?.message || responseData?.error || "").trim();
+      if (message) return message;
+    }
+    return err instanceof Error ? err.message : "请求失败";
+  }
+
   private headers() {
     const { token } = this.getConfig();
     const auth = normalizeToken(token);
@@ -50,25 +60,33 @@ export class ToonflowApi {
   }
 
   private async post<T>(path: string, body?: unknown): Promise<T> {
-    const response = await axios.post<ApiEnvelope<T>>(this.url(path), body ?? {}, {
-      headers: this.headers(),
-    });
-    const envelope = response.data;
-    if (typeof envelope?.code !== "number" || envelope.code !== 200) {
-      throw new Error(envelope?.message || "请求失败");
+    try {
+      const response = await axios.post<ApiEnvelope<T>>(this.url(path), body ?? {}, {
+        headers: this.headers(),
+      });
+      const envelope = response.data;
+      if (typeof envelope?.code !== "number" || envelope.code !== 200) {
+        throw new Error(envelope?.message || "请求失败");
+      }
+      return envelope.data;
+    } catch (err) {
+      throw new Error(this.requestErrorMessage(err));
     }
-    return envelope.data;
   }
 
   private async get<T>(path: string): Promise<T> {
-    const response = await axios.get<ApiEnvelope<T>>(this.url(path), {
-      headers: this.headers(),
-    });
-    const envelope = response.data;
-    if (typeof envelope?.code !== "number" || envelope.code !== 200) {
-      throw new Error(envelope?.message || "请求失败");
+    try {
+      const response = await axios.get<ApiEnvelope<T>>(this.url(path), {
+        headers: this.headers(),
+      });
+      const envelope = response.data;
+      if (typeof envelope?.code !== "number" || envelope.code !== 200) {
+        throw new Error(envelope?.message || "请求失败");
+      }
+      return envelope.data;
+    } catch (err) {
+      throw new Error(this.requestErrorMessage(err));
     }
-    return envelope.data;
   }
 
   login(username: string, password: string) {
@@ -167,6 +185,10 @@ export class ToonflowApi {
 
   uploadImage(payload: Record<string, unknown>) {
     return this.post<GeneratedImageResult>("/game/uploadImage", payload);
+  }
+
+  separateRoleAvatar(payload: Record<string, unknown>) {
+    return this.post<SeparatedRoleImageResult>("/game/separateRoleAvatar", payload);
   }
 
   getVoiceModels() {

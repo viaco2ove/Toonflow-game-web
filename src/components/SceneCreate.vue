@@ -280,8 +280,12 @@ async function onUserAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (file) {
-    await store.updateAvatarFromFile("user", file);
-    store.scheduleStoryEditorAutoPersist(120);
+    try {
+      await store.updateAvatarFromFile("user", file);
+      store.scheduleStoryEditorAutoPersist(120);
+    } catch (err) {
+      store.state.notice = `头像分离失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
   }
   input.value = "";
 }
@@ -322,8 +326,12 @@ async function onNpcAvatarFile(index: number, e: Event) {
   const input = e.target as HTMLInputElement;
   const file = input.files?.[0];
   if (file) {
-    await store.updateAvatarFromFile("npc", file, undefined, index);
-    store.scheduleStoryEditorAutoPersist(120);
+    try {
+      await store.updateAvatarFromFile("npc", file, undefined, index);
+      store.scheduleStoryEditorAutoPersist(120);
+    } catch (err) {
+      store.state.notice = `头像分离失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
   }
   input.value = "";
 }
