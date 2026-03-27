@@ -149,6 +149,9 @@ const slotRows = computed(() =>
     .filter((item) => rowMatchesSlot(item)),
 );
 
+const recommendation = computed(() => store.settingsRecommendedModel(props.slotKey));
+const advisory = computed(() => store.settingsModelAdvisory(props.slotKey));
+
 watch(
   () => props.modelValue,
   (value) => {
@@ -201,6 +204,11 @@ const rows = computed(() =>
 
 function close() {
   emit("update:modelValue", false);
+}
+
+function useRecommendation() {
+  if (!recommendation.value?.id) return;
+  selectedId.value = recommendation.value.id;
 }
 
 function openCreate() {
@@ -307,6 +315,27 @@ async function confirmBinding() {
       </div>
 
       <div class="modal-body settings-manager-body">
+        <div
+          v-if="advisory || recommendation"
+          class="settings-manager-recommend"
+        >
+          <div class="settings-manager-recommend-copy">
+            <div class="settings-manager-recommend-title">当前建议</div>
+            <div v-if="advisory" class="settings-manager-recommend-text">{{ advisory.text }}</div>
+            <div v-if="recommendation" class="settings-manager-recommend-model">
+              推荐模型：{{ manufacturerLabel(recommendation.manufacturer || '') }} / {{ recommendation.model || `配置${recommendation.id}` }}
+            </div>
+          </div>
+          <button
+            v-if="recommendation && selectedId !== recommendation.id"
+            class="button settings-outline-btn"
+            type="button"
+            @click="useRecommendation"
+          >
+            选中推荐
+          </button>
+        </div>
+
         <div class="settings-manager-toolbar">
           <button class="button primary settings-solid-btn" type="button" @click="openCreate">+ 新增模型</button>
           <input v-model="keyword" class="input settings-manager-search" type="text" placeholder="搜索模型名称..." />

@@ -32,6 +32,7 @@ const draftMenuWorld = ref<WorldItem | null>(null);
 
 const accountDialogTitle = computed(() => "创建角色");
 const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
+const accountAvatarProcessing = computed(() => store.isAvatarProcessing("account"));
 
 async function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -157,11 +158,14 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
     </div>
 
     <div class="my-profile-main">
-      <div class="avatar my-profile-avatar" @click="openAvatarActionDialog">
+      <button class="avatar my-profile-avatar my-profile-avatar-btn" type="button" :disabled="accountAvatarProcessing" @click="openAvatarActionDialog">
         <img v-if="store.state.accountAvatarPath" :src="store.resolveMediaPath(store.state.accountAvatarPath)" alt="账号头像" />
         <div v-else class="placeholder">{{ (store.state.userName || "A").slice(0, 1).toUpperCase() }}</div>
+        <div v-if="accountAvatarProcessing" class="avatar-processing-mask">
+          <span class="avatar-processing-spinner"></span>
+        </div>
         <div class="badge">+</div>
-      </div>
+      </button>
       <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatarFile" />
       <div class="my-profile-meta">
         <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>

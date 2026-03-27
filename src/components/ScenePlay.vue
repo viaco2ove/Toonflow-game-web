@@ -5,6 +5,8 @@ import type { MessageItem, RoleParameterCard, RuntimeRetryMessageMeta, StoryRole
 import { fileToDataUrl } from "../utils/file";
 
 const store = useToonflowStore();
+const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
+const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
 const messages = computed(() => store.state.messages);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
@@ -64,6 +66,22 @@ function sanitizeSpeechText(input: unknown): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function isDeterministicRuntimeVoiceError(error: unknown): boolean {
+  const message = String((error as any)?.message || error || "").toLowerCase();
+  return [
+    "detect audio failed",
+    "当前语音设计模型与所选故事语音模型不兼容",
+    "请先在设置里配置语音设计模型",
+    "当前语音模型不支持该绑定模式",
+    "克隆模式需要参考音频",
+    "提示词模式需要填写提示词",
+    "参考音频无法被阿里云解码",
+    "语音模型配置不存在",
+    "未返回试听音频",
+    "http 400",
+  ].some((item) => message.includes(item.toLowerCase()));
 }
 
 function normalizeChapterTitleLabel(input: unknown, sort?: unknown): string {
@@ -301,6 +319,10 @@ const runtimeVoiceWarmCache = new Set<string>();
 const revealedMessages = ref<MessageItem[]>([]);
 const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
 const displayMessages = computed(() => (playMode.value === "history" ? messages.value : revealedMessages.value.slice(-1)));
+const latestRevealedMessage = computed(() => {
+  const list = revealedMessages.value;
+  return list.length ? list[list.length - 1] : null;
+});
 const playStageStyle = computed(() => {
   const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
   if (chapterBackgroundPath.value) {
@@ -350,6 +372,7 @@ const browserSpeechSupported = computed(() => {
 const debugLoading = computed(() => store.state.debugLoading);
 const debugLoadingStage = computed(() => store.state.debugLoadingStage || "正在初始化调试上下文...");
 const debugAutoAdvancing = ref(false);
+const lastAutoAdvanceMessageKey = ref("");
 const runtimeVoiceMessageKey = ref("");
 const runtimeVoicePhase = ref<"" | "loading" | "playing">("");
 const runtimeVoiceIndicator = ref(".");
@@ -391,6 +414,7 @@ watch(
     runtimeVoiceWarmCache.clear();
     revealedMessages.value = [];
     debugAutoAdvancing.value = false;
+    lastAutoAdvanceMessageKey.value = "";
   },
 );
 
@@ -469,25 +493,47 @@ watch(
         continue;
       }
       await waitForMessageReveal(message, () => cancelled);
-      if (
-        !cancelled
-        && store.state.debugMode
-        && playMode.value === "live"
-        && !store.state.debugLoading
-        && !store.state.debugEndDialog
-        && !canPlayerSpeak.value
-        && !debugAutoAdvancing.value
-      ) {
-        debugAutoAdvancing.value = true;
-        try {
-          await store.continueDebugNarrative();
-        } finally {
-          debugAutoAdvancing.value = false;
-        }
-      }
     }
   },
   { flush: "post", immediate: true },
+);
+
+watch(
+  () => [
+    store.state.currentSessionId,
+    playMode.value,
+    store.state.debugMode,
+    store.state.debugLoading,
+    store.state.debugEndDialog,
+    canPlayerSpeak.value,
+    latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
+  ],
+  async () => {
+    if (
+      !store.state.debugMode
+      || playMode.value !== "live"
+      || store.state.debugLoading
+      || store.state.debugEndDialog
+      || canPlayerSpeak.value
+    ) {
+      return;
+    }
+    const latest = latestRevealedMessage.value;
+    if (!latest || latest.roleType === "player" || isRuntimeRetryMessage(latest)) {
+      return;
+    }
+    const key = messageUiKey(latest);
+    if (!key || key === lastAutoAdvanceMessageKey.value || debugAutoAdvancing.value) {
+      return;
+    }
+    lastAutoAdvanceMessageKey.value = key;
+    debugAutoAdvancing.value = true;
+    try {
+      await store.continueDebugNarrative();
+    } finally {
+      debugAutoAdvancing.value = false;
+    }
+  },
 );
 
 watch(playMode, (mode) => {
@@ -896,6 +942,10 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
       binding.referenceText,
       binding.promptText,
       binding.mixVoices || [],
+      {
+        format: RUNTIME_FAST_PREVIEW_FORMAT,
+        sampleRate: RUNTIME_FAST_PREVIEW_SAMPLE_RATE,
+      },
     ),
     15000,
     "语音生成超时",
@@ -908,6 +958,7 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
 }
 
 async function warmVoiceBinding(binding: VoiceBindingDraft) {
+  if (binding.mode !== "text") return;
   const bindingKey = runtimeVoiceBindingKey(binding);
   if (runtimeVoiceWarmCache.has(bindingKey)) return;
   runtimeVoiceWarmCache.add(bindingKey);
@@ -990,6 +1041,7 @@ async function playMessageAudio(message: MessageItem, manual = false, waitForCom
     for (const segment of segments) {
       let segmentPlayed = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
+        let shouldRetry = true;
         if (requestId !== runtimeVoiceRequestId) return false;
         try {
           setRuntimeVoiceIndicator(message, "loading");
@@ -1001,9 +1053,13 @@ async function playMessageAudio(message: MessageItem, manual = false, waitForCom
           });
           if (segmentPlayed) break;
         } catch (error: any) {
+          shouldRetry = !isDeterministicRuntimeVoiceError(error);
           if (manual) {
             menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
           }
+        }
+        if (!shouldRetry) {
+          break;
         }
         await sleep(220);
       }

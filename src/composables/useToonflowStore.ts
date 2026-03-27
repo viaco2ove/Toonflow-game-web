@@ -11,6 +11,7 @@ import {
   ModelTestResult,
   ProjectItem,
   PromptItem,
+  RoleAvatarTaskResult,
   RuntimeRetryMessageMeta,
   SessionDetail,
   SessionItem,
@@ -25,6 +26,7 @@ import {
   createEmptyChapter,
 } from "../types/toonflow";
 import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
+import { manufacturerLabel } from "../utils/modelConfigCatalog";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -70,6 +72,8 @@ const COVER_STD_WIDTH = 1280;
 const COVER_STD_HEIGHT = 720;
 const COVER_BG_WIDTH = 1536;
 const COVER_BG_HEIGHT = 864;
+const ROLE_AVATAR_TASK_POLL_INTERVAL_MS = 1000;
+const ROLE_AVATAR_TASK_TIMEOUT_MS = 180000;
 
 type EditorImageTarget = "account" | "user" | "npc" | "cover" | "chapter";
 
@@ -188,6 +192,10 @@ function renderCroppedPngDataUrl(image: HTMLImageElement, targetWidth: number, t
   const { sx, sy, sw, sh } = cropRectForTarget(sourceWidth, sourceHeight, targetWidth, targetHeight);
   ctx.drawImage(image, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
   return canvas.toDataURL("image/png");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function normalizeVoiceModelConfig(input: VoiceModelConfig): VoiceModelConfig {
@@ -535,6 +543,7 @@ let singletonStore: ToonflowStore | null = null;
 
 const GAME_MODEL_SLOTS = [
   { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
+  { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
   { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
@@ -545,6 +554,7 @@ const GAME_MODEL_SLOTS = [
 const STORY_PROMPT_CODES = [
   "story-main",
   "story-orchestrator",
+  "story-speaker",
   "story-memory",
   "story-chapter",
   "story-mini-game",
@@ -597,6 +607,8 @@ function createToonflowStore() {
     settingsAiModelMap: [] as AiModelMapItem[],
     storyPrompts: [] as PromptItem[],
     aiGenerating: false,
+    avatarProcessingTarget: "" as "" | "account" | "user" | "npc",
+    avatarProcessingNpcIndex: null as number | null,
     chapters: [] as ChapterItem[],
     selectedChapterId: null as number | null,
     chapterTitle: "",
@@ -1609,6 +1621,78 @@ function createToonflowStore() {
     return state.settingsAiModelMap.find((item) => item.key === key) || null;
   }
 
+  function normalizeModelHintText(value: string | null | undefined): string {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function formatSettingsModelLabel(input: { manufacturer?: string | null; model?: string | null } | null | undefined): string {
+    const manufacturer = manufacturerLabel(String(input?.manufacturer || "").trim());
+    const model = String(input?.model || "").trim();
+    return [manufacturer, model].filter(Boolean).join(" / ").trim();
+  }
+
+  function storySpeakerRecommendationScore(item: ModelConfigItem, orchestratorConfigId: number | null): number {
+    if (Number(item.id || 0) <= 0) return Number.NEGATIVE_INFINITY;
+    if (orchestratorConfigId && Number(item.id) === orchestratorConfigId) return Number.NEGATIVE_INFINITY;
+    const model = normalizeModelHintText(item.model);
+    const modelType = normalizeModelHintText(item.modelType);
+    let score = 0;
+    if (!modelType || modelType === "text") score += 180;
+    if (modelType === "deepthinkingtext") score -= 420;
+    if (model.includes("flash")) score += 320;
+    if (model.includes("lite")) score += 220;
+    if (model.includes("mini")) score += 180;
+    if (model.includes("turbo") || model.includes("instant") || model.includes("speed")) score += 120;
+    if (model.includes("reason") || model.includes("think") || model.includes("deep")) score -= 260;
+    if (model.includes("pro") || model.includes("max") || model.includes("ultra")) score -= 120;
+    score += Math.min(Number(item.createTime || 0) / 1_000_000_000_000, 50);
+    return score;
+  }
+
+  function settingsRecommendedModel(key: string): ModelConfigItem | null {
+    if (key !== "storySpeakerModel") return null;
+    const orchestratorConfigId = settingsModelBinding("storyOrchestratorModel")?.configId || null;
+    const ranked = state.settingsTextConfigs
+      .map((item) => ({
+        item,
+        score: storySpeakerRecommendationScore(item, orchestratorConfigId),
+      }))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((a, b) => b.score - a.score || Number(b.item.id || 0) - Number(a.item.id || 0));
+    return ranked[0]?.item || null;
+  }
+
+  function settingsModelAdvisory(key: string): { tone: "info" | "warn"; text: string } | null {
+    if (key !== "storySpeakerModel") return null;
+    const speaker = settingsModelBinding("storySpeakerModel");
+    const orchestrator = settingsModelBinding("storyOrchestratorModel");
+    const recommendation = settingsRecommendedModel("storySpeakerModel");
+    const recommendationText = recommendation ? formatSettingsModelLabel(recommendation) : "";
+    if (!speaker?.configId) {
+      return recommendation
+        ? {
+          tone: "warn",
+          text: `未单独配置。建议绑定：${recommendationText}。未配置时运行时会直接提示缺少角色发言模型。`,
+        }
+        : {
+          tone: "warn",
+          text: "未单独配置，且当前没有可直接推荐的独立文本模型。建议先新增一个更快的文本模型后再绑定。",
+        };
+    }
+    if (orchestrator?.configId && speaker.configId === orchestrator.configId) {
+      return recommendation && recommendation.id !== speaker.configId
+        ? {
+          tone: "warn",
+          text: `当前与编排师共用同一模型，单次调试会串行调用两次。建议改绑：${recommendationText}。`,
+        }
+        : {
+          tone: "warn",
+          text: "当前与编排师共用同一模型，单次调试会串行调用两次，容易明显变慢。",
+        };
+    }
+    return null;
+  }
+
   async function resolveRuntimeVoiceConfigId(key: string): Promise<number | null> {
     const current = settingsModelBinding(key)?.configId;
     if (current && current > 0) return current;
@@ -1640,6 +1724,11 @@ function createToonflowStore() {
     referenceText = "",
     promptText = "",
     mixVoices: VoiceMixItem[] = [],
+    options: {
+      speed?: number | null;
+      format?: string | null;
+      sampleRate?: number | null;
+    } = {},
   ): Promise<string> {
     const result = await api.previewVoice({
       configId: configId || undefined,
@@ -1650,6 +1739,9 @@ function createToonflowStore() {
       referenceText,
       promptText,
       mixVoices,
+      speed: typeof options.speed === "number" ? options.speed : undefined,
+      format: options.format || undefined,
+      sampleRate: typeof options.sampleRate === "number" ? options.sampleRate : undefined,
     });
     return result.audioUrl || "";
   }
@@ -1729,24 +1821,60 @@ function createToonflowStore() {
     return { path, bgPath };
   }
 
+  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath">) {
+    const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
+    const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
+    if (!path || !bgPath) {
+      throw new Error("图像模型分离失败，未返回主体或背景图片");
+    }
+    return { path, bgPath };
+  }
+
+  async function waitForSeparateRoleAvatarTask(taskId: number) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < ROLE_AVATAR_TASK_TIMEOUT_MS) {
+      const task = await api.getSeparateRoleAvatarTask(taskId);
+      const status = String(task.status || "").trim().toLowerCase();
+      if (status === "success") {
+        return resolveSeparatedRolePaths(task);
+      }
+      if (status === "failed") {
+        throw new Error(String(task.errorMessage || task.message || "头像分离失败").trim() || "头像分离失败");
+      }
+      await sleep(ROLE_AVATAR_TASK_POLL_INTERVAL_MS);
+    }
+    throw new Error("头像分离处理超时，请稍后重试");
+  }
+
   async function separateRoleImageAsset(target: "account" | "user" | "npc", source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
     if (target !== "account" && state.selectedProjectId <= 0) {
       throw new Error("请先选择项目后再上传图片");
     }
     const safeBaseName = buildSafeUploadBaseName(baseName, target);
     const asset = await loadBinaryImageAsset(state.baseUrl, source, safeBaseName);
-    const separated = await api.separateRoleAvatar({
+    const task = await api.startSeparateRoleAvatarTask({
       projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
       fileName: asset.fileName || `${safeBaseName}${asset.isGif ? ".gif" : ".png"}`,
       name: safeBaseName,
       base64Data: await fileToDataUrl(asset.blob),
+      asyncTask: true,
     });
-    const path = String(separated.foregroundFilePath || separated.foregroundPath || "").trim();
-    const bgPath = String(separated.backgroundFilePath || separated.backgroundPath || "").trim();
-    if (!path || !bgPath) {
-      throw new Error("图像模型分离失败，未返回主体或背景图片");
+    const taskId = Number(task.taskId || 0);
+    if (!Number.isFinite(taskId) || taskId <= 0) {
+      throw new Error("头像分离任务创建失败");
     }
-    return { path, bgPath };
+    return await waitForSeparateRoleAvatarTask(taskId);
+  }
+
+  function setAvatarProcessing(target: "account" | "user" | "npc" | null, npcIndex: number | null = null) {
+    state.avatarProcessingTarget = target || "";
+    state.avatarProcessingNpcIndex = target === "npc" && typeof npcIndex === "number" ? npcIndex : null;
+  }
+
+  function isAvatarProcessing(target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    if (state.avatarProcessingTarget !== target) return false;
+    if (target !== "npc") return true;
+    return typeof npcIndex === "number" && state.avatarProcessingNpcIndex === npcIndex;
   }
 
   async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
@@ -1779,18 +1907,23 @@ function createToonflowStore() {
   }
 
   async function updateAvatarFromFile(target: "account" | "user" | "npc", file: File, onReady?: (path: string, bgPath?: string) => void, roleIndex?: number) {
-    const prepared = await uploadStandardizedImageAsset(target, file, file.name || target);
-    if (target === "account") {
-      state.accountAvatarPath = prepared.path;
-      state.accountAvatarBgPath = prepared.bgPath || prepared.path;
-      await persistAccountAvatar();
-    } else if (target === "user") {
-      state.userAvatarPath = prepared.path;
-      state.userAvatarBgPath = prepared.bgPath || prepared.path;
-    } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
-      state.npcRoles[roleIndex].avatarPath = prepared.path;
-      state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath || prepared.path;
-      onReady?.(prepared.path, prepared.bgPath || prepared.path);
+    setAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
+    try {
+      const prepared = await uploadStandardizedImageAsset(target, file, file.name || target);
+      if (target === "account") {
+        state.accountAvatarPath = prepared.path;
+        state.accountAvatarBgPath = prepared.bgPath || prepared.path;
+        await persistAccountAvatar();
+      } else if (target === "user") {
+        state.userAvatarPath = prepared.path;
+        state.userAvatarBgPath = prepared.bgPath || prepared.path;
+      } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
+        state.npcRoles[roleIndex].avatarPath = prepared.path;
+        state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath || prepared.path;
+        onReady?.(prepared.path, prepared.bgPath || prepared.path);
+      }
+    } finally {
+      setAvatarProcessing(null);
     }
   }
 
@@ -1841,6 +1974,17 @@ function createToonflowStore() {
     await api.bindModelConfig(row.id, configId);
     await ensureSettingsPanelData(true);
     state.notice = "模型配置已保存";
+  }
+
+  async function bindRecommendedGameModel(key: string) {
+    const recommendation = settingsRecommendedModel(key);
+    if (!recommendation?.id) {
+      state.notice = key === "storySpeakerModel"
+        ? "当前没有可直接推荐的独立角色发言模型，请先新增一个文本模型"
+        : "当前没有可直接推荐的模型";
+      return;
+    }
+    await bindGameModel(key, recommendation.id);
   }
 
   async function addManagedModelConfig(payload: ModelConfigPayload) {
@@ -2789,6 +2933,7 @@ function createToonflowStore() {
     voicePresetsForConfig,
     ensureSettingsPanelData,
     bindGameModel,
+    bindRecommendedGameModel,
     addManagedModelConfig,
     updateManagedModelConfig,
     deleteManagedModelConfig,
@@ -2798,6 +2943,8 @@ function createToonflowStore() {
     isAdminAccount,
     settingsConfigOptions,
     settingsModelBinding,
+    settingsRecommendedModel,
+    settingsModelAdvisory,
     currentStoryPromptValue,
     uploadVoiceReferenceAudio,
     previewVoice,
@@ -2805,6 +2952,7 @@ function createToonflowStore() {
     transcribeRuntimeVoice,
     applyImageToTarget,
     updateAvatarFromFile,
+    isAvatarProcessing,
     updateCoverFromFile,
     updateChapterBackgroundFromFile,
     setPlayerVoiceBinding,

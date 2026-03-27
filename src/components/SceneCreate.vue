@@ -45,6 +45,11 @@ const currentNpcRole = computed<StoryRole | null>(() => {
   if (typeof index !== "number") return null;
   return store.state.npcRoles[index] || null;
 });
+const userAvatarProcessing = computed(() => store.isAvatarProcessing("user"));
+const currentNpcAvatarProcessing = computed(() => {
+  const index = editingNpcIndex.value;
+  return typeof index === "number" && index >= 0 ? store.isAvatarProcessing("npc", index) : false;
+});
 
 function displayMediaName(input: string, fallback: string) {
   const raw = String(input || "").trim();
@@ -761,15 +766,18 @@ function cancelRemoveCurrentNpc() {
         <div class="create-editor-body">
           <div class="field">
             <label>头像（可上传 / AI 生成）</label>
-            <button class="create-editor-avatar-row" type="button" @click="openImageSource('user')">
-              <div class="avatar create-editor-avatar create-editor-avatar--compact">
+            <button class="create-editor-avatar-row" type="button" :disabled="userAvatarProcessing" @click="openImageSource('user')">
+              <div class="avatar create-editor-avatar create-editor-avatar--compact" :class="{ 'avatar--busy': userAvatarProcessing }">
                 <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
                 <div v-else class="placeholder">
                   <span class="create-user-glyph"></span>
                 </div>
+                <div v-if="userAvatarProcessing" class="avatar-processing-mask">
+                  <span class="avatar-processing-spinner"></span>
+                </div>
               </div>
               <div class="create-editor-avatar-copy">
-                <strong>点击头像更换</strong>
+                <strong>{{ userAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF，保存时会自动标准化。</span>
                 <span>可选：上传、AI 生图。</span>
               </div>
@@ -804,13 +812,16 @@ function cancelRemoveCurrentNpc() {
         <div class="create-editor-body">
           <div class="field">
             <label>头像</label>
-            <button class="create-editor-avatar-row" type="button" @click="openImageSource('npc', editingNpcIndex)">
-              <div class="avatar create-editor-avatar create-editor-avatar--compact">
+            <button class="create-editor-avatar-row" type="button" :disabled="currentNpcAvatarProcessing" @click="openImageSource('npc', editingNpcIndex)">
+              <div class="avatar create-editor-avatar create-editor-avatar--compact" :class="{ 'avatar--busy': currentNpcAvatarProcessing }">
                 <img v-if="currentNpcRole.avatarPath" :src="store.resolveMediaPath(currentNpcRole.avatarPath)" />
                 <div v-else class="placeholder">{{ currentNpcRole.name?.slice(0, 1) || '角' }}</div>
+                <div v-if="currentNpcAvatarProcessing" class="avatar-processing-mask">
+                  <span class="avatar-processing-spinner"></span>
+                </div>
               </div>
               <div class="create-editor-avatar-copy">
-                <strong>点击头像更换</strong>
+                <strong>{{ currentNpcAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF，保存时会自动标准化。</span>
                 <span>可选：上传、AI 生图。</span>
               </div>

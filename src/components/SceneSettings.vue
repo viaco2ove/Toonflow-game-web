@@ -30,9 +30,13 @@ const activeModelKey = ref<string>("");
 const modelRows = computed(() =>
   store.GAME_MODEL_SLOTS.map((slot) => {
     const binding = store.settingsModelBinding(slot.key);
+    const recommendation = store.settingsRecommendedModel(slot.key);
+    const advisory = store.settingsModelAdvisory(slot.key);
     return {
       ...slot,
       binding,
+      recommendation,
+      advisory,
       options: store.settingsConfigOptions(slot.configType),
     };
   }),
@@ -114,6 +118,10 @@ async function openModelManager(key: string) {
   showModelManager.value = true;
 }
 
+async function applyRecommendedModel(key: string) {
+  await store.bindRecommendedGameModel(key);
+}
+
 function onModelManagerConfirmed() {
   activeModelKey.value = "";
 }
@@ -183,10 +191,33 @@ watch(
           <div class="settings-model-copy">
             <div class="settings-model-label">{{ row.label }}</div>
             <div class="settings-model-meta">{{ row.binding?.manufacturer || '未绑定' }} {{ row.binding?.model || '' }}</div>
+            <div
+              v-if="row.recommendation"
+              class="settings-model-recommend"
+            >
+              推荐：{{ row.recommendation.manufacturer || '未知厂商' }} {{ row.recommendation.model || '' }}
+            </div>
+            <div
+              v-if="row.advisory"
+              class="settings-model-advisory"
+              :class="`settings-model-advisory--${row.advisory.tone}`"
+            >
+              {{ row.advisory.text }}
+            </div>
           </div>
-          <button class="button primary settings-picker-btn settings-solid-btn" type="button" @click="openModelManager(row.key)">
-            配置接口
-          </button>
+          <div class="settings-model-actions">
+            <button
+              v-if="row.recommendation && row.binding?.configId !== row.recommendation.id"
+              class="button settings-outline-btn settings-picker-btn"
+              type="button"
+              @click="applyRecommendedModel(row.key)"
+            >
+              用推荐
+            </button>
+            <button class="button primary settings-picker-btn settings-solid-btn" type="button" @click="openModelManager(row.key)">
+              配置接口
+            </button>
+          </div>
         </div>
       </div>
     </section>

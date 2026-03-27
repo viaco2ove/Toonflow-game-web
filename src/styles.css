@@ -297,6 +297,17 @@ a {
   height: 56px;
 }
 
+.my-profile-avatar-btn {
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.my-profile-avatar-btn:disabled {
+  cursor: progress;
+}
+
 .my-profile-meta {
   min-width: 0;
   display: grid;
@@ -1174,6 +1185,40 @@ a {
   font-weight: 800;
 }
 
+.create-editor-avatar-row:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
+.avatar--busy .badge {
+  opacity: 0;
+}
+
+.avatar-processing-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(19, 33, 52, 0.46);
+  z-index: 1;
+}
+
+.avatar-processing-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff4cb;
+  animation: avatar-processing-spin 0.8s linear infinite;
+}
+
+@keyframes avatar-processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .create-page .input,
 .create-page .textarea {
   border-radius: 7px;
@@ -1364,6 +1409,11 @@ a {
   gap: 4px;
 }
 
+.settings-model-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .settings-model-label,
 .settings-prompt-title {
   font-size: 16px;
@@ -1375,6 +1425,30 @@ a {
 .settings-prompt-code {
   font-size: 12px;
   color: #6d7e98;
+}
+
+.settings-model-recommend,
+.settings-model-advisory {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-model-recommend {
+  color: #3559a6;
+}
+
+.settings-model-advisory {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #f0d7a6;
+  background: #fff8ea;
+  color: #8a5b0b;
+}
+
+.settings-model-advisory--info {
+  border-color: #d8e1f2;
+  background: #f5f8ff;
+  color: #46608f;
 }
 
 .settings-prompt-code {
@@ -1535,6 +1609,35 @@ a {
 .settings-manager-body {
   display: grid;
   gap: 18px;
+}
+
+.settings-manager-recommend {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid #f0d7a6;
+  background: #fff8ea;
+}
+
+.settings-manager-recommend-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-manager-recommend-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #7c5410;
+}
+
+.settings-manager-recommend-text,
+.settings-manager-recommend-model {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8a5b0b;
 }
 
 .settings-manager-toolbar {

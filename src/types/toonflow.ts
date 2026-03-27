@@ -189,6 +189,18 @@ export interface SeparatedRoleImageResult {
   backgroundFilePath?: string;
 }
 
+export interface RoleAvatarTaskResult {
+  taskId: number;
+  status: string;
+  progress?: number;
+  message?: string;
+  errorMessage?: string;
+  foregroundPath?: string;
+  foregroundFilePath?: string;
+  backgroundPath?: string;
+  backgroundFilePath?: string;
+}
+
 export interface VoiceModelConfig {
   id: number;
   type?: string;

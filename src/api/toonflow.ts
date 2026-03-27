@@ -10,6 +10,7 @@ import type {
   ModelConfigPayload,
   ProjectItem,
   PromptItem,
+  RoleAvatarTaskResult,
   SeparatedRoleImageResult,
   SessionDetail,
   SessionItem,
@@ -189,6 +190,14 @@ export class ToonflowApi {
 
   separateRoleAvatar(payload: Record<string, unknown>) {
     return this.post<SeparatedRoleImageResult>("/game/separateRoleAvatar", payload);
+  }
+
+  startSeparateRoleAvatarTask(payload: Record<string, unknown>) {
+    return this.post<RoleAvatarTaskResult>("/game/separateRoleAvatar", payload);
+  }
+
+  getSeparateRoleAvatarTask(taskId: number) {
+    return this.post<RoleAvatarTaskResult>("/game/separateRoleAvatar/status", { taskId });
   }
 
   getVoiceModels() {
