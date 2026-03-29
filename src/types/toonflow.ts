@@ -15,6 +15,8 @@ export interface RoleParameterCard {
   raw_setting?: string;
   gender?: string;
   age?: number | null;
+  level?: number | null;
+  level_desc?: string;
   personality?: string;
   appearance?: string;
   voice?: string;
@@ -187,6 +189,7 @@ export interface DebugNarrativePlan {
   chapterOutcome?: "continue" | "success" | "failed";
   nextChapterId?: number | null;
   source?: "ai" | "fallback";
+  triggerMemoryAgent?: boolean;
   eventType?: string;
   presetContent?: string | null;
 }
@@ -313,6 +316,27 @@ export interface CreateStepState {
   current: 0 | 1;
 }
 
+export function createBasicRoleParameterCard(name: string, description = "", voice = ""): RoleParameterCard {
+  return {
+    name: name || "用户",
+    raw_setting: description || "",
+    gender: "",
+    age: null,
+    level: 1,
+    level_desc: "初入此界",
+    personality: "",
+    appearance: "",
+    voice: voice || "",
+    skills: [],
+    items: [],
+    equipment: [],
+    hp: 100,
+    mp: 0,
+    money: 0,
+    other: [],
+  };
+}
+
 export function createDefaultPlayerRole(): StoryRole {
   return {
     id: "player",
@@ -330,7 +354,7 @@ export function createDefaultPlayerRole(): StoryRole {
     voicePromptText: "",
     voiceMixVoices: [],
     sample: "",
-    parameterCardJson: null,
+    parameterCardJson: createBasicRoleParameterCard("用户", "用户在故事中的主视角角色", ""),
   };
 }
 
@@ -351,7 +375,7 @@ export function createDefaultNarratorRole(): StoryRole {
     voicePromptText: "",
     voiceMixVoices: [],
     sample: "",
-    parameterCardJson: null,
+    parameterCardJson: createBasicRoleParameterCard("旁白", "负责环境推进、规则提示与节奏控制", "混合（清朗温润）"),
   };
 }
 

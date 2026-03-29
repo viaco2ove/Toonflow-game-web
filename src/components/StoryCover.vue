@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 
 const props = withDefaults(defineProps<{
   title: string;
@@ -15,11 +15,21 @@ const titleInitial = computed(() => {
   const text = String(props.title || "").trim();
   return text ? text.slice(0, 1).toUpperCase() : "故";
 });
+
+const loadFailed = ref(false);
+
+watch(
+  () => props.coverPath,
+  () => {
+    loadFailed.value = false;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <div :class="['story-cover', `story-cover--${variant}`]" :style="height ? { height } : undefined">
-    <img v-if="coverPath" :src="coverPath" :alt="title" />
+    <img v-if="coverPath && !loadFailed" :src="coverPath" :alt="title" @error="loadFailed = true" />
     <div v-else class="placeholder">
       <div class="story-cover-placeholder">
         <div class="story-cover-placeholder__initial">{{ titleInitial }}</div>

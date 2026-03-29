@@ -6,6 +6,7 @@ import {
   ChapterExtra,
   ChapterItem,
   DebugNarrativePlan,
+  DebugStepResult,
   LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
@@ -23,6 +24,7 @@ import {
   VoiceModelConfig,
   VoicePresetItem,
   WorldItem,
+  createBasicRoleParameterCard,
   createDefaultNarratorRole,
   createDefaultPlayerRole,
   createEmptyChapter,
@@ -39,11 +41,42 @@ type RuntimeRetryTask = {
   run: () => Promise<void>;
 };
 
+type RuntimeLineStatus =
+  | "orchestrated"
+  | "streaming"
+  | "generated"
+  | "revealing"
+  | "voicing"
+  | "waiting_next"
+  | "waiting_player"
+  | "auto_advancing"
+  | "ended"
+  | "error";
+
 type RuntimeStreamMeta = {
   kind: "runtime_stream";
   streaming: boolean;
   sentences?: string[];
+  lineIndex?: number;
+  status?: RuntimeLineStatus;
+  nextRole?: string;
+  nextRoleType?: string;
 };
+
+type RuntimeChatTraceItem = {
+  conversationId: string;
+  messageId: number;
+  lineIndex: number;
+  currentRole: string;
+  currentRoleType: string;
+  currentStatus: RuntimeLineStatus | "";
+  nextRole: string;
+  nextRoleType: string;
+  updateTime: number;
+};
+
+const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
+const RUNTIME_CHAT_STORAGE_LIMIT = 24;
 
 function storageGet(key: string, fallback = ""): string {
   try {
@@ -59,6 +92,41 @@ function storageSet(key: string, value: string): void {
   } catch {
     // noop
   }
+}
+
+function storageRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // noop
+  }
+}
+
+function asMiniRecord(value: unknown): Record<string, any> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return { ...(value as Record<string, any>) };
+}
+
+function scalarText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+function isBenignRuntimeCancellation(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  const message = String((error as any)?.message || error || "").trim().toLowerCase();
+  return message.includes("aborterror")
+    || message.includes("the operation was aborted")
+    || message.includes("scope left the composition");
 }
 
 function normalizeBaseUrl(input: string): string {
@@ -112,6 +180,13 @@ function looksLikeGifName(input: string): boolean {
   if (!raw) return false;
   const clean = raw.split("#")[0]?.split("?")[0] || raw;
   return /\.gif$/i.test(clean);
+}
+
+function looksLikeMp4Name(input: string): boolean {
+  const raw = String(input || "").trim();
+  if (!raw) return false;
+  const clean = raw.split("#")[0]?.split("?")[0] || raw;
+  return /\.mp4$/i.test(clean);
 }
 
 function cropRectForTarget(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) {
@@ -281,6 +356,44 @@ function safeJsonParse<T>(text: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const conversationId = String(record["conversationId"] || "").trim();
+  if (!conversationId) return null;
+  const messageId = Number(record["messageId"] || 0);
+  const lineIndex = Number(record["lineIndex"] || 0);
+  const updateTime = Number(record["updateTime"] || 0);
+  return {
+    conversationId,
+    messageId: Number.isFinite(messageId) ? messageId : 0,
+    lineIndex: Number.isFinite(lineIndex) ? lineIndex : 0,
+    currentRole: String(record["currentRole"] || "").trim(),
+    currentRoleType: String(record["currentRoleType"] || "").trim(),
+    currentStatus: (String(record["currentStatus"] || "").trim() as RuntimeLineStatus | ""),
+    nextRole: String(record["nextRole"] || "").trim(),
+    nextRoleType: String(record["nextRoleType"] || "").trim(),
+    updateTime: Number.isFinite(updateTime) ? updateTime : 0,
+  };
+}
+
+function readRuntimeChatTraceStorage(): RuntimeChatTraceItem[] {
+  const parsed = safeJsonParse<unknown>(storageGet(RUNTIME_CHAT_STORAGE_KEY, "[]"), []);
+  if (!Array.isArray(parsed)) return [];
+  const rows = parsed
+    .map((item) => normalizeRuntimeChatTraceItem(item))
+    .filter((item): item is RuntimeChatTraceItem => Boolean(item));
+  if (!rows.length) return [];
+  const latestByConversation = new Map<string, RuntimeChatTraceItem>();
+  rows.forEach((item) => {
+    const previous = latestByConversation.get(item.conversationId);
+    if (!previous || item.updateTime >= previous.updateTime) {
+      latestByConversation.set(item.conversationId, item);
+    }
+  });
+  return Array.from(latestByConversation.values()).sort((left, right) => left.updateTime - right.updateTime);
 }
 
 function normalizeScalarEditorText(input: unknown): string {
@@ -610,6 +723,7 @@ function createToonflowStore() {
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
     selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
     worlds: [] as WorldItem[],
+    homeRecommendWorldId: Number(storageGet("toonflow.homeRecommendWorldId", "0")) || 0,
     hallKeyword: "",
     hallCategory: "all",
     createStep: 0 as 0 | 1,
@@ -642,6 +756,8 @@ function createToonflowStore() {
     chapterConditionVisible: true,
     sessions: [] as SessionItem[],
     currentSessionId: "",
+    sessionViewMode: "live" as "live" | "playback",
+    sessionPlaybackStartIndex: 0,
     sessionDetail: null as Loadable<SessionDetail>,
     messages: [] as MessageItem[],
     quickInput: "",
@@ -664,11 +780,293 @@ function createToonflowStore() {
   let runtimeRetrying = false;
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
+
+  async function fetchLatestSessionForWorld(worldId: number): Promise<SessionItem | null> {
+    const targetWorldId = Number(worldId || 0);
+    if (!Number.isFinite(targetWorldId) || targetWorldId <= 0) return null;
+    const rows = await api.listSession(undefined, targetWorldId).catch(() => []);
+    const [latest] = dedupeSessionsByWorld(rows || []);
+    return (latest as SessionItem | undefined) || null;
+  }
+
+  async function refreshSessionListState() {
+    const sessions = await api.listSession(undefined).catch(() => state.sessions);
+    state.sessions = dedupeSessionsByWorld(sessions || []);
+  }
   let editorAutoPersistTimer: number | null = null;
   let editorPersistMuted = false;
   let lastPersistedEditorSnapshot: StoryEditorSnapshot | null = null;
   let lastPersistedEditorSignature = "";
   let undoEditorSnapshot: StoryEditorSnapshot | null = null;
+
+  function runtimeMetaRecord(meta: unknown): Record<string, unknown> | null {
+    if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return null;
+    return meta as Record<string, unknown>;
+  }
+
+  function runtimeConversationId(): string {
+    const runtimeState = state.debugRuntimeState as Record<string, unknown> | null;
+    const debugRuntimeKey = String(runtimeState?.["debugRuntimeKey"] || "").trim();
+    if (debugRuntimeKey) return debugRuntimeKey;
+    const sessionId = state.currentSessionId.trim();
+    if (sessionId) return `session:${sessionId}`;
+    return `world:${state.worldId || 0}:chapter:${state.debugChapterId || 0}`;
+  }
+
+  function runtimeTurnStateRecord(): Record<string, unknown> {
+    const runtimeState = state.debugRuntimeState as Record<string, unknown> | null;
+    const turnState = runtimeState?.["turnState"];
+    return typeof turnState === "object" && turnState !== null && !Array.isArray(turnState)
+      ? (turnState as Record<string, unknown>)
+      : {};
+  }
+
+  function cloneDebugRuntimeRecord(input: unknown): Record<string, unknown> {
+    return typeof input === "object" && input !== null && !Array.isArray(input)
+      ? { ...(input as Record<string, unknown>) }
+      : {};
+  }
+
+  function normalizeDebugPlayerProfileGender(input: unknown): string {
+    const text = normalizeScalarEditorText(input).trim();
+    if (!text) return "";
+    if (["男", "男性", "男生"].includes(text)) return "男";
+    if (["女", "女性", "女生"].includes(text)) return "女";
+    return "";
+  }
+
+  function normalizeDebugPlayerProfileAge(input: unknown): number | null {
+    const text = normalizeScalarEditorText(input).trim();
+    if (!text) return null;
+    const matched = text.match(/(\d{1,3})/);
+    if (!matched) return null;
+    const value = Number(matched[1]);
+    if (!Number.isFinite(value) || value <= 0 || value > 150) return null;
+    return value;
+  }
+
+  function parseDebugPlayerProfileDraft(message: string, currentName: string): {
+    name?: string;
+    gender?: string;
+    age?: number;
+  } {
+    const text = normalizeScalarEditorText(message)
+      .replace(/[。！？!?\r\n]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return {};
+
+    const result: { name?: string; gender?: string; age?: number } = {};
+    const compact = text.match(/^([A-Za-z\u4e00-\u9fa5·•]{1,12}?)(男|女)(?:性|生)?(?:[，,、/\s]+(\d{1,3})(?:岁)?)?$/u);
+    if (compact) {
+      result.name = normalizeScalarEditorText(compact[1]);
+      result.gender = normalizeDebugPlayerProfileGender(compact[2]);
+      const age = normalizeDebugPlayerProfileAge(compact[3]);
+      if (age !== null) result.age = age;
+      return result;
+    }
+
+    const explicitName = text.match(/(?:我叫|我是|姓名(?:是|[:：])?|名字(?:是|[:：])?)\s*([A-Za-z\u4e00-\u9fa5·•]{1,16})/u);
+    if (explicitName) {
+      result.name = normalizeScalarEditorText(explicitName[1]);
+    }
+
+    const explicitGender = text.match(/(?:性别(?:是|[:：])?\s*)?(男|女|男性|女性|男生|女生)/u);
+    const gender = normalizeDebugPlayerProfileGender(explicitGender?.[1]);
+    if (gender) {
+      result.gender = gender;
+    }
+
+    const explicitAge = text.match(/(?:年龄(?:是|[:：])?\s*|我今年|今年)\s*(\d{1,3})\s*岁?/u);
+    const age = normalizeDebugPlayerProfileAge(explicitAge?.[1] || "");
+    if (age !== null) {
+      result.age = age;
+    }
+
+    if (!result.name && text.length <= 24) {
+      const segments = text
+        .split(/[，,、/|｜]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const hasProfileSegment = segments.some((item) => Boolean(normalizeDebugPlayerProfileGender(item)) || normalizeDebugPlayerProfileAge(item) !== null);
+      if (segments.length >= 2 && segments.length <= 4 && hasProfileSegment) {
+        const nameCandidate = segments.find((item) => /^[A-Za-z\u4e00-\u9fa5·•]{1,16}$/u.test(item) && !normalizeDebugPlayerProfileGender(item) && normalizeDebugPlayerProfileAge(item) === null);
+        if (nameCandidate) {
+          result.name = normalizeScalarEditorText(nameCandidate);
+        }
+        if (!result.gender) {
+          const segmentGender = segments.map((item) => normalizeDebugPlayerProfileGender(item)).find(Boolean);
+          if (segmentGender) result.gender = segmentGender;
+        }
+        if (result.age == null) {
+          const segmentAge = segments.map((item) => normalizeDebugPlayerProfileAge(item)).find((item) => item != null) ?? null;
+          if (segmentAge !== null) result.age = segmentAge;
+        }
+      }
+    }
+
+    if (result.name === currentName) {
+      delete result.name;
+    }
+    return result;
+  }
+
+  function normalizeDebugPlayerStringList(input: unknown): string[] {
+    if (!Array.isArray(input)) return [];
+    return input
+      .map((item) => normalizeScalarEditorText(item))
+      .filter(Boolean);
+  }
+
+  function applyLocalDebugPlayerProfile(content: string) {
+    if (!state.debugMode) return;
+    const root = cloneDebugRuntimeRecord(state.debugRuntimeState);
+    const currentPlayer = cloneDebugRuntimeRecord(root.player);
+    const displayName = normalizeScalarEditorText(currentPlayer.name || state.playerName || "用户") || "用户";
+    const description = normalizeScalarEditorText(currentPlayer.description || state.playerDesc || "用户在故事中的主视角角色");
+    const voice = normalizeScalarEditorText(currentPlayer.voice || state.playerVoice);
+    const currentCard = cloneDebugRuntimeRecord(currentPlayer.parameterCardJson);
+    const nextCard: Record<string, unknown> = {
+      ...createBasicRoleParameterCard(displayName, description, voice),
+      ...currentCard,
+      name: normalizeScalarEditorText(currentCard.name ?? displayName) || displayName,
+      raw_setting: normalizeScalarEditorText(currentCard.raw_setting ?? currentCard.rawSetting ?? description),
+      gender: normalizeScalarEditorText(currentCard.gender),
+      age: normalizeDebugPlayerProfileAge(currentCard.age),
+      personality: normalizeScalarEditorText(currentCard.personality),
+      appearance: normalizeScalarEditorText(currentCard.appearance),
+      voice: normalizeScalarEditorText(currentCard.voice ?? voice),
+      skills: normalizeDebugPlayerStringList(currentCard.skills),
+      items: normalizeDebugPlayerStringList(currentCard.items),
+      equipment: normalizeDebugPlayerStringList(currentCard.equipment),
+      hp: Number.isFinite(Number(currentCard.hp)) ? Number(currentCard.hp) : 100,
+      mp: Number.isFinite(Number(currentCard.mp)) ? Number(currentCard.mp) : 0,
+      money: Number.isFinite(Number(currentCard.money)) ? Number(currentCard.money) : 0,
+      other: normalizeDebugPlayerStringList(currentCard.other),
+    };
+    const parsed = parseDebugPlayerProfileDraft(content, normalizeScalarEditorText(nextCard.name || displayName) || displayName);
+    if (!parsed.name && !parsed.gender && parsed.age == null) return;
+    nextCard.name = normalizeScalarEditorText(parsed.name || nextCard.name || displayName) || displayName;
+    if (parsed.gender) {
+      nextCard.gender = parsed.gender;
+    }
+    if (parsed.age != null) {
+      nextCard.age = parsed.age;
+    }
+    root.player = {
+      ...currentPlayer,
+      id: normalizeScalarEditorText(currentPlayer.id || "player") || "player",
+      roleType: "player",
+      name: displayName,
+      avatarPath: normalizeScalarEditorText(currentPlayer.avatarPath || state.userAvatarPath),
+      avatarBgPath: normalizeScalarEditorText(currentPlayer.avatarBgPath || state.userAvatarBgPath),
+      description,
+      voice,
+      voiceMode: normalizeScalarEditorText(currentPlayer.voiceMode || state.playerVoiceMode || "text") || "text",
+      voicePresetId: normalizeScalarEditorText(currentPlayer.voicePresetId || state.playerVoicePresetId),
+      voiceReferenceAudioPath: normalizeScalarEditorText(currentPlayer.voiceReferenceAudioPath || state.playerVoiceReferenceAudioPath),
+      voiceReferenceAudioName: normalizeScalarEditorText(currentPlayer.voiceReferenceAudioName || state.playerVoiceReferenceAudioName),
+      voiceReferenceText: normalizeScalarEditorText(currentPlayer.voiceReferenceText || state.playerVoiceReferenceText),
+      voicePromptText: normalizeScalarEditorText(currentPlayer.voicePromptText || state.playerVoicePromptText),
+      voiceMixVoices: Array.isArray(currentPlayer.voiceMixVoices) ? currentPlayer.voiceMixVoices : state.playerVoiceMixVoices,
+      sample: normalizeScalarEditorText(currentPlayer.sample),
+      parameterCardJson: nextCard,
+    };
+    const turnState = cloneDebugRuntimeRecord(root.turnState);
+    if ((normalizeScalarEditorText(turnState.expectedRoleType || "player") || "player").toLowerCase() === "player") {
+      root.turnState = {
+        ...turnState,
+        expectedRole: displayName,
+      };
+    }
+    state.debugRuntimeState = root;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+  }
+
+  function runtimeMessageStatus(message: MessageItem | null | undefined): RuntimeLineStatus | "" {
+    if (!message) return "";
+    if (isRuntimeRetryMessage(message)) return "error";
+    const meta = runtimeMetaRecord(message.meta);
+    return (String(meta?.["status"] || "").trim() as RuntimeLineStatus | "") || "";
+  }
+
+  function syncRuntimeChatTrace() {
+    const conversationId = runtimeConversationId();
+    const turnState = runtimeTurnStateRecord();
+    const fallbackNextRole = String(turnState["expectedRole"] || "").trim();
+    const fallbackNextRoleType = String(turnState["expectedRoleType"] || "").trim();
+    const history = conversationMessages().filter((message) => !isRuntimeRetryMessage(message));
+    const latestMessage = history.slice(-1)[0] || null;
+    const nextRows = readRuntimeChatTraceStorage().filter((item) => item.conversationId !== conversationId);
+    if (!latestMessage) {
+      if (!nextRows.length) {
+        storageRemove(RUNTIME_CHAT_STORAGE_KEY);
+        return;
+      }
+      storageSet(RUNTIME_CHAT_STORAGE_KEY, JSON.stringify(nextRows.slice(-RUNTIME_CHAT_STORAGE_LIMIT)));
+      return;
+    }
+    const latestMeta = runtimeMetaRecord(latestMessage.meta);
+    const latestLineIndex = Number(latestMeta?.["lineIndex"]);
+    const latestRow: RuntimeChatTraceItem = {
+      conversationId,
+      messageId: Number(latestMessage.id || 0),
+      lineIndex: Number.isFinite(latestLineIndex) && latestLineIndex > 0 ? latestLineIndex : history.length,
+      currentRole: String(latestMessage.role || "").trim(),
+      currentRoleType: String(latestMessage.roleType || "").trim(),
+      currentStatus: runtimeMessageStatus(latestMessage),
+      nextRole: String(latestMeta?.["nextRole"] || fallbackNextRole || "").trim(),
+      nextRoleType: String(latestMeta?.["nextRoleType"] || fallbackNextRoleType || "").trim(),
+      updateTime: Date.now(),
+    };
+    storageSet(
+      RUNTIME_CHAT_STORAGE_KEY,
+      JSON.stringify([...nextRows.slice(-(RUNTIME_CHAT_STORAGE_LIMIT - 1)), latestRow]),
+    );
+  }
+
+  function buildRuntimeStreamMeta(current: unknown, patch: Partial<RuntimeStreamMeta>): RuntimeStreamMeta {
+    const record = runtimeMetaRecord(current);
+    const next: RuntimeStreamMeta = {
+      kind: "runtime_stream",
+      streaming: false,
+    };
+    if (record) {
+      if (Array.isArray(record["sentences"])) {
+        next.sentences = (record["sentences"] as unknown[]).map((item) => String(item || "").trim()).filter(Boolean);
+      }
+      const lineIndex = Number(record["lineIndex"]);
+      if (Number.isFinite(lineIndex) && lineIndex > 0) next.lineIndex = lineIndex;
+      const status = String(record["status"] || "").trim() as RuntimeLineStatus | "";
+      if (status) next.status = status;
+      const nextRole = String(record["nextRole"] || "").trim();
+      const nextRoleType = String(record["nextRoleType"] || "").trim();
+      if (nextRole) next.nextRole = nextRole;
+      if (nextRoleType) next.nextRoleType = nextRoleType;
+      if (typeof record["streaming"] === "boolean") {
+        next.streaming = Boolean(record["streaming"]);
+      }
+    }
+    if (patch.sentences) next.sentences = patch.sentences;
+    if (typeof patch.lineIndex === "number") next.lineIndex = patch.lineIndex;
+    if (typeof patch.streaming === "boolean") next.streaming = patch.streaming;
+    if (patch.status) next.status = patch.status;
+    if (patch.nextRole !== undefined) next.nextRole = String(patch.nextRole || "").trim();
+    if (patch.nextRoleType !== undefined) next.nextRoleType = String(patch.nextRoleType || "").trim();
+    return next;
+  }
+
+  function setRuntimeMessageStatus(messageId: number, status: RuntimeLineStatus) {
+    const turnState = runtimeTurnStateRecord();
+    updateMessageById(messageId, (message) => ({
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        status,
+        nextRole: String(turnState["expectedRole"] || "").trim(),
+        nextRoleType: String(turnState["expectedRoleType"] || "").trim(),
+      }),
+    }), true);
+  }
 
   function createRuntimeRetryToken() {
     runtimeRetrySeed += 1;
@@ -679,6 +1077,7 @@ function createToonflowStore() {
     const nextMessages = stripRuntimeRetryMessages(state.messages);
     if (nextMessages.length !== state.messages.length) {
       state.messages = nextMessages;
+      syncRuntimeChatTrace();
     }
   }
 
@@ -691,20 +1090,47 @@ function createToonflowStore() {
     return stripRuntimeRetryMessages(state.messages);
   }
 
-  function updateMessageById(messageId: number, updater: (message: MessageItem) => MessageItem | null) {
+  function restoreDebugPlayerTurnAfterDeletion() {
+    const root = asMiniRecord(state.debugRuntimeState);
+    const turnState = asMiniRecord(root.turnState);
+    const history = conversationMessages();
+    const previous = history.slice(-1)[0] || null;
+    const playerName = scalarText(asMiniRecord(root.player).name) || state.playerName || "用户";
+    turnState.canPlayerSpeak = true;
+    turnState.expectedRoleType = "player";
+    turnState.expectedRole = playerName;
+    turnState.lastSpeakerRoleType = scalarText(previous?.roleType);
+    turnState.lastSpeaker = scalarText(previous?.role);
+    root.turnState = turnState;
+    const round = Number(root.round || 0);
+    root.round = Number.isFinite(round) ? Math.max(0, round - 1) : 0;
+    if (Array.isArray(root.recentEvents) && root.recentEvents.length) {
+      root.recentEvents = root.recentEvents.slice(0, -1);
+    }
+    state.debugRuntimeState = root;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+  }
+
+  function updateMessageById(
+    messageId: number,
+    updater: (message: MessageItem) => MessageItem | null,
+    syncTrace = false,
+  ) {
     const index = state.messages.findIndex((item) => item.id === messageId);
     if (index < 0) return;
     const current = state.messages[index];
     const next = updater(current);
     if (!next) {
       state.messages.splice(index, 1);
+      if (syncTrace) syncRuntimeChatTrace();
       return;
     }
     Object.assign(current, next);
     state.messages.splice(index, 1, current);
+    if (syncTrace) syncRuntimeChatTrace();
   }
 
-  function createStreamingMessage(plan: DebugNarrativePlan): MessageItem {
+  function createStreamingMessage(plan: DebugNarrativePlan, lineIndex: number): MessageItem {
     const now = Date.now();
     return {
       id: now,
@@ -717,6 +1143,10 @@ function createToonflowStore() {
         kind: "runtime_stream",
         streaming: true,
         sentences: [],
+        lineIndex,
+        status: "orchestrated",
+        nextRole: String(plan.nextRole || "").trim(),
+        nextRoleType: String(plan.nextRoleType || "").trim(),
       } satisfies RuntimeStreamMeta,
     };
   }
@@ -756,6 +1186,9 @@ function createToonflowStore() {
       try {
         await task();
       } catch (error) {
+        if (isBenignRuntimeCancellation(error)) {
+          return;
+        }
         const message = asUiErrorMessage(error);
         showRuntimeRetryMessage(
           formatErrorMessage ? formatErrorMessage(message) : message,
@@ -1079,16 +1512,46 @@ function createToonflowStore() {
     return worldsForSelectedProject().filter((item) => !isWorldPublished(item));
   }
 
+  function allPublishedWorlds(): WorldItem[] {
+    return state.worlds.filter((item) => isWorldPublished(item));
+  }
+
+  function playablePublishedWorlds(): WorldItem[] {
+    return allPublishedWorlds().filter((item) => (item.chapterCount || 0) > 0);
+  }
+
+  function canEditWorld(world: WorldItem | null | undefined): boolean {
+    if (!world) return false;
+    const projectId = Number(world.projectId || 0);
+    if (!Number.isFinite(projectId) || projectId <= 0) return false;
+    return state.projects.some((item) => Number(item.id || 0) === projectId);
+  }
+
+  function refreshRecommendedWorld() {
+    const pool = playablePublishedWorlds();
+    if (!pool.length) {
+      state.homeRecommendWorldId = 0;
+      storageSet("toonflow.homeRecommendWorldId", "0");
+      return;
+    }
+    const currentId = Number(state.homeRecommendWorldId || 0);
+    const candidates = pool.filter((item) => Number(item.id || 0) !== currentId);
+    const source = candidates.length ? candidates : pool;
+    const picked = source[Math.floor(Math.random() * source.length)] || pool[0];
+    state.homeRecommendWorldId = Number(picked?.id || 0);
+    storageSet("toonflow.homeRecommendWorldId", String(state.homeRecommendWorldId || 0));
+  }
+
   function recommendedWorld(): WorldItem | null {
-    const list = publishedWorldsForSelectedProject();
+    const list = playablePublishedWorlds();
     if (!list.length) return null;
-    const idx = Math.abs((state.selectedProjectId * 17 + list.length) % list.length);
-    return list[idx] || list[0] || null;
+    const picked = list.find((item) => Number(item.id || 0) === Number(state.homeRecommendWorldId || 0));
+    return picked || list[0] || null;
   }
 
   function filteredHallWorlds(): WorldItem[] {
     const keyword = state.hallKeyword.trim().toLowerCase();
-    const base = publishedWorldsForSelectedProject();
+    const base = allPublishedWorlds();
     return base.filter((item) => {
       const matchesKeyword =
         !keyword ||
@@ -1231,7 +1694,7 @@ function createToonflowStore() {
     if (chapterBody) {
       return chapterBody.split(/\r?\n+/).map((item) => item.trim()).filter(Boolean)[0] || chapterBody.slice(0, 80);
     }
-    return `进入章节《${chapter.title || `章节 ${chapter.sort || 1}`}》`;
+    return "";
   }
 
   function debugChapterContent(): ChapterItem | null {
@@ -1480,14 +1943,16 @@ function createToonflowStore() {
     }
     syncDebugChapter(orderedChapters().findIndex((item) => item.id === nextChapter.id));
     const summary = buildDebugChapterSummary(nextChapter);
-    state.messages.push({
-      id: Date.now(),
-      role: state.narratorName || "旁白",
-      roleType: "narrator",
-      eventType: "on_debug_next_chapter",
-      content: summary || `已进入下一章节：《${nextChapter.title || `章节 ${nextChapter.sort || 1}`}》。`,
-      createTime: Date.now(),
-    });
+    if (summary) {
+      state.messages.push({
+        id: Date.now(),
+        role: state.narratorName || "旁白",
+        roleType: "narrator",
+        eventType: "on_debug_next_chapter",
+        content: summary,
+        createTime: Date.now(),
+      });
+    }
   }
 
   function jumpDebugChapter(step: number) {
@@ -1911,6 +2376,27 @@ function createToonflowStore() {
     return result.filePath || result.path || "";
   }
 
+  async function convertAvatarVideoToGifPayload(target: "account" | "user" | "npc", file: File): Promise<{ path: string; bgPath: string }> {
+    if (target !== "account" && state.selectedProjectId <= 0) {
+      throw new Error("请先选择项目后再上传 MP4");
+    }
+    const isMp4 = String(file.type || "").trim().toLowerCase() === "video/mp4" || looksLikeMp4Name(file.name || "");
+    if (!isMp4) {
+      throw new Error("仅支持上传 MP4 视频转换 GIF");
+    }
+    const result = await api.convertAvatarVideoToGif({
+      projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
+      fileName: file.name || "avatar.mp4",
+      base64Data: await fileToDataUrl(file),
+    });
+    const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
+    const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
+    if (!path || !bgPath) {
+      throw new Error("MP4 转 GIF 失败，未返回头像资源");
+    }
+    return { path, bgPath };
+  }
+
   async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
     if (target === "account" || target === "user" || target === "npc") {
       return await separateRoleImageAsset(target, source, baseName);
@@ -2058,6 +2544,31 @@ function createToonflowStore() {
         state.npcRoles[roleIndex].avatarPath = prepared.path;
         state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
         onReady?.(prepared.path, prepared.bgPath);
+      }
+      clearAvatarFailureNotice();
+    } finally {
+      setAvatarProcessing(null);
+    }
+  }
+
+  async function updateAvatarFromMp4(target: "account" | "user" | "npc", file: File, onReady?: (path: string, bgPath?: string) => void, roleIndex?: number) {
+    clearAvatarFailureNotice();
+    setAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
+    try {
+      const prepared = await convertAvatarVideoToGifPayload(target, file);
+      if (target === "account") {
+        state.accountAvatarPath = prepared.path;
+        state.accountAvatarBgPath = prepared.bgPath;
+        await persistAccountAvatar();
+      } else if (target === "user") {
+        state.userAvatarPath = prepared.path;
+        state.userAvatarBgPath = prepared.bgPath;
+      } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
+        onReady?.(prepared.path, prepared.bgPath);
+        if (!onReady) {
+          state.npcRoles[roleIndex].avatarPath = prepared.path;
+          state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        }
       }
       clearAvatarFailureNotice();
     } finally {
@@ -2317,6 +2828,7 @@ function createToonflowStore() {
       voiceReferenceText: state.playerVoiceReferenceText,
       voicePromptText: state.playerVoicePromptText,
       voiceMixVoices: state.playerVoiceMixVoices,
+      parameterCardJson: createBasicRoleParameterCard(state.playerName || "用户", state.playerDesc || "", state.playerVoice || ""),
     };
   }
 
@@ -2332,6 +2844,7 @@ function createToonflowStore() {
       voiceReferenceText: state.narratorVoiceReferenceText,
       voicePromptText: state.narratorVoicePromptText,
       voiceMixVoices: state.narratorVoiceMixVoices,
+      parameterCardJson: createBasicRoleParameterCard(state.narratorName || "旁白", "负责环境推进、规则提示与节奏控制", state.narratorVoice || ""),
     };
   }
 
@@ -2346,7 +2859,7 @@ function createToonflowStore() {
       const [user, projects, worlds, sessions] = await Promise.all([
         api.getUser().catch(() => null),
         api.getProjects().catch(() => []),
-        api.listWorlds(undefined).catch(() => []),
+        api.listWorlds(undefined, true).catch(() => []),
         api.listSession(undefined).catch(() => []),
       ]);
       if (user) {
@@ -2372,6 +2885,7 @@ function createToonflowStore() {
         }
       }
       state.worlds = worlds || [];
+      refreshRecommendedWorld();
       state.sessions = dedupeSessionsByWorld(sessions || []);
       if (!state.worldId && state.selectedProjectId > 0) {
         const maybeWorld = worlds.find((item) => item.projectId === state.selectedProjectId && isWorldPublished(item));
@@ -2468,6 +2982,9 @@ function createToonflowStore() {
 
   function setTab(tab: AppTab) {
     state.activeTab = tab;
+    if (tab === "home") {
+      refreshRecommendedWorld();
+    }
     if (tab === "settings" && state.token.trim()) {
       void ensureSettingsPanelData();
     }
@@ -2551,10 +3068,18 @@ function createToonflowStore() {
   }
 
   async function openWorldForEdit(world: WorldItem) {
+    if (!canEditWorld(world)) {
+      state.notice = "只能编辑自己的故事";
+      return;
+    }
     await loadWorldForEdit(world);
   }
 
   async function reopenPublishedWorldAsDraft(world: WorldItem) {
+    if (!canEditWorld(world)) {
+      state.notice = "只能编辑自己的故事";
+      return;
+    }
     await loadWorldForEdit(world);
     state.worldPublishStatus = "draft";
     await saveWorldOnly(false);
@@ -2731,10 +3256,11 @@ function createToonflowStore() {
 
   async function reloadWorldsAfterSave() {
     const [worlds, sessions] = await Promise.all([
-      api.listWorlds(undefined).catch(() => state.worlds),
+      api.listWorlds(undefined, true).catch(() => state.worlds),
       api.listSession(undefined).catch(() => state.sessions),
     ]);
     state.worlds = worlds;
+    refreshRecommendedWorld();
     state.sessions = dedupeSessionsByWorld(sessions);
   }
 
@@ -2750,6 +3276,20 @@ function createToonflowStore() {
 
   async function startFromWorld(world: WorldItem, quickText = "") {
     try {
+      state.sessionViewMode = "live";
+      state.sessionPlaybackStartIndex = 0;
+      const existingSession = await fetchLatestSessionForWorld(Number(world.id || 0))
+        || state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
+        || null;
+      if (existingSession?.sessionId) {
+        await openSession(existingSession.sessionId);
+        if (quickText.trim()) {
+          state.sendText = quickText.trim();
+          await sendMessage();
+        }
+        state.activeTab = "play";
+        return;
+      }
       const chapters = await api.getChapter(world.id).catch(() => []);
       const startChapter = chapters[0] || null;
       const session = await api.startSession({
@@ -2770,6 +3310,25 @@ function createToonflowStore() {
     }
   }
 
+  async function continueSessionForWorld(
+    worldId: number,
+    fallbackSessionId = "",
+    options?: { playback?: boolean; playbackIndex?: number },
+  ) {
+    const targetWorldId = Number(worldId || 0);
+    const fallbackId = String(fallbackSessionId || "").trim();
+    const existingSession = Number.isFinite(targetWorldId) && targetWorldId > 0
+      ? await fetchLatestSessionForWorld(targetWorldId)
+        || state.sessions.find((item) => Number(item.worldId || 0) === targetWorldId)
+        || null
+      : null;
+    const sessionId = String(existingSession?.sessionId || fallbackId).trim();
+    if (!sessionId) {
+      throw new Error("未找到可继续的会话");
+    }
+    await openSession(sessionId, options);
+  }
+
   async function quickStart() {
     const world = recommendedWorld();
     if (!world) {
@@ -2780,20 +3339,44 @@ function createToonflowStore() {
     state.quickInput = "";
   }
 
-  async function openSession(sessionId: string) {
+  async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number }) {
     clearRuntimeRetryState();
     state.debugMode = false;
     state.debugLoading = false;
+    state.sessionViewMode = options?.playback ? "playback" : "live";
+    state.sessionPlaybackStartIndex = Math.max(0, Number(options?.playbackIndex || 0));
     state.currentSessionId = sessionId;
-    const detail = await api.getSession(sessionId);
+    const [detail] = await Promise.all([
+      api.getSession(sessionId),
+      refreshSessionListState(),
+    ]);
     state.sessionDetail = detail;
     state.messages = detail.messages || [];
     state.activeTab = "play";
   }
 
+  async function deleteSession(sessionId: string) {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    await api.deleteSession(id);
+    state.sessions = state.sessions.filter((item) => item.sessionId !== id);
+    if (state.currentSessionId === id) {
+      clearRuntimeRetryState();
+      state.currentSessionId = "";
+      state.sessionDetail = null;
+      state.messages = [];
+      state.sessionViewMode = "live";
+      state.sessionPlaybackStartIndex = 0;
+      state.activeTab = "history";
+    }
+  }
+
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
-    const detail = await api.getSession(state.currentSessionId);
+    const [detail] = await Promise.all([
+      api.getSession(state.currentSessionId),
+      refreshSessionListState(),
+    ]);
     state.sessionDetail = detail;
     state.messages = detail.messages || [];
   }
@@ -2822,6 +3405,81 @@ function createToonflowStore() {
     state.debugEndDialog = result.endDialog || null;
     state.sessionDetail = null;
     state.activeTab = "play";
+    syncRuntimeChatTrace();
+  }
+
+  function stripKnownDebugHistory(historyMessages: MessageItem[], incomingMessages: MessageItem[]) {
+    if (!historyMessages.length || !incomingMessages.length) return incomingMessages;
+    if (incomingMessages.length < historyMessages.length) return incomingMessages;
+    const signature = (message: MessageItem) => [
+      String(message.roleType || "").trim(),
+      String(message.role || "").trim(),
+      String(message.eventType || "").trim(),
+      String(message.content || "").trim(),
+    ].join("|");
+    const historyPrefix = historyMessages.map(signature);
+    const incomingPrefix = incomingMessages.slice(0, historyMessages.length).map(signature);
+    return historyPrefix.join("\n") === incomingPrefix.join("\n")
+      ? incomingMessages.slice(historyMessages.length)
+      : incomingMessages;
+  }
+
+  function applyDebugStepResult(
+    result: DebugStepResult,
+    historyMessages: MessageItem[],
+    fallbackChapter?: ChapterItem | null,
+  ) {
+    state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    if (typeof result.chapterId === "number" && result.chapterId > 0) {
+      state.debugChapterId = result.chapterId;
+    }
+    const activeChapter = state.chapters.find((item) => item.id === (result.chapterId ?? state.debugChapterId))
+      || fallbackChapter
+      || null;
+    state.debugChapterTitle = normalizeDisplayChapterTitle(
+      result.chapterTitle || activeChapter?.title || state.chapterTitle,
+      activeChapter?.sort,
+    ) || "当前章节";
+    state.debugEndDialog = result.endDialog || null;
+    state.messages = [...historyMessages, ...stripKnownDebugHistory(historyMessages, result.messages || [])];
+    state.sessionDetail = null;
+    state.activeTab = "play";
+    syncRuntimeChatTrace();
+  }
+
+  function debugCanPlayerSpeakFromState(runtimeState: Record<string, unknown> | null | undefined = state.debugRuntimeState as Record<string, unknown>) {
+    const turnState = (runtimeState && typeof runtimeState === "object"
+      ? (runtimeState as Record<string, any>).turnState
+      : null) as Record<string, any> | null;
+    return turnState?.canPlayerSpeak !== false;
+  }
+
+  async function streamDebugPlanOrFallback(
+    plan: DebugNarrativePlan,
+    historyMessages: MessageItem[],
+    playerContent?: string | null,
+  ) {
+    try {
+      await streamDebugPlan(plan, historyMessages, playerContent);
+    } catch (error) {
+      if (isBenignRuntimeCancellation(error)) {
+        throw error;
+      }
+      const fallbackResult = await api.debugStep({
+        worldId: state.worldId,
+        chapterId: state.debugChapterId || undefined,
+        state: state.debugRuntimeState,
+        messages: historyMessages,
+        playerContent: playerContent || undefined,
+      });
+      clearRuntimeRetryState();
+      applyDebugStepResult(fallbackResult, historyMessages, state.chapters.find((item) => item.id === state.debugChapterId) || null);
+      const advanced = conversationMessages().length > historyMessages.length || Boolean(state.debugEndDialog) || debugCanPlayerSpeakFromState(fallbackResult.state as Record<string, unknown>);
+      if (!advanced) {
+        throw error;
+      }
+    }
   }
 
   async function streamDebugPlan(
@@ -2829,9 +3487,10 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
     playerContent?: string | null,
   ) {
-    const streamingMessage = createStreamingMessage(plan);
+    const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
     state.messages = [...historyMessages, streamingMessage];
+    syncRuntimeChatTrace();
     let done = false;
     try {
       await api.streamDebugLines({
@@ -2862,28 +3521,31 @@ function createToonflowStore() {
             roleType: String(finalMessage.roleType || message.roleType || ""),
             eventType: String(finalMessage.eventType || message.eventType || RUNTIME_STREAM_EVENT),
             content: finalContent,
-            meta: {},
-          }));
+            meta: buildRuntimeStreamMeta(message.meta, {
+              streaming: false,
+              status: "generated",
+            }),
+          }), true);
           return;
         }
         if (event.type === "sentence") {
           const text = String(event.data?.text || "").trim();
           if (!text) return;
           updateMessageById(streamingMessage.id, (message) => {
-            const metaRecord: Record<string, unknown> = (message.meta && typeof message.meta === "object" && !Array.isArray(message.meta))
-              ? { ...(message.meta as Record<string, unknown>) }
-              : { kind: "runtime_stream", streaming: true };
-            const rawSentences = Array.isArray(metaRecord["sentences"]) ? (metaRecord["sentences"] as unknown[]) : [];
+            const metaRecord = buildRuntimeStreamMeta(message.meta, {
+              streaming: true,
+              status: "streaming",
+            });
+            const rawSentences = Array.isArray(metaRecord.sentences) ? metaRecord.sentences : [];
             const sentences = rawSentences.map((item) => String(item || "").trim()).filter(Boolean);
             if (!sentences.includes(text)) {
               sentences.push(text);
             }
-            metaRecord["sentences"] = sentences;
             return {
               ...message,
-              meta: metaRecord,
+              meta: buildRuntimeStreamMeta(metaRecord, { sentences }),
             };
-          });
+          }, true);
           return;
         }
         if (event.type === "error") {
@@ -2894,7 +3556,7 @@ function createToonflowStore() {
         throw new Error("台词流未正常结束");
       }
     } catch (error) {
-      updateMessageById(streamingMessage.id, () => null);
+      updateMessageById(streamingMessage.id, () => null, true);
       throw error;
     }
   }
@@ -2918,6 +3580,7 @@ function createToonflowStore() {
     state.debugWorldIntro = state.worldIntro || "";
     state.debugRuntimeState = {};
     state.messages = [];
+    syncRuntimeChatTrace();
     state.sessionDetail = null;
     state.activeTab = "play";
     state.notice = "进入调试中...";
@@ -2985,6 +3648,9 @@ function createToonflowStore() {
     try {
       await performStartDebugCurrentChapter();
     } catch (error) {
+      if (isBenignRuntimeCancellation(error)) {
+        return;
+      }
       showRuntimeRetryMessage(
         `进入调试失败：${asUiErrorMessage(error)}`,
         createRuntimeRetryRunner(performStartDebugCurrentChapter, {
@@ -3011,9 +3677,9 @@ function createToonflowStore() {
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
       if (result.plan) {
-        await streamDebugPlan(result.plan, history);
+        await streamDebugPlanOrFallback(result.plan, history);
       }
-      const canPlayerSpeak = (state.debugRuntimeState as Record<string, any>)?.turnState?.canPlayerSpeak !== false;
+      const canPlayerSpeak = debugCanPlayerSpeakFromState();
       if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak) {
         advanced = true;
         break;
@@ -3030,6 +3696,9 @@ function createToonflowStore() {
       await performContinueDebugNarrative();
       return true;
     } catch (error) {
+      if (isBenignRuntimeCancellation(error)) {
+        return false;
+      }
       showRuntimeRetryMessage(
         `继续调试失败：${asUiErrorMessage(error)}`,
         createRuntimeRetryRunner(performContinueDebugNarrative, {
@@ -3054,8 +3723,10 @@ function createToonflowStore() {
           createTime: now,
         },
       ];
+      syncRuntimeChatTrace();
       state.sendText = "";
     }
+    applyLocalDebugPlayerProfile(content);
     const history = conversationMessages();
     const result = await api.orchestrateDebug({
       worldId: state.worldId,
@@ -3068,7 +3739,7 @@ function createToonflowStore() {
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
     if (result.plan) {
-      await streamDebugPlan(result.plan, conversationMessages(), content);
+      await streamDebugPlanOrFallback(result.plan, conversationMessages(), content);
     }
   }
 
@@ -3097,6 +3768,16 @@ function createToonflowStore() {
       }
       await performSessionPlayerMessage(content);
     } catch (error) {
+      const rawMessage = asUiErrorMessage(error);
+      if (!state.debugMode && (rawMessage.includes("当前还没轮到用户发言") || rawMessage.includes("409"))) {
+        state.notice = rawMessage;
+        try {
+          await refreshCurrentSession();
+        } catch {
+          // Ignore follow-up refresh failures after a 409 turn conflict.
+        }
+        return;
+      }
       const message = `发送失败：${asUiErrorMessage(error)}`;
       const retryTask = state.debugMode
         ? createRuntimeRetryRunner(() => performDebugPlayerMessage(content, false), {
@@ -3107,6 +3788,37 @@ function createToonflowStore() {
         });
       showRuntimeRetryMessage(message, retryTask);
     }
+  }
+
+  async function deleteMessage(message: MessageItem) {
+    const messageId = Number(message.id || 0);
+    if (!Number.isFinite(messageId) || messageId <= 0) {
+      throw new Error("消息不存在");
+    }
+    const latest = conversationMessages().slice(-1)[0] || null;
+    if (!latest || Number(latest.id || 0) !== messageId) {
+      throw new Error("当前只支持删除最后一条台词");
+    }
+    if (String(message.roleType || "").trim() !== "player") {
+      throw new Error("当前只支持删除最后一条玩家台词");
+    }
+
+    if (state.debugMode) {
+      state.messages = state.messages.filter((item) => Number(item.id || 0) !== messageId);
+      delete state.messageReactions[String(messageId)];
+      restoreDebugPlayerTurnAfterDeletion();
+      syncRuntimeChatTrace();
+      state.notice = "已删除上一句玩家台词";
+      return;
+    }
+
+    if (!state.currentSessionId) {
+      throw new Error("当前没有可删除的会话");
+    }
+    await api.deleteMessage(state.currentSessionId, messageId);
+    delete state.messageReactions[String(messageId)];
+    await refreshCurrentSession();
+    state.notice = "已删除上一句玩家台词";
   }
 
   function copyMessageText(text: string) {
@@ -3166,17 +3878,21 @@ function createToonflowStore() {
     primeStoryEditorPersistState,
     selectChapter,
     startFromWorld,
+    continueSessionForWorld,
     quickStart,
     openSession,
+    deleteSession,
     refreshCurrentSession,
     startDebugCurrentChapter,
     continueDebugNarrative,
+    setRuntimeMessageStatus,
     retryRuntimeFailure,
     advanceDebugChapterIfNeeded,
     jumpDebugChapter,
     getDebugChapterIndex,
     syncDebugChapter,
     sendMessage,
+    deleteMessage,
     copyMessageText,
     reactMessage,
     fetchVoiceModels,
@@ -3206,6 +3922,7 @@ function createToonflowStore() {
     transcribeRuntimeVoice,
     applyImageToTarget,
     updateAvatarFromFile,
+    updateAvatarFromMp4,
     isAvatarProcessing,
     updateCoverFromFile,
     updateChapterBackgroundFromFile,
@@ -3225,6 +3942,7 @@ function createToonflowStore() {
     worldsForSelectedProject,
     publishedWorldsForSelectedProject,
     draftWorldsForSelectedProject,
+    canEditWorld,
     recommendedWorld,
     filteredHallWorlds,
     mentionRoleNames,

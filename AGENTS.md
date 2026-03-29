@@ -29,5 +29,8 @@ Do not edit `review_xxx.md`; add or update matching `review_xxx.answer.md` files
 
 # web端和安卓端同步修改
 
+# 设计要点
+按钮多用奥森字体图标而不是文字
+
 # wsl test
 [test_wsl.md](md/wsl/test_wsl.md)

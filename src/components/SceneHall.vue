@@ -35,7 +35,7 @@ const list = computed(() => store.filteredHallWorlds());
           <div class="hall-card-meta">章节 {{ world.chapterCount || 0 }} · 会话 {{ world.sessionCount || 0 }}</div>
           <div class="hall-card-actions">
             <button class="hall-action-btn hall-action-btn--primary" type="button" @click="store.startFromWorld(world)">游玩</button>
-            <button class="hall-action-btn" type="button" @click="store.openWorldForEdit(world)">编辑</button>
+            <button v-if="store.canEditWorld(world)" class="hall-action-btn" type="button" @click="store.openWorldForEdit(world)">编辑</button>
           </div>
         </div>
       </article>

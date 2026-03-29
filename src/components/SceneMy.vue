@@ -25,6 +25,7 @@ const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => s
 const followCount = computed(() => (visiblePublished.value.length ? 1 : 0));
 const fanCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.chapterCount || 0), 0));
 const avatarInput = ref<HTMLInputElement | null>(null);
+const avatarVideoInput = ref<HTMLInputElement | null>(null);
 const showAvatarActionDialog = ref(false);
 const accountImageDialogOpen = ref(false);
 const showDraftListPage = ref(false);
@@ -48,6 +49,19 @@ async function onAvatarFile(e: Event) {
   input.value = "";
 }
 
+async function onAvatarVideoFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    try {
+      await store.updateAvatarFromMp4("account", file);
+    } catch (err) {
+      store.state.notice = `头像动图转换失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
+  }
+  input.value = "";
+}
+
 function openAvatarActionDialog() {
   showAvatarActionDialog.value = true;
 }
@@ -59,6 +73,11 @@ function closeAvatarActionDialog() {
 function triggerAvatarUpload() {
   closeAvatarActionDialog();
   avatarInput.value?.click();
+}
+
+function triggerAvatarVideoUpload() {
+  closeAvatarActionDialog();
+  avatarVideoInput.value?.click();
 }
 
 function openAccountImageDialog() {
@@ -173,6 +192,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         <div class="badge">+</div>
       </button>
       <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatarFile" />
+      <input ref="avatarVideoInput" type="file" accept="video/mp4" hidden @change="onAvatarVideoFile" />
       <div class="my-profile-meta">
         <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>
         <div class="subtle">用户ID：{{ store.state.userId || 0 }}</div>
@@ -234,12 +254,11 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
             variant="plain"
           />
         </button>
-        <div class="my-work-body">
+        <div class="my-work-body my-work-body--compact">
           <div class="my-work-row">
-            <h3>{{ `${world.name || "未命名故事"} · 浏览 ${world.sessionCount || 0}` }}</h3>
+            <h3 :title="world.name || '未命名故事'">{{ world.name || "未命名故事" }}</h3>
             <span class="my-work-status published">已发布</span>
           </div>
-          <p>{{ world.intro || "发布后会在这里展示" }}</p>
           <div class="my-work-actions one">
             <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(world)">编辑</button>
           </div>
@@ -248,12 +267,11 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
 
       <article v-if="!visiblePublished.length" class="my-work-card my-summary-card my-published-entry-card placeholder">
         <div class="my-empty-card">暂无已发布故事</div>
-        <div class="my-work-body">
+        <div class="my-work-body my-work-body--compact">
           <div class="my-work-row">
-            <h3>暂无已发布故事</h3>
+            <h3 title="暂无已发布故事">暂无已发布故事</h3>
             <span class="my-work-status published">已发布</span>
           </div>
-          <p>发布后会在这里展示</p>
         </div>
       </article>
     </div>
@@ -337,9 +355,13 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
       <div class="modal-body">
         <div class="dialog-stack">
           <button class="button block" type="button" @click="triggerAvatarUpload">上传图片（支持 PNG / GIF）</button>
+          <button class="button block button-gif-upload" type="button" @click="triggerAvatarVideoUpload">
+            <span class="button-gif-upload__glyph">GIF</span>
+            <span>上传 MP4</span>
+          </button>
           <button class="button primary block" type="button" @click="openAccountImageDialog">AI 生成图片</button>
           <div class="subtle">
-            不选参考图就是文生图；选了参考图就是图生图。角色头像会标准化并立即刷新；封面和背景图会按场景比例保存。
+            角色头像支持 PNG / GIF / MP4；上传 MP4 后会自动转成 GIF 主体图和静态背景图。
           </div>
         </div>
       </div>

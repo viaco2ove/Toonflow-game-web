@@ -12,6 +12,11 @@ type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
 type AvatarPreviewTarget = "user" | "npc";
 type AvatarPreviewMode = "composed" | "foreground" | "background";
+type ChapterTabItem = {
+  id: number | null;
+  label: string;
+  draft: boolean;
+};
 
 const store = useToonflowStore();
 const showAdvanced = ref(false);
@@ -29,7 +34,9 @@ const storyCoverInput = ref<HTMLInputElement | null>(null);
 const chapterBgInput = ref<HTMLInputElement | null>(null);
 const chapterMusicInput = ref<HTMLInputElement | null>(null);
 const userAvatarInput = ref<HTMLInputElement | null>(null);
+const userAvatarVideoInput = ref<HTMLInputElement | null>(null);
 const npcAvatarInputs = ref<Record<number, HTMLInputElement | null>>({});
+const npcAvatarVideoInputs = ref<Record<number, HTMLInputElement | null>>({});
 const globalBackgroundInput = ref<HTMLTextAreaElement | null>(null);
 const chapterContentInput = ref<HTMLTextAreaElement | null>(null);
 const imageDialogTarget = ref<ImageTarget | null>(null);
@@ -46,6 +53,30 @@ const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
 const mentionRoles = computed(() => store.mentionRoleNames());
 const chapterUsed = computed(() => (store.state.chapterContent || "").length);
 const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
+const currentEditorChapterSort = computed(() => {
+  if (store.state.selectedChapterId) {
+    return Number(store.state.chapters.find((item) => item.id === store.state.selectedChapterId)?.sort || 1);
+  }
+  return Math.max(1, ...store.state.chapters.map((item) => Number(item.sort || 0))) + (store.state.chapters.length ? 1 : 0);
+});
+const showChapterOpeningEditor = computed(() => currentEditorChapterSort.value <= 1);
+const chapterTabs = computed<ChapterTabItem[]>(() => {
+  const tabs = [...store.state.chapters]
+    .sort((a, b) => Number(a.sort || 0) - Number(b.sort || 0))
+    .map((chapter) => ({
+      id: chapter.id,
+      label: chapter.title || `第 ${chapter.sort || 1} 章`,
+      draft: false,
+    }));
+  if (store.state.selectedChapterId === null && store.state.chapters.length > 0) {
+    tabs.push({
+      id: null,
+      label: `${store.state.chapterTitle || `第 ${currentEditorChapterSort.value} 章`}（草稿）`,
+      draft: true,
+    });
+  }
+  return tabs;
+});
 const currentNpcRole = computed<StoryRole | null>(() => {
   const index = editingNpcIndex.value;
   if (typeof index !== "number") return null;
@@ -324,9 +355,19 @@ function triggerUserAvatarUpload() {
   userAvatarInput.value?.click();
 }
 
+function triggerUserAvatarVideoUpload() {
+  userAvatarVideoInput.value?.click();
+}
+
 function triggerNpcAvatarUpload(index: number | null) {
   if (typeof index === "number") {
     npcAvatarInputs.value[index]?.click();
+  }
+}
+
+function triggerNpcAvatarVideoUpload(index: number | null) {
+  if (typeof index === "number") {
+    npcAvatarVideoInputs.value[index]?.click();
   }
 }
 
@@ -338,6 +379,16 @@ function handleImageSourceUpload() {
   if (target === "chapter") chapterBgInput.value?.click();
   if (target === "npc" && typeof imageSourceNpcIndex.value === "number") {
     npcAvatarInputs.value[imageSourceNpcIndex.value]?.click();
+  }
+  closeImageSource();
+}
+
+function handleImageSourceGifUpload() {
+  const target = imageSourceTarget.value;
+  if (!target) return;
+  if (target === "user") userAvatarVideoInput.value?.click();
+  if (target === "npc" && typeof imageSourceNpcIndex.value === "number") {
+    npcAvatarVideoInputs.value[imageSourceNpcIndex.value]?.click();
   }
   closeImageSource();
 }
@@ -358,6 +409,20 @@ async function onUserAvatarFile(e: Event) {
       store.scheduleStoryEditorAutoPersist(120);
     } catch (err) {
       store.state.notice = `头像分离失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
+  }
+  input.value = "";
+}
+
+async function onUserAvatarVideoFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    try {
+      await store.updateAvatarFromMp4("user", file);
+      store.scheduleStoryEditorAutoPersist(120);
+    } catch (err) {
+      store.state.notice = `头像动图转换失败: ${err instanceof Error ? err.message : "未知错误"}`;
     }
   }
   input.value = "";
@@ -404,6 +469,20 @@ async function onNpcAvatarFile(index: number, e: Event) {
       store.scheduleStoryEditorAutoPersist(120);
     } catch (err) {
       store.state.notice = `头像分离失败: ${err instanceof Error ? err.message : "未知错误"}`;
+    }
+  }
+  input.value = "";
+}
+
+async function onNpcAvatarVideoFile(index: number, e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) {
+    try {
+      await store.updateAvatarFromMp4("npc", file, undefined, index);
+      store.scheduleStoryEditorAutoPersist(120);
+    } catch (err) {
+      store.state.notice = `头像动图转换失败: ${err instanceof Error ? err.message : "未知错误"}`;
     }
   }
   input.value = "";
@@ -696,7 +775,7 @@ function cancelRemoveCurrentNpc() {
         </div>
       </section>
 
-      <section class="create-section">
+      <section v-if="showChapterOpeningEditor" class="create-section">
         <div class="create-card create-card--compact">
           <div class="create-card-title">故事描述</div>
           <div class="field">
@@ -785,16 +864,16 @@ function cancelRemoveCurrentNpc() {
         <strong>＋</strong>
       </button>
 
-      <div v-if="store.state.chapters.length > 1" class="create-chapter-tabs">
+      <div v-if="chapterTabs.length > 1" class="create-chapter-tabs">
         <button
-          v-for="chapter in store.state.chapters"
-          :key="chapter.id"
+          v-for="chapter in chapterTabs"
+          :key="chapter.id === null ? 'draft' : chapter.id"
           class="create-chapter-pill"
           :class="{ active: store.state.selectedChapterId === chapter.id }"
           type="button"
-          @click="selectChapter(chapter.id)"
+          @click="chapter.id !== null ? selectChapter(chapter.id) : undefined"
         >
-          {{ chapter.title || `章节 ${chapter.sort || 0}` }}
+          {{ chapter.label }}
         </button>
       </div>
 
@@ -834,6 +913,7 @@ function cancelRemoveCurrentNpc() {
     <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
     <input ref="chapterMusicInput" type="file" accept="audio/*" hidden @change="onChapterMusicFile" />
     <input ref="userAvatarInput" type="file" accept="image/*" hidden @change="onUserAvatarFile" />
+    <input ref="userAvatarVideoInput" type="file" accept="video/mp4" hidden @change="onUserAvatarVideoFile" />
 
     <div v-if="showUserEditor" class="modal-backdrop">
       <div class="modal-panel fullscreen create-editor-panel">
@@ -861,12 +941,13 @@ function cancelRemoveCurrentNpc() {
               </div>
               <div class="create-editor-avatar-copy">
                 <strong>{{ userAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
-                <span>支持 PNG / GIF，保存时会自动标准化。</span>
-                <span>可选：上传、AI 生图、图标查看大图。</span>
+                <span>支持 PNG / GIF / MP4，保存时会自动标准化。</span>
+                <span>可选：上传、GIF、AI 生图、图标查看大图。</span>
               </div>
             </button>
             <div class="create-editor-avatar-actions">
               <button class="create-editor-avatar-btn" type="button" :disabled="userAvatarProcessing" @click="triggerUserAvatarUpload">上传</button>
+              <button class="create-editor-avatar-btn create-editor-avatar-btn--gif" type="button" :disabled="userAvatarProcessing" title="上传 MP4 转 GIF" @click="triggerUserAvatarVideoUpload">GIF</button>
               <button class="create-editor-avatar-btn" type="button" :disabled="userAvatarProcessing" @click="openImageDialog('user')">AI 生图</button>
               <button
                 class="create-editor-avatar-btn create-editor-avatar-btn--icon"
@@ -927,12 +1008,13 @@ function cancelRemoveCurrentNpc() {
               </div>
               <div class="create-editor-avatar-copy">
                 <strong>{{ currentNpcAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
-                <span>支持 PNG / GIF，保存时会自动标准化。</span>
-                <span>可选：上传、AI 生图、图标查看大图。</span>
+                <span>支持 PNG / GIF / MP4，保存时会自动标准化。</span>
+                <span>可选：上传、GIF、AI 生图、图标查看大图。</span>
               </div>
             </button>
             <div class="create-editor-avatar-actions">
               <button class="create-editor-avatar-btn" type="button" :disabled="currentNpcAvatarProcessing" @click="triggerNpcAvatarUpload(editingNpcIndex)">上传</button>
+              <button class="create-editor-avatar-btn create-editor-avatar-btn--gif" type="button" :disabled="currentNpcAvatarProcessing" title="上传 MP4 转 GIF" @click="triggerNpcAvatarVideoUpload(editingNpcIndex)">GIF</button>
               <button class="create-editor-avatar-btn" type="button" :disabled="currentNpcAvatarProcessing" @click="openImageDialog('npc', editingNpcIndex)">AI 生图</button>
               <button
                 class="create-editor-avatar-btn create-editor-avatar-btn--icon"
@@ -949,13 +1031,14 @@ function cancelRemoveCurrentNpc() {
               </button>
             </div>
             <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="image/*" hidden @change="editingNpcIndex !== null ? onNpcAvatarFile(editingNpcIndex, $event) : undefined" />
+            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarVideoInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="video/mp4" hidden @change="editingNpcIndex !== null ? onNpcAvatarVideoFile(editingNpcIndex, $event) : undefined" />
           </div>
           <div class="field">
             <label>角色名</label>
             <input v-model="currentNpcRole.name" class="input" type="text" placeholder="角色名" />
           </div>
           <div class="field">
-            <label>角色设定</label>
+            <label>角色设定(性别,年龄,性格,外貌,音色特点,技能,物品,装备,等级,血量,蓝量,金钱,其他)</label>
             <textarea v-model="currentNpcRole.description" class="textarea" rows="5" placeholder="角色设定"></textarea>
           </div>
           <div class="field">
@@ -994,6 +1077,15 @@ function cancelRemoveCurrentNpc() {
         <div class="modal-header">选择图片来源</div>
         <div class="dialog-stack">
           <button class="image-source-action-btn" type="button" @click="handleImageSourceUpload">上传图片</button>
+          <button
+            v-if="imageSourceTarget === 'user' || imageSourceTarget === 'npc'"
+            class="image-source-action-btn image-source-action-btn--gif"
+            type="button"
+            @click="handleImageSourceGifUpload"
+          >
+            <span class="image-source-action-btn-glyph">GIF</span>
+            <span>上传 MP4</span>
+          </button>
           <button class="image-source-action-btn" type="button" @click="handleImageSourceAi">AI 生图</button>
           <button class="image-source-action-btn image-source-action-btn--ghost" type="button" @click="closeImageSource">取消</button>
         </div>
