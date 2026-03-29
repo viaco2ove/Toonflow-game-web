@@ -3,8 +3,10 @@ import type {
   ApiEnvelope,
   AiModelMapItem,
   ChapterItem,
+  DebugOrchestrationResult,
   DebugStepResult,
   GeneratedImageResult,
+  LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
@@ -16,6 +18,7 @@ import type {
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
+  StreamLinesEvent,
   VoiceBindingDraft,
   VoiceModelConfig,
   VoicePresetItem,
@@ -180,6 +183,58 @@ export class ToonflowApi {
     return this.post<DebugStepResult>("/game/debugStep", payload);
   }
 
+  orchestrateDebug(payload: Record<string, unknown>) {
+    return this.post<DebugOrchestrationResult>("/game/orchestration", payload);
+  }
+
+  async streamDebugLines(
+    payload: Record<string, unknown>,
+    onEvent: (event: StreamLinesEvent) => void | Promise<void>,
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const authHeaders = this.headers();
+    if (authHeaders.Authorization) {
+      headers.Authorization = authHeaders.Authorization;
+    }
+    const response = await fetch(this.url("/game/streamlines"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload || {}),
+    });
+    if (!response.ok || !response.body) {
+      let message = `HTTP ${response.status}`;
+      try {
+        message = (await response.text()) || message;
+      } catch {
+        // noop
+      }
+      throw new Error(message);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const text = line.trim();
+        if (!text) continue;
+        const event = JSON.parse(text) as StreamLinesEvent;
+        await onEvent(event);
+      }
+    }
+    const tail = buffer.trim();
+    if (tail) {
+      const event = JSON.parse(tail) as StreamLinesEvent;
+      await onEvent(event);
+    }
+  }
+
   generateImage(payload: Record<string, unknown>) {
     return this.post<GeneratedImageResult>("/game/generateImage", payload);
   }
@@ -198,6 +253,20 @@ export class ToonflowApi {
 
   getSeparateRoleAvatarTask(taskId: number) {
     return this.post<RoleAvatarTaskResult>("/game/separateRoleAvatar/status", { taskId });
+  }
+
+  getLocalAvatarMattingStatus(payload: {
+    manufacturer?: string;
+    model?: string;
+  }) {
+    return this.post<LocalAvatarMattingStatus>("/setting/localAvatarMatting/status", payload);
+  }
+
+  installLocalAvatarMatting(payload: {
+    manufacturer?: string;
+    model?: string;
+  }) {
+    return this.post<LocalAvatarMattingStatus>("/setting/localAvatarMatting/install", payload);
   }
 
   getVoiceModels() {
@@ -269,6 +338,10 @@ export class ToonflowApi {
 
   previewVoice(payload: Record<string, unknown>) {
     return this.post<{ audioUrl: string; data: unknown }>("/voice/preview", payload);
+  }
+
+  streamVoice(payload: Record<string, unknown>) {
+    return this.post<{ audioUrl: string; data: unknown }>("/game/streamvoice", payload);
   }
 
   transcribeVoice(payload: Record<string, unknown>) {

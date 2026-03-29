@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
 import ImageGenerateDialog from "./ImageGenerateDialog.vue";
+import LayeredAvatar from "./LayeredAvatar.vue";
 import StoryCover from "./StoryCover.vue";
 import VoiceBindingDialog from "./VoiceBindingDialog.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
@@ -9,6 +10,8 @@ import { imageStyleForKey } from "../utils/imageStyles";
 
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
+type AvatarPreviewTarget = "user" | "npc";
+type AvatarPreviewMode = "composed" | "foreground" | "background";
 
 const store = useToonflowStore();
 const showAdvanced = ref(false);
@@ -18,6 +21,9 @@ const editingNpcIndex = ref<number | null>(null);
 const showImageSourceDialog = ref(false);
 const imageSourceTarget = ref<ImageTarget | null>(null);
 const imageSourceNpcIndex = ref<number | null>(null);
+const avatarPreviewTarget = ref<AvatarPreviewTarget | null>(null);
+const avatarPreviewNpcIndex = ref<number | null>(null);
+const avatarPreviewMode = ref<AvatarPreviewMode>("composed");
 
 const storyCoverInput = ref<HTMLInputElement | null>(null);
 const chapterBgInput = ref<HTMLInputElement | null>(null);
@@ -50,6 +56,46 @@ const currentNpcAvatarProcessing = computed(() => {
   const index = editingNpcIndex.value;
   return typeof index === "number" && index >= 0 ? store.isAvatarProcessing("npc", index) : false;
 });
+const hasUserAvatarPreview = computed(() =>
+  !!String(store.state.userAvatarPath || store.state.userAvatarBgPath || "").trim(),
+);
+const hasCurrentNpcAvatarPreview = computed(() =>
+  !!String(currentNpcRole.value?.avatarPath || currentNpcRole.value?.avatarBgPath || "").trim(),
+);
+const avatarPreviewState = computed(() => {
+  if (avatarPreviewTarget.value === "user") {
+    return {
+      title: store.state.playerName || "用户头像",
+      foregroundPath: store.resolveMediaPath(store.state.userAvatarPath),
+      backgroundPath: store.resolveMediaPath(store.state.userAvatarBgPath),
+      fallbackText: (store.state.playerName || "用户").slice(0, 1) || "用",
+    };
+  }
+  if (avatarPreviewTarget.value === "npc") {
+    const role = typeof avatarPreviewNpcIndex.value === "number" ? store.state.npcRoles[avatarPreviewNpcIndex.value] : null;
+    return {
+      title: role?.name || "角色头像",
+      foregroundPath: store.resolveMediaPath(role?.avatarPath || ""),
+      backgroundPath: store.resolveMediaPath(role?.avatarBgPath || ""),
+      fallbackText: role?.name?.slice(0, 1) || "角",
+    };
+  }
+  return null;
+});
+const avatarPreviewHasForeground = computed(() => !!String(avatarPreviewState.value?.foregroundPath || "").trim());
+const avatarPreviewHasBackground = computed(() => !!String(avatarPreviewState.value?.backgroundPath || "").trim());
+
+function resolveInitialAvatarPreviewMode(target: AvatarPreviewTarget, index: number | null): AvatarPreviewMode {
+  const foregroundPath = target === "user"
+    ? store.resolveMediaPath(store.state.userAvatarPath)
+    : store.resolveMediaPath((typeof index === "number" ? store.state.npcRoles[index]?.avatarPath : "") || "");
+  const backgroundPath = target === "user"
+    ? store.resolveMediaPath(store.state.userAvatarBgPath)
+    : store.resolveMediaPath((typeof index === "number" ? store.state.npcRoles[index]?.avatarBgPath : "") || "");
+  if (String(foregroundPath || "").trim() && String(backgroundPath || "").trim()) return "composed";
+  if (String(foregroundPath || "").trim()) return "foreground";
+  return "background";
+}
 
 function displayMediaName(input: string, fallback: string) {
   const raw = String(input || "").trim();
@@ -260,6 +306,28 @@ function closeImageSource() {
   showImageSourceDialog.value = false;
   imageSourceTarget.value = null;
   imageSourceNpcIndex.value = null;
+}
+
+function openAvatarPreview(target: AvatarPreviewTarget, index: number | null = null) {
+  avatarPreviewTarget.value = target;
+  avatarPreviewNpcIndex.value = index;
+  avatarPreviewMode.value = resolveInitialAvatarPreviewMode(target, index);
+}
+
+function closeAvatarPreview() {
+  avatarPreviewTarget.value = null;
+  avatarPreviewNpcIndex.value = null;
+  avatarPreviewMode.value = "composed";
+}
+
+function triggerUserAvatarUpload() {
+  userAvatarInput.value?.click();
+}
+
+function triggerNpcAvatarUpload(index: number | null) {
+  if (typeof index === "number") {
+    npcAvatarInputs.value[index]?.click();
+  }
 }
 
 function handleImageSourceUpload() {
@@ -568,10 +636,15 @@ function cancelRemoveCurrentNpc() {
           <div class="create-avatar-row">
             <button class="create-avatar-item" type="button" @click="openUserEditor">
               <div class="avatar create-role-avatar">
-                <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
-                <div v-else class="placeholder create-user-placeholder">
-                  <span class="create-user-glyph"></span>
-                </div>
+                <LayeredAvatar
+                  :foreground-path="store.resolveMediaPath(store.state.userAvatarPath)"
+                  :background-path="store.resolveMediaPath(store.state.userAvatarBgPath || store.state.userAvatarPath)"
+                  alt="用户头像"
+                >
+                  <div class="placeholder create-user-placeholder">
+                    <span class="create-user-glyph"></span>
+                  </div>
+                </LayeredAvatar>
                 <div class="badge">✎</div>
               </div>
               <span>用户</span>
@@ -584,8 +657,13 @@ function cancelRemoveCurrentNpc() {
               @click="openNpcEditor(index)"
             >
               <div class="avatar create-role-avatar">
-                <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" />
-                <div v-else class="placeholder">{{ role.name.slice(0, 1) || '角' }}</div>
+                <LayeredAvatar
+                  :foreground-path="store.resolveMediaPath(role.avatarPath || '')"
+                  :background-path="store.resolveMediaPath(role.avatarBgPath || '')"
+                  :alt="role.name || '角色头像'"
+                >
+                  <div class="placeholder">{{ role.name.slice(0, 1) || '角' }}</div>
+                </LayeredAvatar>
                 <div class="badge">✎</div>
               </div>
               <span>{{ role.name || '新角色' }}</span>
@@ -768,10 +846,15 @@ function cancelRemoveCurrentNpc() {
             <label>头像（可上传 / AI 生成）</label>
             <button class="create-editor-avatar-row" type="button" :disabled="userAvatarProcessing" @click="openImageSource('user')">
               <div class="avatar create-editor-avatar create-editor-avatar--compact" :class="{ 'avatar--busy': userAvatarProcessing }">
-                <img v-if="store.state.userAvatarPath" :src="store.resolveMediaPath(store.state.userAvatarPath)" />
-                <div v-else class="placeholder">
-                  <span class="create-user-glyph"></span>
-                </div>
+                <LayeredAvatar
+                  :foreground-path="store.resolveMediaPath(store.state.userAvatarPath)"
+                  :background-path="store.resolveMediaPath(store.state.userAvatarBgPath)"
+                  alt="用户头像"
+                >
+                  <div class="placeholder">
+                    <span class="create-user-glyph"></span>
+                  </div>
+                </LayeredAvatar>
                 <div v-if="userAvatarProcessing" class="avatar-processing-mask">
                   <span class="avatar-processing-spinner"></span>
                 </div>
@@ -779,9 +862,26 @@ function cancelRemoveCurrentNpc() {
               <div class="create-editor-avatar-copy">
                 <strong>{{ userAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF，保存时会自动标准化。</span>
-                <span>可选：上传、AI 生图。</span>
+                <span>可选：上传、AI 生图、图标查看大图。</span>
               </div>
             </button>
+            <div class="create-editor-avatar-actions">
+              <button class="create-editor-avatar-btn" type="button" :disabled="userAvatarProcessing" @click="triggerUserAvatarUpload">上传</button>
+              <button class="create-editor-avatar-btn" type="button" :disabled="userAvatarProcessing" @click="openImageDialog('user')">AI 生图</button>
+              <button
+                class="create-editor-avatar-btn create-editor-avatar-btn--icon"
+                type="button"
+                :disabled="!hasUserAvatarPreview"
+                aria-label="查看头像大图"
+                title="查看头像大图"
+                @click="openAvatarPreview('user')"
+              >
+                <svg class="create-editor-avatar-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M1.8 12s3.7-6.4 10.2-6.4S22.2 12 22.2 12s-3.7 6.4-10.2 6.4S1.8 12 1.8 12Z" />
+                  <circle cx="12" cy="12" r="3.2" />
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="field">
             <label>角色名（选填）</label>
@@ -814,8 +914,13 @@ function cancelRemoveCurrentNpc() {
             <label>头像</label>
             <button class="create-editor-avatar-row" type="button" :disabled="currentNpcAvatarProcessing" @click="openImageSource('npc', editingNpcIndex)">
               <div class="avatar create-editor-avatar create-editor-avatar--compact" :class="{ 'avatar--busy': currentNpcAvatarProcessing }">
-                <img v-if="currentNpcRole.avatarPath" :src="store.resolveMediaPath(currentNpcRole.avatarPath)" />
-                <div v-else class="placeholder">{{ currentNpcRole.name?.slice(0, 1) || '角' }}</div>
+                <LayeredAvatar
+                  :foreground-path="store.resolveMediaPath(currentNpcRole.avatarPath || '')"
+                  :background-path="store.resolveMediaPath(currentNpcRole.avatarBgPath || '')"
+                  :alt="currentNpcRole.name || '角色头像'"
+                >
+                  <div class="placeholder">{{ currentNpcRole.name?.slice(0, 1) || '角' }}</div>
+                </LayeredAvatar>
                 <div v-if="currentNpcAvatarProcessing" class="avatar-processing-mask">
                   <span class="avatar-processing-spinner"></span>
                 </div>
@@ -823,9 +928,26 @@ function cancelRemoveCurrentNpc() {
               <div class="create-editor-avatar-copy">
                 <strong>{{ currentNpcAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF，保存时会自动标准化。</span>
-                <span>可选：上传、AI 生图。</span>
+                <span>可选：上传、AI 生图、图标查看大图。</span>
               </div>
             </button>
+            <div class="create-editor-avatar-actions">
+              <button class="create-editor-avatar-btn" type="button" :disabled="currentNpcAvatarProcessing" @click="triggerNpcAvatarUpload(editingNpcIndex)">上传</button>
+              <button class="create-editor-avatar-btn" type="button" :disabled="currentNpcAvatarProcessing" @click="openImageDialog('npc', editingNpcIndex)">AI 生图</button>
+              <button
+                class="create-editor-avatar-btn create-editor-avatar-btn--icon"
+                type="button"
+                :disabled="!hasCurrentNpcAvatarPreview"
+                aria-label="查看头像大图"
+                title="查看头像大图"
+                @click="openAvatarPreview('npc', editingNpcIndex)"
+              >
+                <svg class="create-editor-avatar-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M1.8 12s3.7-6.4 10.2-6.4S22.2 12 22.2 12s-3.7 6.4-10.2 6.4S1.8 12 1.8 12Z" />
+                  <circle cx="12" cy="12" r="3.2" />
+                </svg>
+              </button>
+            </div>
             <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="image/*" hidden @change="editingNpcIndex !== null ? onNpcAvatarFile(editingNpcIndex, $event) : undefined" />
           </div>
           <div class="field">
@@ -874,6 +996,78 @@ function cancelRemoveCurrentNpc() {
           <button class="image-source-action-btn" type="button" @click="handleImageSourceUpload">上传图片</button>
           <button class="image-source-action-btn" type="button" @click="handleImageSourceAi">AI 生图</button>
           <button class="image-source-action-btn image-source-action-btn--ghost" type="button" @click="closeImageSource">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="avatarPreviewTarget && avatarPreviewState" class="modal-backdrop create-avatar-preview-backdrop" @click.self="closeAvatarPreview">
+      <div class="modal-panel create-avatar-preview-panel">
+        <div class="modal-header">
+          <div style="font-weight:900;">查看头像</div>
+          <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="closeAvatarPreview">×</button>
+        </div>
+        <div class="modal-body create-avatar-preview-body">
+          <div class="create-avatar-preview-title">{{ avatarPreviewState.title }}</div>
+          <div class="create-avatar-preview-toolbar">
+            <button
+              class="chip"
+              :class="{ active: avatarPreviewMode === 'composed' }"
+              type="button"
+              :disabled="!avatarPreviewHasForeground && !avatarPreviewHasBackground"
+              @click="avatarPreviewMode = 'composed'"
+            >
+              合成
+            </button>
+            <button
+              class="chip"
+              :class="{ active: avatarPreviewMode === 'foreground' }"
+              type="button"
+              :disabled="!avatarPreviewHasForeground"
+              @click="avatarPreviewMode = 'foreground'"
+            >
+              仅主体
+            </button>
+            <button
+              class="chip"
+              :class="{ active: avatarPreviewMode === 'background' }"
+              type="button"
+              :disabled="!avatarPreviewHasBackground"
+              @click="avatarPreviewMode = 'background'"
+            >
+              仅背景
+            </button>
+          </div>
+          <div class="create-avatar-preview-stage">
+            <div
+              class="create-avatar-preview-art"
+              :class="avatarPreviewMode === 'composed' ? 'create-avatar-preview-art--scene' : 'create-avatar-preview-art--checker'"
+            >
+              <LayeredAvatar
+                v-if="avatarPreviewMode === 'composed'"
+                :foreground-path="avatarPreviewState.foregroundPath"
+                :background-path="avatarPreviewState.backgroundPath"
+                :alt="avatarPreviewState.title"
+              >
+                <div class="placeholder">{{ avatarPreviewState.fallbackText }}</div>
+              </LayeredAvatar>
+              <img
+                v-else-if="avatarPreviewMode === 'foreground' && avatarPreviewState.foregroundPath"
+                class="create-avatar-preview-image create-avatar-preview-image--foreground"
+                :src="avatarPreviewState.foregroundPath"
+                :alt="`${avatarPreviewState.title} 主体图`"
+              />
+              <img
+                v-else-if="avatarPreviewMode === 'background' && avatarPreviewState.backgroundPath"
+                class="create-avatar-preview-image create-avatar-preview-image--background"
+                :src="avatarPreviewState.backgroundPath"
+                :alt="`${avatarPreviewState.title} 背景图`"
+              />
+              <div v-else class="placeholder">{{ avatarPreviewState.fallbackText }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button settings-outline-btn" type="button" @click="closeAvatarPreview">关闭</button>
         </div>
       </div>
     </div>

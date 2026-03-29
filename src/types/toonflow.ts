@@ -177,6 +177,33 @@ export interface DebugStepResult {
   messages?: MessageItem[];
 }
 
+export interface DebugNarrativePlan {
+  role?: string;
+  roleType?: string;
+  motive?: string;
+  awaitUser?: boolean;
+  nextRole?: string;
+  nextRoleType?: string;
+  chapterOutcome?: "continue" | "success" | "failed";
+  nextChapterId?: number | null;
+  source?: "ai" | "fallback";
+  eventType?: string;
+  presetContent?: string | null;
+}
+
+export interface DebugOrchestrationResult {
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  endDialog?: string | null;
+  plan?: DebugNarrativePlan | null;
+}
+
+export interface StreamLinesEvent {
+  type: "start" | "delta" | "sentence" | "done" | "error";
+  data?: Record<string, unknown> | null;
+}
+
 export interface GeneratedImageResult {
   path?: string;
   filePath?: string;
@@ -250,6 +277,15 @@ export interface ModelConfigPayload {
 export interface ModelTestResult {
   kind: "text" | "image" | "audio";
   content: string;
+}
+
+export interface LocalAvatarMattingStatus {
+  manufacturer: string;
+  model: string;
+  status: "not_installed" | "installing" | "installed" | "failed";
+  installed: boolean;
+  canInstall: boolean;
+  message: string;
 }
 
 export interface AiModelMapItem {

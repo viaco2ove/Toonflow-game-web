@@ -5,6 +5,8 @@ import {
   AppTab,
   ChapterExtra,
   ChapterItem,
+  DebugNarrativePlan,
+  LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
@@ -30,10 +32,17 @@ import { manufacturerLabel } from "../utils/modelConfigCatalog";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
+const RUNTIME_STREAM_EVENT = "on_streaming_reply";
 
 type RuntimeRetryTask = {
   token: string;
   run: () => Promise<void>;
+};
+
+type RuntimeStreamMeta = {
+  kind: "runtime_stream";
+  streaming: boolean;
+  sentences?: string[];
 };
 
 function storageGet(key: string, fallback = ""): string {
@@ -247,8 +256,18 @@ function isRuntimeRetryMeta(input: unknown): input is RuntimeRetryMessageMeta {
   return meta.kind === "runtime_retry" && typeof meta.token === "string";
 }
 
+function isRuntimeStreamMeta(input: unknown): input is RuntimeStreamMeta {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return false;
+  const meta = input as Record<string, unknown>;
+  return meta.kind === "runtime_stream" && typeof meta.streaming === "boolean";
+}
+
 function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
   return Boolean(message && message.eventType === RUNTIME_RETRY_EVENT && isRuntimeRetryMeta(message.meta));
+}
+
+function isStreamingRuntimeMessage(message: MessageItem | null | undefined): boolean {
+  return Boolean(message && isRuntimeStreamMeta(message.meta) && message.meta.streaming);
 }
 
 function stripRuntimeRetryMessages(messages: MessageItem[]): MessageItem[] {
@@ -546,6 +565,7 @@ const GAME_MODEL_SLOTS = [
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
+  { key: "storyAvatarMattingModel", label: "头像分离", configType: "image" },
   { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
   { key: "storyVoiceModel", label: "语音生成", configType: "voice" },
   { key: "storyAsrModel", label: "语音识别", configType: "voice" },
@@ -671,6 +691,36 @@ function createToonflowStore() {
     return stripRuntimeRetryMessages(state.messages);
   }
 
+  function updateMessageById(messageId: number, updater: (message: MessageItem) => MessageItem | null) {
+    const index = state.messages.findIndex((item) => item.id === messageId);
+    if (index < 0) return;
+    const current = state.messages[index];
+    const next = updater(current);
+    if (!next) {
+      state.messages.splice(index, 1);
+      return;
+    }
+    Object.assign(current, next);
+    state.messages.splice(index, 1, current);
+  }
+
+  function createStreamingMessage(plan: DebugNarrativePlan): MessageItem {
+    const now = Date.now();
+    return {
+      id: now,
+      role: String(plan.role || "旁白"),
+      roleType: String(plan.roleType || "narrator"),
+      eventType: String(plan.eventType || RUNTIME_STREAM_EVENT),
+      content: "",
+      createTime: now,
+      meta: {
+        kind: "runtime_stream",
+        streaming: true,
+        sentences: [],
+      } satisfies RuntimeStreamMeta,
+    };
+  }
+
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
     const token = createRuntimeRetryToken();
     const now = Date.now();
@@ -743,7 +793,7 @@ function createToonflowStore() {
     if (!state.token.trim() || state.userId <= 0) return;
     await api.saveUser({
       avatarPath: state.accountAvatarPath,
-      avatarBgPath: state.accountAvatarBgPath || state.accountAvatarPath,
+      avatarBgPath: state.accountAvatarBgPath,
     });
   }
 
@@ -1631,6 +1681,25 @@ function createToonflowStore() {
     return [manufacturer, model].filter(Boolean).join(" / ").trim();
   }
 
+  function isAvatarMattingManufacturer(manufacturer: string | null | undefined): boolean {
+    const normalized = String(manufacturer || "").trim().toLowerCase();
+    return normalized === "bria" || normalized === "aliyun_imageseg" || normalized === "tencent_ci" || normalized === "local_birefnet";
+  }
+
+  function avatarMattingRecommendationScore(item: ModelConfigItem): number {
+    const manufacturer = String(item.manufacturer || "").trim().toLowerCase();
+    let score = 0;
+    if (manufacturer === "bria") score += 1000;
+    if (manufacturer === "local_birefnet") score += 960;
+    if (manufacturer === "tencent_ci") score += 850;
+    if (manufacturer === "aliyun_imageseg") score += 700;
+    if (String(item.model || "").trim().toLowerCase() === "segmentcommonimage") score += 80;
+    if (String(item.model || "").trim().toLowerCase() === "aiportraitmatting") score += 120;
+    if (String(item.model || "").trim().toLowerCase() === "birefnet-portrait") score += 160;
+    score += Math.min(Number(item.createTime || 0) / 1_000_000_000_000, 50);
+    return score;
+  }
+
   function storySpeakerRecommendationScore(item: ModelConfigItem, orchestratorConfigId: number | null): number {
     if (Number(item.id || 0) <= 0) return Number.NEGATIVE_INFINITY;
     if (orchestratorConfigId && Number(item.id) === orchestratorConfigId) return Number.NEGATIVE_INFINITY;
@@ -1650,6 +1719,12 @@ function createToonflowStore() {
   }
 
   function settingsRecommendedModel(key: string): ModelConfigItem | null {
+    if (key === "storyAvatarMattingModel") {
+      const ranked = state.settingsImageConfigs
+        .filter((item) => isAvatarMattingManufacturer(item.manufacturer))
+        .sort((a, b) => avatarMattingRecommendationScore(b) - avatarMattingRecommendationScore(a) || Number(b.id || 0) - Number(a.id || 0));
+      return ranked[0] || null;
+    }
     if (key !== "storySpeakerModel") return null;
     const orchestratorConfigId = settingsModelBinding("storyOrchestratorModel")?.configId || null;
     const ranked = state.settingsTextConfigs
@@ -1663,6 +1738,22 @@ function createToonflowStore() {
   }
 
   function settingsModelAdvisory(key: string): { tone: "info" | "warn"; text: string } | null {
+    if (key === "storyAvatarMattingModel") {
+      const binding = settingsModelBinding("storyAvatarMattingModel");
+      const recommendation = settingsRecommendedModel("storyAvatarMattingModel");
+      const recommendationText = recommendation ? formatSettingsModelLabel(recommendation) : "Bria / RMBG-2.0";
+      const credentialHint = "Bria 的 API Key 直接填 token；阿里云视觉请填 AccessKeyId|AccessKeySecret 或 JSON；腾讯云数据万象请填 SecretId|SecretKey，Base URL 填标准 COS 桶域名；BiRefNet 本地无需 Key，但首次选择会提示安装本地依赖和模型文件。";
+      if (!binding?.configId) {
+        return {
+          tone: "warn",
+          text: `用于角色头像的主体/背景分离。建议绑定：${recommendationText}。未配置时会回退旧的图像大模型分离链路，效果通常更差。${credentialHint}`,
+        };
+      }
+      return {
+        tone: "info",
+        text: `这个槽位专门负责角色头像主体/背景分离，不参与普通生图。${credentialHint}`,
+      };
+    }
     if (key !== "storySpeakerModel") return null;
     const speaker = settingsModelBinding("storySpeakerModel");
     const orchestrator = settingsModelBinding("storyOrchestratorModel");
@@ -1731,6 +1822,37 @@ function createToonflowStore() {
     } = {},
   ): Promise<string> {
     const result = await api.previewVoice({
+      configId: configId || undefined,
+      text,
+      mode,
+      voiceId,
+      referenceAudioPath,
+      referenceText,
+      promptText,
+      mixVoices,
+      speed: typeof options.speed === "number" ? options.speed : undefined,
+      format: options.format || undefined,
+      sampleRate: typeof options.sampleRate === "number" ? options.sampleRate : undefined,
+    });
+    return result.audioUrl || "";
+  }
+
+  async function streamVoice(
+    configId: number | null | undefined,
+    text: string,
+    mode: string,
+    voiceId = "",
+    referenceAudioPath = "",
+    referenceText = "",
+    promptText = "",
+    mixVoices: VoiceMixItem[] = [],
+    options: {
+      speed?: number | null;
+      format?: string | null;
+      sampleRate?: number | null;
+    } = {},
+  ): Promise<string> {
+    const result = await api.streamVoice({
       configId: configId || undefined,
       text,
       mode,
@@ -1871,6 +1993,14 @@ function createToonflowStore() {
     state.avatarProcessingNpcIndex = target === "npc" && typeof npcIndex === "number" ? npcIndex : null;
   }
 
+  function clearAvatarFailureNotice() {
+    const current = String(state.notice || "").trim();
+    if (!current) return;
+    if (current.startsWith("头像分离失败")) {
+      state.notice = "";
+    }
+  }
+
   function isAvatarProcessing(target: "account" | "user" | "npc", npcIndex: number | null = null) {
     if (state.avatarProcessingTarget !== target) return false;
     if (target !== "npc") return true;
@@ -1879,6 +2009,9 @@ function createToonflowStore() {
 
   async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
     state.aiGenerating = true;
+    if (target === "account" || target === "user" || target === "npc") {
+      clearAvatarFailureNotice();
+    }
     try {
       const path = await generateImage(target === "chapter" || target === "cover" ? "scene" : "role", prompt, referenceList, name);
       if (!path) {
@@ -1900,6 +2033,9 @@ function createToonflowStore() {
       } else if (target === "chapter") {
         state.chapterBackground = prepared.path;
       }
+      if (target === "account" || target === "user" || target === "npc") {
+        clearAvatarFailureNotice();
+      }
       return prepared.path;
     } finally {
       state.aiGenerating = false;
@@ -1907,21 +2043,23 @@ function createToonflowStore() {
   }
 
   async function updateAvatarFromFile(target: "account" | "user" | "npc", file: File, onReady?: (path: string, bgPath?: string) => void, roleIndex?: number) {
+    clearAvatarFailureNotice();
     setAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
     try {
       const prepared = await uploadStandardizedImageAsset(target, file, file.name || target);
       if (target === "account") {
         state.accountAvatarPath = prepared.path;
-        state.accountAvatarBgPath = prepared.bgPath || prepared.path;
+        state.accountAvatarBgPath = prepared.bgPath;
         await persistAccountAvatar();
       } else if (target === "user") {
         state.userAvatarPath = prepared.path;
-        state.userAvatarBgPath = prepared.bgPath || prepared.path;
+        state.userAvatarBgPath = prepared.bgPath;
       } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
         state.npcRoles[roleIndex].avatarPath = prepared.path;
-        state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath || prepared.path;
-        onReady?.(prepared.path, prepared.bgPath || prepared.path);
+        state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        onReady?.(prepared.path, prepared.bgPath);
       }
+      clearAvatarFailureNotice();
     } finally {
       setAvatarProcessing(null);
     }
@@ -1973,6 +2111,9 @@ function createToonflowStore() {
     }
     await api.bindModelConfig(row.id, configId);
     await ensureSettingsPanelData(true);
+    if (key === "storyAvatarMattingModel") {
+      clearAvatarFailureNotice();
+    }
     state.notice = "模型配置已保存";
   }
 
@@ -1997,6 +2138,22 @@ function createToonflowStore() {
     await api.updateModelConfig(payload);
     await ensureSettingsPanelData(true);
     state.notice = "模型配置已更新";
+  }
+
+  async function fetchLocalAvatarMattingStatus(manufacturer: string, model: string): Promise<LocalAvatarMattingStatus> {
+    return await api.getLocalAvatarMattingStatus({
+      manufacturer: manufacturer.trim(),
+      model: model.trim(),
+    });
+  }
+
+  async function installLocalAvatarMattingModel(manufacturer: string, model: string): Promise<LocalAvatarMattingStatus> {
+    const result = await api.installLocalAvatarMatting({
+      manufacturer: manufacturer.trim(),
+      model: model.trim(),
+    });
+    clearAvatarFailureNotice();
+    return result;
   }
 
   async function deleteManagedModelConfig(id: number) {
@@ -2033,6 +2190,12 @@ function createToonflowStore() {
       };
     }
     if (type === "image") {
+      if (isAvatarMattingManufacturer(config.manufacturer)) {
+        return {
+          kind: "text",
+          content: "当前是头像分离专用模型，不走普通生图测试。请在角色头像上传或 AI 生成后直接验证主体/背景分离效果。",
+        };
+      }
       const result = await api.testImageModel({
         modelName: String(config.model || "").trim() || undefined,
         apiKey: String(config.apiKey || "").trim(),
@@ -2635,16 +2798,14 @@ function createToonflowStore() {
     state.messages = detail.messages || [];
   }
 
-  function applyDebugStepResult(
+  function applyDebugOrchestrationResult(
     result: {
       state?: Record<string, unknown> | null;
       chapterId?: number | null;
       chapterTitle?: string | null;
       endDialog?: string | null;
-      messages?: MessageItem[] | null;
     },
     fallbackChapter?: ChapterItem | null,
-    appendMessages = false,
   ) {
     state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
@@ -2658,16 +2819,84 @@ function createToonflowStore() {
       result.chapterTitle || activeChapter?.title || state.chapterTitle,
       activeChapter?.sort,
     ) || "当前章节";
-    if (appendMessages) {
-      if (Array.isArray(result.messages) && result.messages.length) {
-        state.messages.push(...result.messages);
-      }
-    } else {
-      state.messages = Array.isArray(result.messages) ? result.messages : [];
-    }
     state.debugEndDialog = result.endDialog || null;
     state.sessionDetail = null;
     state.activeTab = "play";
+  }
+
+  async function streamDebugPlan(
+    plan: DebugNarrativePlan,
+    historyMessages: MessageItem[],
+    playerContent?: string | null,
+  ) {
+    const streamingMessage = createStreamingMessage(plan);
+    let accumulated = "";
+    state.messages = [...historyMessages, streamingMessage];
+    let done = false;
+    try {
+      await api.streamDebugLines({
+        worldId: state.worldId,
+        chapterId: state.debugChapterId || undefined,
+        state: state.debugRuntimeState,
+        messages: historyMessages,
+        playerContent: playerContent || undefined,
+        plan,
+      }, async (event) => {
+        if (event.type === "delta") {
+          const text = String(event.data?.text || "");
+          if (!text) return;
+          accumulated += text;
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
+          return;
+        }
+        if (event.type === "done") {
+          done = true;
+          const finalMessage = (event.data?.message || {}) as Record<string, unknown>;
+          const finalContent = String(finalMessage.content || accumulated || "");
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            role: String(finalMessage.role || message.role || ""),
+            roleType: String(finalMessage.roleType || message.roleType || ""),
+            eventType: String(finalMessage.eventType || message.eventType || RUNTIME_STREAM_EVENT),
+            content: finalContent,
+            meta: {},
+          }));
+          return;
+        }
+        if (event.type === "sentence") {
+          const text = String(event.data?.text || "").trim();
+          if (!text) return;
+          updateMessageById(streamingMessage.id, (message) => {
+            const metaRecord: Record<string, unknown> = (message.meta && typeof message.meta === "object" && !Array.isArray(message.meta))
+              ? { ...(message.meta as Record<string, unknown>) }
+              : { kind: "runtime_stream", streaming: true };
+            const rawSentences = Array.isArray(metaRecord["sentences"]) ? (metaRecord["sentences"] as unknown[]) : [];
+            const sentences = rawSentences.map((item) => String(item || "").trim()).filter(Boolean);
+            if (!sentences.includes(text)) {
+              sentences.push(text);
+            }
+            metaRecord["sentences"] = sentences;
+            return {
+              ...message,
+              meta: metaRecord,
+            };
+          });
+          return;
+        }
+        if (event.type === "error") {
+          throw new Error(String(event.data?.message || "台词流生成失败"));
+        }
+      });
+      if (!done) {
+        throw new Error("台词流未正常结束");
+      }
+    } catch (error) {
+      updateMessageById(streamingMessage.id, () => null);
+      throw error;
+    }
   }
 
   async function performStartDebugCurrentChapter() {
@@ -2729,7 +2958,7 @@ function createToonflowStore() {
         return;
       }
       state.debugLoadingStage = "读取记忆";
-      const result = await api.debugStep({
+      const result = await api.orchestrateDebug({
         worldId: state.worldId,
         chapterId: chapter.id,
         state: state.debugRuntimeState,
@@ -2737,7 +2966,14 @@ function createToonflowStore() {
       });
       state.debugLoadingStage = "准备剧情编排完毕";
       clearRuntimeRetryState();
-      applyDebugStepResult(result, chapter, false);
+      applyDebugOrchestrationResult(result, chapter);
+      state.debugLoading = false;
+      state.debugLoadingStage = "";
+      if (result.plan) {
+        await streamDebugPlan(result.plan, []);
+      } else {
+        state.messages = [];
+      }
     } finally {
       state.debugLoading = false;
       state.debugLoadingStage = "";
@@ -2760,22 +2996,31 @@ function createToonflowStore() {
 
   async function performContinueDebugNarrative() {
     if (!state.debugMode || !state.worldId) return;
+    let advanced = false;
     for (let step = 0; step < 3; step += 1) {
       const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
       const beforeCount = conversationMessages().length;
-      const result = await api.debugStep({
+      const history = conversationMessages();
+      const result = await api.orchestrateDebug({
         worldId: state.worldId,
         chapterId: state.debugChapterId || undefined,
         state: state.debugRuntimeState,
-        messages: conversationMessages(),
+        messages: history,
         playerContent: null,
       });
       clearRuntimeRetryState();
-      applyDebugStepResult(result, currentChapter, true);
+      applyDebugOrchestrationResult(result, currentChapter);
+      if (result.plan) {
+        await streamDebugPlan(result.plan, history);
+      }
       const canPlayerSpeak = (state.debugRuntimeState as Record<string, any>)?.turnState?.canPlayerSpeak !== false;
       if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak) {
+        advanced = true;
         break;
       }
+    }
+    if (!advanced) {
+      throw new Error("自动推进没有产出新内容");
     }
   }
 
@@ -2783,6 +3028,7 @@ function createToonflowStore() {
     clearRuntimeRetryState();
     try {
       await performContinueDebugNarrative();
+      return true;
     } catch (error) {
       showRuntimeRetryMessage(
         `继续调试失败：${asUiErrorMessage(error)}`,
@@ -2790,6 +3036,7 @@ function createToonflowStore() {
           formatErrorMessage: (message) => `继续调试失败：${message}`,
         }),
       );
+      return false;
     }
   }
 
@@ -2809,16 +3056,20 @@ function createToonflowStore() {
       ];
       state.sendText = "";
     }
-    const result = await api.debugStep({
+    const history = conversationMessages();
+    const result = await api.orchestrateDebug({
       worldId: state.worldId,
       chapterId: state.debugChapterId || undefined,
       playerContent: content,
       state: state.debugRuntimeState,
-      messages: conversationMessages(),
+      messages: history,
     });
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
-    applyDebugStepResult(result, currentChapter, true);
+    applyDebugOrchestrationResult(result, currentChapter);
+    if (result.plan) {
+      await streamDebugPlan(result.plan, conversationMessages(), content);
+    }
   }
 
   async function performSessionPlayerMessage(content: string) {
@@ -2936,6 +3187,8 @@ function createToonflowStore() {
     bindRecommendedGameModel,
     addManagedModelConfig,
     updateManagedModelConfig,
+    fetchLocalAvatarMattingStatus,
+    installLocalAvatarMattingModel,
     deleteManagedModelConfig,
     testManagedModelConfig,
     saveStoryPrompt,
@@ -2948,6 +3201,7 @@ function createToonflowStore() {
     currentStoryPromptValue,
     uploadVoiceReferenceAudio,
     previewVoice,
+    streamVoice,
     polishVoicePrompt,
     transcribeRuntimeVoice,
     applyImageToTarget,

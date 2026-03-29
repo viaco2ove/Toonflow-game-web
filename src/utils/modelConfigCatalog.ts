@@ -56,6 +56,34 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "bria",
+    label: "Bria",
+    website: "https://platform.bria.ai",
+    defaults: {
+      image: "https://engine.prod.bria-api.com/v2/image/edit",
+    },
+  },
+  {
+    value: "aliyun_imageseg",
+    label: "阿里云视觉",
+    website: "https://ram.console.aliyun.com/manage/ak",
+    defaults: {
+      image: "https://imageseg.cn-shanghai.aliyuncs.com",
+    },
+  },
+  {
+    value: "tencent_ci",
+    label: "腾讯云数据万象",
+    website: "https://console.cloud.tencent.com/cam/capi",
+    defaults: {},
+  },
+  {
+    value: "local_birefnet",
+    label: "BiRefNet 本地",
+    website: "https://github.com/ZhengPeng7/BiRefNet",
+    defaults: {},
+  },
+  {
     value: "t8star",
     label: "t8star",
     defaults: {
@@ -164,6 +192,18 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "voice" && manufacturer === "ai_voice_tts") {
     return modelType === "tts" ? "ai_voice_tts" : "";
   }
+  if (type === "image" && manufacturer === "bria") {
+    return "RMBG-2.0";
+  }
+  if (type === "image" && manufacturer === "aliyun_imageseg") {
+    return "SegmentCommonImage";
+  }
+  if (type === "image" && manufacturer === "tencent_ci") {
+    return "AIPortraitMatting";
+  }
+  if (type === "image" && manufacturer === "local_birefnet") {
+    return "birefnet-portrait";
+  }
   if (type === "voice" && manufacturer === "aliyun") {
     return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
   }
@@ -175,6 +215,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
 
 export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind): boolean {
   if (type === "voice" && manufacturer === "ai_voice_tts") return false;
+  if (type === "image" && manufacturer === "local_birefnet") return false;
   return true;
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { MessageItem, RoleParameterCard, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
@@ -7,6 +8,7 @@ import { fileToDataUrl } from "../utils/file";
 const store = useToonflowStore();
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
 const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
+const RUNTIME_VOICE_CACHE_LIMIT = 60;
 const messages = computed(() => store.state.messages);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
@@ -36,6 +38,22 @@ function isRuntimeRetryMessage(message: MessageItem | null | undefined): message
   return meta.kind === "runtime_retry" && typeof meta.token === "string";
 }
 
+function isStreamingRuntimeMessage(message: MessageItem | null | undefined): boolean {
+  if (!message) return false;
+  const meta = asMiniRecord(message.meta);
+  return meta.kind === "runtime_stream" && meta.streaming === true;
+}
+
+function showRuntimeMessageLoading(message: MessageItem | null | undefined): boolean {
+  return !!message && isStreamingRuntimeMessage(message) && !scalarText(message.content);
+}
+
+function runtimeStreamSentences(message: MessageItem | null | undefined): string[] {
+  if (!message) return [];
+  const meta = asMiniRecord(message.meta);
+  return asMiniArray(meta.sentences).map((item) => scalarText(item)).filter(Boolean);
+}
+
 function runtimeRetryLabel(message: MessageItem | null | undefined): string {
   if (!isRuntimeRetryMessage(message)) return "重试";
   const label = scalarText(message.meta.retryLabel);
@@ -63,6 +81,9 @@ function sanitizeSpeechText(input: unknown): string {
     .replace(/\([^)]*\)/g, "")
     .replace(/【[^】]*】/g, "")
     .replace(/\[[^\]]*]/g, "")
+    .replace(/《[^》]*》/g, "")
+    .replace(/〈[^〉]*〉/g, "")
+    .replace(/〔[^〕]*〕/g, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -82,6 +103,16 @@ function isDeterministicRuntimeVoiceError(error: unknown): boolean {
     "未返回试听音频",
     "http 400",
   ].some((item) => message.includes(item.toLowerCase()));
+}
+
+function setLimitedCacheValue<T>(cache: Map<string, T>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > RUNTIME_VOICE_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
 }
 
 function normalizeChapterTitleLabel(input: unknown, sort?: unknown): string {
@@ -298,12 +329,12 @@ const menuVisibleHint = ref("");
 const currentLiveMessage = computed(() =>
   playMode.value === "history" ? null : (displayMessages.value[displayMessages.value.length - 1] || null),
 );
-const currentLiveFigurePath = computed(() => {
+const currentLiveFigureRole = computed(() => {
   const message = currentLiveMessage.value;
-  if (!message || message.roleType === "player" || isRuntimeRetryMessage(message)) return "";
-  const role = roleCards.value.find((item) => item.name === message.role || item.id === message.role);
-  return store.resolveMediaPath(role?.avatarBgPath || role?.avatarPath || "");
+  if (!message || isRuntimeRetryMessage(message)) return null;
+  return messageAvatarRole(message);
 });
+const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
 let speechRecognition: any = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -315,6 +346,9 @@ let runtimeVoiceObjectUrl = "";
 let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
 let runtimeVoiceRequestId = 0;
 const runtimeVoicePreviewCache = new Map<string, string>();
+const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
+const runtimeVoiceBlobCache = new Map<string, Blob>();
+const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
 const runtimeVoiceWarmCache = new Set<string>();
 const revealedMessages = ref<MessageItem[]>([]);
 const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
@@ -373,6 +407,12 @@ const debugLoading = computed(() => store.state.debugLoading);
 const debugLoadingStage = computed(() => store.state.debugLoadingStage || "正在初始化调试上下文...");
 const debugAutoAdvancing = ref(false);
 const lastAutoAdvanceMessageKey = ref("");
+const runtimeProgressHint = computed(() => {
+  if (debugAutoAdvancing.value) {
+    return "正在等待编排师继续推进...";
+  }
+  return playTurnHint.value;
+});
 const runtimeVoiceMessageKey = ref("");
 const runtimeVoicePhase = ref<"" | "loading" | "playing">("");
 const runtimeVoiceIndicator = ref(".");
@@ -411,6 +451,9 @@ watch(
     stopVoiceRecognition();
     stopRuntimeVoicePlayback();
     runtimeVoicePreviewCache.clear();
+    runtimeVoicePreviewInflight.clear();
+    runtimeVoiceBlobCache.clear();
+    runtimeVoiceFallbackBindingCache.clear();
     runtimeVoiceWarmCache.clear();
     revealedMessages.value = [];
     debugAutoAdvancing.value = false;
@@ -507,6 +550,7 @@ watch(
     store.state.debugEndDialog,
     canPlayerSpeak.value,
     latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
+    latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
   ],
   async () => {
     if (
@@ -519,17 +563,19 @@ watch(
       return;
     }
     const latest = latestRevealedMessage.value;
-    if (!latest || latest.roleType === "player" || isRuntimeRetryMessage(latest)) {
+    if (!latest || latest.roleType === "player" || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
       return;
     }
     const key = messageUiKey(latest);
     if (!key || key === lastAutoAdvanceMessageKey.value || debugAutoAdvancing.value) {
       return;
     }
-    lastAutoAdvanceMessageKey.value = key;
     debugAutoAdvancing.value = true;
     try {
-      await store.continueDebugNarrative();
+      const ok = await store.continueDebugNarrative();
+      if (ok) {
+        lastAutoAdvanceMessageKey.value = key;
+      }
     } finally {
       debugAutoAdvancing.value = false;
     }
@@ -553,7 +599,7 @@ function closeMenu() {
 }
 
 function openMenu(message: MessageItem, event: MouseEvent | PointerEvent) {
-  if (isRuntimeRetryMessage(message)) return;
+  if (isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return;
   menuMessage.value = message;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -573,7 +619,7 @@ function clearPressTimer() {
 }
 
 function handlePressStart(message: MessageItem, event: PointerEvent) {
-  if (isRuntimeRetryMessage(message)) return;
+  if (isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return;
   if (event.pointerType === "mouse") return;
   clearPressTimer();
   pressTimer.value = window.setTimeout(() => {
@@ -587,7 +633,7 @@ function handlePressEnd() {
 
 async function submit() {
   if (!canPlayerSpeak.value) {
-    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
     return;
   }
   await store.sendMessage();
@@ -670,29 +716,46 @@ function formatConditionText(input: unknown): string {
   return String(input);
 }
 
-function replayWithBrowserSpeech(content: string) {
+async function replayWithBrowserSpeech(content: string, waitForCompletion = false): Promise<boolean> {
   if (typeof window === "undefined" || !window.speechSynthesis) {
     menuVisibleHint.value = "当前浏览器不支持朗读";
-    return;
+    return false;
   }
   window.speechSynthesis.cancel();
   const sanitized = sanitizeSpeechText(content);
   if (!sanitized) {
     menuVisibleHint.value = "这条内容没有可朗读文本";
-    return;
+    return false;
   }
   const utterance = new SpeechSynthesisUtterance(sanitized);
   utterance.lang = "zh-CN";
   utterance.rate = 1;
   utterance.pitch = 1;
-  utterance.onend = () => {
-    if (menuVisibleHint.value === "正在朗读") menuVisibleHint.value = "朗读完成";
-  };
-  utterance.onerror = () => {
-    menuVisibleHint.value = "朗读失败";
-  };
   menuVisibleHint.value = "正在朗读";
-  window.speechSynthesis.speak(utterance);
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(sanitized) : 5000;
+    const timer = window.setTimeout(() => finalize(false, "朗读超时"), timeoutMs);
+    const finalize = (ok: boolean, hint: string) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      menuVisibleHint.value = hint;
+      resolve(ok);
+    };
+    utterance.onstart = () => {
+      if (!waitForCompletion) {
+        finalize(true, "正在朗读");
+      }
+    };
+    utterance.onend = () => finalize(true, "朗读完成");
+    utterance.onerror = () => finalize(false, "朗读失败");
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      finalize(false, "朗读失败");
+    }
+  });
 }
 
 function messageUiKey(message: MessageItem): string {
@@ -732,12 +795,40 @@ async function waitForMessageReveal(message: MessageItem, isCancelled: () => boo
     await sleep(120);
     return;
   }
+  let streamedSentenceCount = 0;
+  let streamedVoicePlayed = false;
+  if (isStreamingRuntimeMessage(message)) {
+    while (!isCancelled() && isStreamingRuntimeMessage(message)) {
+      const sentences = runtimeStreamSentences(message);
+      while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
+        const sentence = sentences[streamedSentenceCount];
+        streamedSentenceCount += 1;
+        if (!sentence) continue;
+        const played = await playMessageAudio(message, false, false, sentence);
+        streamedVoicePlayed = streamedVoicePlayed || played;
+      }
+      await sleep(120);
+    }
+    if (isCancelled()) return;
+    const sentences = runtimeStreamSentences(message);
+    while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
+      const sentence = sentences[streamedSentenceCount];
+      streamedSentenceCount += 1;
+      if (!sentence) continue;
+      const played = await playMessageAudio(message, false, false, sentence);
+      streamedVoicePlayed = streamedVoicePlayed || played;
+    }
+  }
   if (message.roleType === "player") {
     await sleep(180);
     return;
   }
   if (!autoVoice.value) {
     await sleep(estimateRevealDelayMs(message.content));
+    return;
+  }
+  if (streamedVoicePlayed || streamedSentenceCount > 0) {
+    await sleep(260);
     return;
   }
   if (isCancelled()) return;
@@ -900,15 +991,49 @@ function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
   });
 }
 
+function findMessageRole(message: MessageItem): StoryRole | null {
+  if (message.roleType === "player" || message.roleType === "narrator") return null;
+  const roleName = String(message.role || "").trim();
+  return roleCards.value.find((role) => {
+    if (!roleName) return role.roleType === message.roleType;
+    return role.name === roleName || role.id === roleName;
+  }) || roleCards.value.find((role) => role.roleType === message.roleType) || null;
+}
+
 function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {
   if (message.roleType === "player") return null;
   if (message.roleType === "narrator") return narratorVoiceBinding();
-  const roleName = String(message.role || "").trim();
-  const matchedRole = roleCards.value.find((role) => {
-    if (!roleName) return role.roleType === message.roleType;
-    return role.name === roleName || role.id === roleName;
-  }) || roleCards.value.find((role) => role.roleType === message.roleType);
-  return roleVoiceBinding(matchedRole);
+  return roleVoiceBinding(findMessageRole(message));
+}
+
+function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: VoiceBindingDraft | null): VoiceBindingDraft | null {
+  if (message.roleType === "player") return null;
+  if (message.roleType === "narrator") {
+    return createVoiceBindingDraft({
+      label: originalBinding?.label || store.state.narratorVoice || store.state.narratorName || "旁白",
+      configId: originalBinding?.configId ?? narratorVoiceBinding()?.configId ?? null,
+      mode: "text",
+      presetId: "story_narrator",
+    });
+  }
+  const role = findMessageRole(message);
+  const roleName = role?.name || String(message.role || "").trim();
+  const fallbackPresetId = inferFallbackPreset(
+    role?.roleType || message.roleType || "",
+    roleName,
+    role?.description || "",
+  );
+  return createVoiceBindingDraft({
+    label: originalBinding?.label || role?.voice || roleName || "角色",
+    configId: originalBinding?.configId ?? role?.voiceConfigId ?? null,
+    mode: "text",
+    presetId: fallbackPresetId,
+  });
+}
+
+function shouldDowngradeRuntimeVoiceBinding(binding: VoiceBindingDraft | null | undefined, error: unknown): boolean {
+  if (!binding || binding.mode === "text") return false;
+  return isDeterministicRuntimeVoiceError(error);
 }
 
 function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
@@ -932,8 +1057,10 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
   const cacheKey = runtimeVoicePreviewKey(binding, text);
   const cached = runtimeVoicePreviewCache.get(cacheKey);
   if (cached) return cached;
-  const audioUrl = await withTimeout(
-    store.previewVoice(
+  const inflight = runtimeVoicePreviewInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const task = withTimeout(
+    store.streamVoice(
       binding.configId,
       text,
       binding.mode,
@@ -949,12 +1076,19 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
     ),
     15000,
     "语音生成超时",
-  );
-  if (!audioUrl) {
-    throw new Error("未返回试听音频");
-  }
-  runtimeVoicePreviewCache.set(cacheKey, audioUrl);
-  return audioUrl;
+  )
+    .then((audioUrl) => {
+      if (!audioUrl) {
+        throw new Error("未返回试听音频");
+      }
+      setLimitedCacheValue(runtimeVoicePreviewCache, cacheKey, audioUrl);
+      return audioUrl;
+    })
+    .finally(() => {
+      runtimeVoicePreviewInflight.delete(cacheKey);
+    });
+  runtimeVoicePreviewInflight.set(cacheKey, task);
+  return task;
 }
 
 async function warmVoiceBinding(binding: VoiceBindingDraft) {
@@ -970,9 +1104,13 @@ async function warmVoiceBinding(binding: VoiceBindingDraft) {
 }
 
 async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
+  const cached = runtimeVoiceBlobCache.get(audioUrl);
+  if (cached) return cached;
   const response = await withTimeout(fetch(audioUrl), 10000, "音频下载超时");
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.blob();
+  const blob = await response.blob();
+  setLimitedCacheValue(runtimeVoiceBlobCache, audioUrl, blob);
+  return blob;
 }
 
 async function playRuntimeVoiceBlob(
@@ -1018,63 +1156,107 @@ async function playRuntimeVoiceBlob(
   return completed;
 }
 
-async function playMessageAudio(message: MessageItem, manual = false, waitForCompletion = false): Promise<boolean> {
-  const speakable = sanitizeSpeechText(message.content);
+async function playMessageAudioWithBinding(
+  message: MessageItem,
+  binding: VoiceBindingDraft,
+  speakable: string,
+  manual: boolean,
+  waitForCompletion: boolean,
+): Promise<boolean> {
+  stopRuntimeVoicePlayback();
+  const requestId = runtimeVoiceRequestId;
+  if (manual) {
+    menuVisibleHint.value = "正在生成语音";
+  }
+  const segments = splitSpeechSegments(speakable);
+  if (!segments.length) return false;
+  setRuntimeVoiceIndicator(message, "loading");
+  for (const segment of segments) {
+    let segmentPlayed = false;
+    let lastError: unknown = null;
+    const previewKey = runtimeVoicePreviewKey(binding, segment);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let shouldRetry = true;
+      if (requestId !== runtimeVoiceRequestId) return false;
+      try {
+        setRuntimeVoiceIndicator(message, "loading");
+        const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
+        if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
+        const blob = await fetchRuntimeVoiceBlob(audioUrl);
+        segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
+          setRuntimeVoiceIndicator(message, "playing");
+        });
+        if (segmentPlayed) break;
+        lastError = new Error("朗读失败");
+      } catch (error: any) {
+        lastError = error;
+        const messageText = String(error?.message || "");
+        if (/^HTTP\s+\d+/i.test(messageText) || messageText.includes("音频下载超时")) {
+          runtimeVoicePreviewCache.delete(previewKey);
+          runtimeVoicePreviewInflight.delete(previewKey);
+        }
+        shouldRetry = !isDeterministicRuntimeVoiceError(error);
+      }
+      if (!shouldRetry) {
+        break;
+      }
+      await sleep(220);
+    }
+    if (!segmentPlayed) {
+      throw (lastError instanceof Error ? lastError : new Error("朗读失败"));
+    }
+    if (!waitForCompletion) {
+      return true;
+    }
+    await sleep(120);
+  }
+  return true;
+}
+
+async function playMessageAudio(
+  message: MessageItem,
+  manual = false,
+  waitForCompletion = false,
+  overrideContent?: string,
+): Promise<boolean> {
+  const speakable = sanitizeSpeechText(overrideContent ?? message.content);
   if (!speakable) {
     if (manual) menuVisibleHint.value = "这条内容没有可朗读文本";
     return false;
   }
   const binding = resolveMessageVoiceBinding(message);
   if (!binding) {
-    if (manual) replayWithBrowserSpeech(message.content);
-    return false;
+    return replayWithBrowserSpeech(overrideContent ?? message.content, waitForCompletion);
   }
-  stopRuntimeVoicePlayback();
-  const requestId = runtimeVoiceRequestId;
-  if (manual) {
-    menuVisibleHint.value = "正在生成语音";
-  }
+  const bindingKey = runtimeVoiceBindingKey(binding);
+  const preferredBinding = runtimeVoiceFallbackBindingCache.get(bindingKey) || binding;
   try {
-    const segments = splitSpeechSegments(speakable);
-    if (!segments.length) return false;
-    setRuntimeVoiceIndicator(message, "loading");
-    for (const segment of segments) {
-      let segmentPlayed = false;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        let shouldRetry = true;
-        if (requestId !== runtimeVoiceRequestId) return false;
-        try {
-          setRuntimeVoiceIndicator(message, "loading");
-          const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
-          if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
-          const blob = await fetchRuntimeVoiceBlob(audioUrl);
-          segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
-            setRuntimeVoiceIndicator(message, "playing");
-          });
-          if (segmentPlayed) break;
-        } catch (error: any) {
-          shouldRetry = !isDeterministicRuntimeVoiceError(error);
-          if (manual) {
-            menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
-          }
-        }
-        if (!shouldRetry) {
-          break;
-        }
-        await sleep(220);
-      }
-      if (!segmentPlayed) {
-        return false;
-      }
-      if (!waitForCompletion) {
-        return true;
-      }
-      await sleep(120);
-    }
-    return true;
+    return await playMessageAudioWithBinding(message, preferredBinding, speakable, manual, waitForCompletion);
   } catch (error: any) {
+    let finalError: unknown = error;
+    if (
+      runtimeVoiceBindingKey(preferredBinding) === bindingKey
+      && shouldDowngradeRuntimeVoiceBinding(preferredBinding, error)
+    ) {
+      const fallbackBinding = resolveFallbackVoiceBinding(message, binding);
+      if (fallbackBinding && runtimeVoiceBindingKey(fallbackBinding) !== bindingKey) {
+        setLimitedCacheValue(runtimeVoiceFallbackBindingCache, bindingKey, fallbackBinding);
+        try {
+          if (manual) {
+            menuVisibleHint.value = "当前绑定音色不可用，正在切换兼容音色";
+          }
+          return await playMessageAudioWithBinding(message, fallbackBinding, speakable, manual, waitForCompletion);
+        } catch (fallbackError) {
+          finalError = fallbackError;
+        }
+      }
+    }
+    const browserFallbackPlayed = await replayWithBrowserSpeech(overrideContent ?? message.content, waitForCompletion);
+    if (browserFallbackPlayed) {
+      return true;
+    }
     if (manual) {
-      menuVisibleHint.value = `朗读失败: ${error?.message || "未知错误"}`;
+      menuVisibleHint.value = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
     }
     return false;
   } finally {
@@ -1154,13 +1336,28 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
   ].filter((item) => String(item.value || "").trim().length > 0);
 }
 
-function messageAvatarPath(message: MessageItem): string {
-  if (isRuntimeRetryMessage(message)) return "";
-  if (message.roleType === "player") {
-    return store.resolveMediaPath(currentWorld.value?.playerRole?.avatarPath || store.state.userAvatarPath || "");
-  }
-  const role = roleCards.value.find((item) => item.name === message.role || item.id === message.role);
+function roleAvatarForeground(role?: StoryRole | null): string {
   return store.resolveMediaPath(role?.avatarPath || "");
+}
+
+function roleAvatarBackground(role?: StoryRole | null): string {
+  return store.resolveMediaPath(role?.avatarBgPath || "");
+}
+
+function messageAvatarRole(message: MessageItem): StoryRole | null {
+  if (isRuntimeRetryMessage(message)) return null;
+  if (message.roleType === "player") {
+    return roleCards.value.find((item) => item.roleType === "player") || currentWorld.value?.playerRole || null;
+  }
+  return roleCards.value.find((item) => item.name === message.role || item.id === message.role) || null;
+}
+
+function messageAvatarPath(message: MessageItem): string {
+  return roleAvatarForeground(messageAvatarRole(message));
+}
+
+function messageAvatarBgPath(message: MessageItem): string {
+  return roleAvatarBackground(messageAvatarRole(message));
 }
 
 function messageTitle(message: MessageItem): string {
@@ -1393,7 +1590,7 @@ async function startVoiceRecognition() {
 
 function handleVoicePrimary() {
   if (!canPlayerSpeak.value) {
-    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
     return;
   }
   if (inputMode.value === "text") {
@@ -1423,7 +1620,7 @@ function toggleFavorite() {
 
 function pickTip(option: string) {
   if (!canPlayerSpeak.value) {
-    store.state.notice = playTurnHint.value || "当前还没轮到用户发言";
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
     return;
   }
   store.state.sendText = option;
@@ -1481,14 +1678,11 @@ onBeforeUnmount(() => {
       <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">历史模式</div>
       <div
-        v-if="playMode !== 'history' && currentLiveFigurePath"
+        v-if="playMode !== 'history' && currentLiveFigureFgPath"
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div
-          class="play-figure"
-          :style="{ backgroundImage: `url(${currentLiveFigurePath})` }"
-        ></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})` }"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
@@ -1521,14 +1715,26 @@ onBeforeUnmount(() => {
               @pointercancel="handlePressEnd"
             >
               <div v-if="message.roleType !== 'player'" class="play-bubble-avatar">
-                <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
-                <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
+                <LayeredAvatar
+                  :foreground-path="messageAvatarPath(message)"
+                  :background-path="messageAvatarBgPath(message)"
+                  :alt="messageTitle(message)"
+                >
+                  <span>{{ messageTitle(message).slice(0, 1) }}</span>
+                </LayeredAvatar>
               </div>
 
               <div class="play-bubble-wrap">
                 <div class="play-bubble-title">{{ messageTitle(message) }}</div>
                 <div class="play-bubble" :class="{ 'play-bubble--player': message.roleType === 'player' }">
-                  <span>{{ message.content || "（空消息）" }}</span>
+                  <template v-if="showRuntimeMessageLoading(message)">
+                    <span class="play-message-loading" aria-label="正在生成内容">
+                      <span class="play-message-loading__dot"></span>
+                      <span class="play-message-loading__dot"></span>
+                      <span class="play-message-loading__dot"></span>
+                    </span>
+                  </template>
+                  <span v-else>{{ message.content || "（空消息）" }}</span>
                   <span
                     v-if="messageVoiceTail(message)"
                     class="play-bubble-voice-tail"
@@ -1541,8 +1747,13 @@ onBeforeUnmount(() => {
               </div>
 
               <div v-if="message.roleType === 'player'" class="play-bubble-avatar">
-                <img v-if="messageAvatarPath(message)" :src="messageAvatarPath(message)" :alt="messageTitle(message)" />
-                <span v-else>{{ messageTitle(message).slice(0, 1) }}</span>
+                <LayeredAvatar
+                  :foreground-path="messageAvatarPath(message)"
+                  :background-path="messageAvatarBgPath(message)"
+                  :alt="messageTitle(message)"
+                >
+                  <span>{{ messageTitle(message).slice(0, 1) }}</span>
+                </LayeredAvatar>
               </div>
             </article>
           </template>
@@ -1573,7 +1784,14 @@ onBeforeUnmount(() => {
               >
                 <div class="play-live-card__title">{{ messageTitle(currentLiveMessage) }}</div>
                 <div class="play-live-card__body">
-                  <span>{{ currentLiveMessage.content || "（空消息）" }}</span>
+                  <template v-if="showRuntimeMessageLoading(currentLiveMessage)">
+                    <span class="play-message-loading" aria-label="正在生成内容">
+                      <span class="play-message-loading__dot"></span>
+                      <span class="play-message-loading__dot"></span>
+                      <span class="play-message-loading__dot"></span>
+                    </span>
+                  </template>
+                  <span v-else>{{ currentLiveMessage.content || "（空消息）" }}</span>
                   <span
                     v-if="messageVoiceTail(currentLiveMessage)"
                     class="play-bubble-voice-tail"
@@ -1628,8 +1846,13 @@ onBeforeUnmount(() => {
             @click="settingRoleId = role.id"
           >
             <div class="play-role-pill__avatar">
-              <img v-if="role.avatarPath" :src="store.resolveMediaPath(role.avatarPath)" :alt="role.name" />
-              <span v-else>{{ role.name.slice(0, 1) }}</span>
+              <LayeredAvatar
+                :foreground-path="roleAvatarForeground(role)"
+                :background-path="roleAvatarBackground(role)"
+                :alt="role.name"
+              >
+                <span>{{ role.name.slice(0, 1) }}</span>
+              </LayeredAvatar>
             </div>
             <span class="play-role-pill__name">{{ role.name }}</span>
           </button>
@@ -1783,7 +2006,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="play-input-shell" :class="{ 'play-input-shell--text': inputMode === 'text' }">
-        <div v-if="playTurnHint" class="play-turn-hint">{{ playTurnHint }}</div>
+        <div v-if="runtimeProgressHint" class="play-turn-hint" :class="{ 'play-turn-hint--loading': debugAutoAdvancing }">{{ runtimeProgressHint }}</div>
         <template v-if="inputMode === 'text'">
           <div class="play-text-bar">
             <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerSpeak"></textarea>
@@ -1849,8 +2072,13 @@ onBeforeUnmount(() => {
         <div class="modal-body" v-if="roleDetail">
           <div class="detail-card">
             <div class="detail-avatar">
-              <img v-if="roleDetail.avatarPath" :src="store.resolveMediaPath(roleDetail.avatarPath)" :alt="roleDetail.name" />
-              <span v-else>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
+              <LayeredAvatar
+                :foreground-path="roleAvatarForeground(roleDetail)"
+                :background-path="roleAvatarBackground(roleDetail)"
+                :alt="roleDetail.name"
+              >
+                <span>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
+              </LayeredAvatar>
             </div>
             <div class="detail-meta">
               <div class="row" style="gap:8px; align-items:center;">

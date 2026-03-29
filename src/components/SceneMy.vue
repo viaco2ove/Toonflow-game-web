@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import ImageGenerateDialog from "./ImageGenerateDialog.vue";
+import LayeredAvatar from "./LayeredAvatar.vue";
 import StoryCover from "./StoryCover.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { WorldItem } from "../types/toonflow";
@@ -159,8 +160,13 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
 
     <div class="my-profile-main">
       <button class="avatar my-profile-avatar my-profile-avatar-btn" type="button" :disabled="accountAvatarProcessing" @click="openAvatarActionDialog">
-        <img v-if="store.state.accountAvatarPath" :src="store.resolveMediaPath(store.state.accountAvatarPath)" alt="账号头像" />
-        <div v-else class="placeholder">{{ (store.state.userName || "A").slice(0, 1).toUpperCase() }}</div>
+        <LayeredAvatar
+          :foreground-path="store.resolveMediaPath(store.state.accountAvatarPath)"
+          :background-path="store.resolveMediaPath(store.state.accountAvatarBgPath || store.state.accountAvatarPath)"
+          alt="账号头像"
+        >
+          <div class="placeholder">{{ (store.state.userName || "A").slice(0, 1).toUpperCase() }}</div>
+        </LayeredAvatar>
         <div v-if="accountAvatarProcessing" class="avatar-processing-mask">
           <span class="avatar-processing-spinner"></span>
         </div>
