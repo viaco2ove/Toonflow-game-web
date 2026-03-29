@@ -719,6 +719,10 @@ const inputMode = ref<"voice" | "text">("text");
 const autoVoice = ref(readPlayAutoVoicePreference());
 const voiceListening = ref(false);
 const voiceTranscribing = ref(false);
+const voiceHoldActive = ref(false);
+const voiceHoldCancelPending = ref(false);
+const voiceHoldStartY = ref(0);
+const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
 const roleDetailKey = ref("");
@@ -2241,6 +2245,9 @@ function handleTopBackAction() {
 }
 
 function stopVoiceRecognition() {
+  voiceHoldActive.value = false;
+  voiceHoldCancelPending.value = false;
+  voiceHoldPointerId.value = null;
   if (speechRecognition) {
     try {
       speechRecognition.stop();
@@ -2373,6 +2380,74 @@ function handleVoicePrimary() {
     return;
   }
   startVoiceRecognition();
+}
+
+function finishVoiceHold(event: PointerEvent | null, cancel = false) {
+  if (!voiceHoldActive.value) return;
+  const target = event?.currentTarget;
+  if (target instanceof HTMLElement && voiceHoldPointerId.value != null) {
+    try {
+      target.releasePointerCapture(voiceHoldPointerId.value);
+    } catch {
+      // noop
+    }
+  }
+  const shouldCancel = cancel || voiceHoldCancelPending.value;
+  voiceHoldActive.value = false;
+  voiceHoldCancelPending.value = false;
+  voiceHoldPointerId.value = null;
+  if (!voiceListening.value) return;
+  if (shouldCancel) {
+    stopVoiceRecognition();
+    return;
+  }
+  stopVoiceRecordingAndTranscribe();
+}
+
+function handleVoiceHoldStart(event: PointerEvent) {
+  if (inputMode.value === "text") {
+    void submit();
+    return;
+  }
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
+    return;
+  }
+  if (voiceTranscribing.value || voiceListening.value || voiceHoldActive.value) {
+    return;
+  }
+  voiceHoldActive.value = true;
+  voiceHoldCancelPending.value = false;
+  voiceHoldStartY.value = event.clientY;
+  voiceHoldPointerId.value = event.pointerId;
+  const target = event.currentTarget;
+  if (target instanceof HTMLElement) {
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      // noop
+    }
+  }
+  void startVoiceRecognition().finally(() => {
+    if (!voiceListening.value && !voiceTranscribing.value) {
+      voiceHoldActive.value = false;
+      voiceHoldCancelPending.value = false;
+      voiceHoldPointerId.value = null;
+    }
+  });
+}
+
+function handleVoiceHoldMove(event: PointerEvent) {
+  if (!voiceHoldActive.value || voiceHoldPointerId.value !== event.pointerId) return;
+  voiceHoldCancelPending.value = voiceHoldStartY.value - event.clientY > 72;
+}
+
+function handleVoiceHoldEnd(event: PointerEvent) {
+  finishVoiceHold(event, false);
+}
+
+function handleVoiceHoldCancel(event: PointerEvent) {
+  finishVoiceHold(event, true);
 }
 
 function onMiniAction(kind: "share" | "comment") {
@@ -2851,8 +2926,17 @@ onBeforeUnmount(() => {
         </template>
         <template v-else>
           <div class="play-voice-bar">
-            <button type="button" class="play-voice-btn" :disabled="!canPlayerInput" @click="handleVoicePrimary">
-              {{ voiceTranscribing ? "识别处理中..." : voiceListening ? "录音中，点击结束" : playInputPlaceholder }}
+            <button
+              type="button"
+              class="play-voice-btn"
+              :disabled="!canPlayerInput || voiceTranscribing"
+              @pointerdown.prevent="handleVoiceHoldStart"
+              @pointermove.prevent="handleVoiceHoldMove"
+              @pointerup.prevent="handleVoiceHoldEnd"
+              @pointercancel.prevent="handleVoiceHoldCancel"
+              @contextmenu.prevent
+            >
+              {{ voiceTranscribing ? "识别处理中..." : voiceListening ? (voiceHoldCancelPending ? "松开取消" : "松开发送，上滑取消") : "按住说话" }}
             </button>
             <button type="button" class="play-mini-round" @click="toggleInputMode">键</button>
             <button type="button" class="play-mini-round" @click="onMiniAction('share')">＋</button>

@@ -3193,19 +3193,23 @@ textarea::-webkit-scrollbar-thumb {
 
 .home-actions {
   flex: none;
+  position: relative;
+  z-index: 4;
 }
 
 .circle-ghost-btn {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  border: 1px solid rgba(207, 219, 234, 0.5);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(223, 233, 246, 0.78);
+  background: rgba(7, 20, 37, 0.42);
   color: #f7fbff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  box-shadow: 0 8px 18px rgba(4, 12, 25, 0.22);
+  backdrop-filter: blur(8px);
 }
 
 .circle-ghost-btn svg {

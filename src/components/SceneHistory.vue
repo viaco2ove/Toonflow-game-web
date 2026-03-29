@@ -10,7 +10,7 @@ function historyCoverPath(sessionId: string) {
   const item = sessions.value.find((row) => row.sessionId === sessionId);
   if (!item) return "";
   const world = store.state.worlds.find((row) => row.id === item.worldId);
-  return item.worldCoverPath || store.worldCoverPath(world) || "";
+  return store.resolveMediaPath(item.worldCoverPath || "") || store.worldCoverPath(world) || "";
 }
 
 async function removeSession(sessionId: string, title: string) {
