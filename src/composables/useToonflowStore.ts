@@ -3446,6 +3446,7 @@ function createToonflowStore() {
       const chapters = await api.getChapter(world.id).catch(() => []);
       const startChapter = chapters[0] || null;
       state.sessionOpeningStage = "创建会话";
+      state.notice = "正在创建会话...";
       const session = await api.startSession({
         worldId: world.id,
         projectId: world.projectId,
@@ -3516,6 +3517,7 @@ function createToonflowStore() {
     state.currentSessionId = sessionId;
     state.sessionOpening = true;
     state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆";
+    state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆...";
     state.sessionDetail = null;
     state.messages = [];
     try {
@@ -3524,6 +3526,7 @@ function createToonflowStore() {
         refreshSessionListState(),
       ]);
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
+      state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
     } finally {
       state.sessionOpening = false;
