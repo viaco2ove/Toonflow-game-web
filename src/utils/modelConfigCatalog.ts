@@ -39,6 +39,14 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "lmstudio",
+    label: "LM Studio",
+    website: "https://lmstudio.ai",
+    defaults: {
+      text: "http://127.0.0.1:1234/v1",
+    },
+  },
+  {
     value: "openai",
     label: "OpenAI",
     defaults: {
@@ -186,6 +194,12 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "text" && manufacturer === "volcengine") {
     return "doubao-seed-2-0-lite-260215";
   }
+  if (type === "text" && manufacturer === "deepseek") {
+    return "deepseek-chat";
+  }
+  if (type === "text" && manufacturer === "lmstudio") {
+    return "qwen3.5-9b";
+  }
   if (type === "voice_design" && manufacturer === "qwen") {
     return "qwen3-tts-vd-2026-01-26";
   }
@@ -215,6 +229,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
 
 export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind): boolean {
   if (type === "voice" && manufacturer === "ai_voice_tts") return false;
+  if (type === "text" && manufacturer === "lmstudio") return false;
   if (type === "image" && manufacturer === "local_birefnet") return false;
   return true;
 }

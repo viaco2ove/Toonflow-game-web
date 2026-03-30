@@ -25,7 +25,6 @@ import {
   VoiceModelConfig,
   VoicePresetItem,
   WorldItem,
-  createBasicRoleParameterCard,
   createDefaultNarratorRole,
   createDefaultPlayerRole,
   createEmptyChapter,
@@ -43,6 +42,7 @@ type RuntimeRetryTask = {
 };
 
 type RuntimeLineStatus =
+  | "sending"
   | "orchestrated"
   | "streaming"
   | "generated"
@@ -385,7 +385,8 @@ function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | n
 }
 
 function readRuntimeChatTraceStorage(): RuntimeChatTraceItem[] {
-  const parsed = safeJsonParse<unknown>(storageGet(RUNTIME_CHAT_STORAGE_KEY, "[]"), []);
+  const raw = storageGet(RUNTIME_CHAT_STORAGE_KEY, "[]");
+  const parsed = safeJsonParse<unknown>(raw, []);
   if (!Array.isArray(parsed)) return [];
   const rows = parsed
     .map((item) => normalizeRuntimeChatTraceItem(item))
@@ -398,7 +399,12 @@ function readRuntimeChatTraceStorage(): RuntimeChatTraceItem[] {
       latestByConversation.set(item.conversationId, item);
     }
   });
-  return Array.from(latestByConversation.values()).sort((left, right) => left.updateTime - right.updateTime);
+  const normalized = Array.from(latestByConversation.values()).sort((left, right) => left.updateTime - right.updateTime);
+  const normalizedJson = JSON.stringify(normalized);
+  if (normalizedJson !== raw) {
+    storageSet(RUNTIME_CHAT_STORAGE_KEY, normalizedJson);
+  }
+  return normalized;
 }
 
 function normalizeScalarEditorText(input: unknown): string {
@@ -765,6 +771,8 @@ function createToonflowStore() {
     sessionPlaybackStartIndex: 0,
     sessionOpening: false,
     sessionOpeningStage: "",
+    sessionOpenError: "",
+    sessionRuntimeStage: "",
     sessionDetail: null as Loadable<SessionDetail>,
     messages: [] as MessageItem[],
     quickInput: "",
@@ -938,25 +946,22 @@ function createToonflowStore() {
     const root = cloneDebugRuntimeRecord(state.debugRuntimeState);
     const currentPlayer = cloneDebugRuntimeRecord(root.player);
     const displayName = normalizeScalarEditorText(currentPlayer.name || state.playerName || "用户") || "用户";
-    const description = normalizeScalarEditorText(currentPlayer.description || state.playerDesc || "用户在故事中的主视角角色");
-    const voice = normalizeScalarEditorText(currentPlayer.voice || state.playerVoice);
     const currentCard = cloneDebugRuntimeRecord(currentPlayer.parameterCardJson);
     const nextCard: Record<string, unknown> = {
-      ...createBasicRoleParameterCard(displayName, description, voice),
       ...currentCard,
       name: normalizeScalarEditorText(currentCard.name ?? displayName) || displayName,
-      raw_setting: normalizeScalarEditorText(currentCard.raw_setting ?? currentCard.rawSetting ?? description),
+      raw_setting: normalizeScalarEditorText(currentCard.raw_setting ?? currentCard.rawSetting),
       gender: normalizeScalarEditorText(currentCard.gender),
       age: normalizeDebugPlayerProfileAge(currentCard.age),
       personality: normalizeScalarEditorText(currentCard.personality),
       appearance: normalizeScalarEditorText(currentCard.appearance),
-      voice: normalizeScalarEditorText(currentCard.voice ?? voice),
+      voice: normalizeScalarEditorText(currentCard.voice ?? currentPlayer.voice ?? state.playerVoice),
       skills: normalizeDebugPlayerStringList(currentCard.skills),
       items: normalizeDebugPlayerStringList(currentCard.items),
       equipment: normalizeDebugPlayerStringList(currentCard.equipment),
-      hp: Number.isFinite(Number(currentCard.hp)) ? Number(currentCard.hp) : 100,
-      mp: Number.isFinite(Number(currentCard.mp)) ? Number(currentCard.mp) : 0,
-      money: Number.isFinite(Number(currentCard.money)) ? Number(currentCard.money) : 0,
+      hp: Number.isFinite(Number(currentCard.hp)) ? Number(currentCard.hp) : undefined,
+      mp: Number.isFinite(Number(currentCard.mp)) ? Number(currentCard.mp) : undefined,
+      money: Number.isFinite(Number(currentCard.money)) ? Number(currentCard.money) : undefined,
       other: normalizeDebugPlayerStringList(currentCard.other),
     };
     const parsed = parseDebugPlayerProfileDraft(content, normalizeScalarEditorText(nextCard.name || displayName) || displayName);
@@ -968,6 +973,14 @@ function createToonflowStore() {
     if (parsed.age != null) {
       nextCard.age = parsed.age;
     }
+    Object.keys(nextCard).forEach((key) => {
+      const value = nextCard[key];
+      if (value === undefined || value === null || value === "") {
+        delete nextCard[key];
+      } else if (Array.isArray(value) && value.length === 0) {
+        delete nextCard[key];
+      }
+    });
     root.player = {
       ...currentPlayer,
       id: normalizeScalarEditorText(currentPlayer.id || "player") || "player",
@@ -975,8 +988,8 @@ function createToonflowStore() {
       name: displayName,
       avatarPath: normalizeScalarEditorText(currentPlayer.avatarPath || state.userAvatarPath),
       avatarBgPath: normalizeScalarEditorText(currentPlayer.avatarBgPath || state.userAvatarBgPath),
-      description,
-      voice,
+      description: normalizeScalarEditorText(currentPlayer.description) || "用户在故事中的主视角角色",
+      voice: normalizeScalarEditorText(currentPlayer.voice || state.playerVoice),
       voiceMode: normalizeScalarEditorText(currentPlayer.voiceMode || state.playerVoiceMode || "text") || "text",
       voicePresetId: normalizeScalarEditorText(currentPlayer.voicePresetId || state.playerVoicePresetId),
       voiceReferenceAudioPath: normalizeScalarEditorText(currentPlayer.voiceReferenceAudioPath || state.playerVoiceReferenceAudioPath),
@@ -1108,8 +1121,56 @@ function createToonflowStore() {
     clearRuntimeRetryMessage();
   }
 
+  function isLocalPendingPlayerMessage(message: MessageItem | null | undefined): boolean {
+    if (!message || String(message.roleType || "").trim() !== "player") return false;
+    const meta = runtimeMetaRecord(message.meta);
+    return meta?.["kind"] === "runtime_stream"
+      && Number(message.id || 0) < 0
+      && ["sending", "error"].includes(String(meta?.["status"] || "").trim());
+  }
+
   function conversationMessages(): MessageItem[] {
     return stripRuntimeRetryMessages(state.messages);
+  }
+
+  function appendLocalPendingPlayerMessage(content: string): MessageItem {
+    const now = Date.now();
+    const lineIndex = conversationMessages().length + 1;
+    const message: MessageItem = {
+      id: -now,
+      role: state.playerName || "用户",
+      roleType: "player",
+      eventType: "on_message",
+      content,
+      createTime: now,
+      meta: buildRuntimeStreamMeta(null, {
+        lineIndex,
+        streaming: false,
+        status: "sending",
+        nextRole: "",
+        nextRoleType: "",
+      }),
+    };
+    state.messages = [...conversationMessages(), message];
+    syncRuntimeChatTrace();
+    return message;
+  }
+
+  function removeLocalPendingPlayerMessage(messageId: number, syncTrace = true) {
+    const index = state.messages.findIndex((item) => Number(item.id || 0) === Number(messageId || 0));
+    if (index < 0) return;
+    state.messages.splice(index, 1);
+    if (syncTrace) syncRuntimeChatTrace();
+  }
+
+  function markLocalPendingPlayerMessageFailed(messageId: number) {
+    updateMessageById(messageId, (message) => ({
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        streaming: false,
+        status: "error",
+      }),
+    }), true);
   }
 
   function restoreDebugPlayerTurnAfterDeletion() {
@@ -1248,6 +1309,8 @@ function createToonflowStore() {
 
   function applyLoadedSessionDetail(detail: SessionDetail) {
     const normalizedMessages = normalizeLoadedSessionMessages(detail);
+    state.sessionRuntimeStage = "";
+    state.sessionOpenError = "";
     state.sessionDetail = {
       ...detail,
       messages: normalizedMessages,
@@ -1294,6 +1357,7 @@ function createToonflowStore() {
         state.chapters = [...state.chapters, result.chapter];
       }
     }
+    state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
   }
 
@@ -1389,6 +1453,7 @@ function createToonflowStore() {
     state.currentSessionId = "";
     state.sessionOpening = false;
     state.sessionOpeningStage = "";
+    state.sessionOpenError = "";
     state.settingsPanelLoaded = false;
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
@@ -3430,6 +3495,8 @@ function createToonflowStore() {
       state.sessionPlaybackStartIndex = 0;
       state.sessionOpening = true;
       state.sessionOpeningStage = "初始化会话";
+      state.sessionOpenError = "";
+      state.sessionRuntimeStage = "";
       state.sessionDetail = null;
       state.messages = [];
       const existingSession = await fetchLatestSessionForWorld(Number(world.id || 0))
@@ -3460,7 +3527,9 @@ function createToonflowStore() {
         await sendMessage();
       }
     } catch (error) {
-      state.notice = `进入游玩失败: ${asUiErrorMessage(error)}`;
+      const message = asUiErrorMessage(error);
+      state.sessionOpenError = message;
+      state.notice = `进入游玩失败: ${message}`;
     } finally {
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
@@ -3475,6 +3544,8 @@ function createToonflowStore() {
     state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
     state.sessionOpening = true;
     state.sessionOpeningStage = options?.playback ? "加载回放进度" : "定位会话";
+    state.sessionOpenError = "";
+    state.sessionRuntimeStage = "";
     const targetWorldId = Number(worldId || 0);
     const fallbackId = String(fallbackSessionId || "").trim();
     const existingSession = Number.isFinite(targetWorldId) && targetWorldId > 0
@@ -3516,8 +3587,10 @@ function createToonflowStore() {
     state.sessionPlaybackStartIndex = Math.max(0, Number(options?.playbackIndex || 0));
     state.currentSessionId = sessionId;
     state.sessionOpening = true;
-    state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆";
-    state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆...";
+    state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆与角色参数";
+    state.sessionOpenError = "";
+    state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆与角色参数...";
+    state.sessionRuntimeStage = "";
     state.sessionDetail = null;
     state.messages = [];
     try {
@@ -3528,10 +3601,26 @@ function createToonflowStore() {
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
+    } catch (error) {
+      const message = asUiErrorMessage(error);
+      state.sessionOpenError = message;
+      state.notice = `${options?.playback ? "打开回放失败" : "打开会话失败"}: ${message}`;
+      throw error;
     } finally {
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
     }
+  }
+
+  async function retryOpenCurrentSession() {
+    const sessionId = state.currentSessionId.trim();
+    if (!sessionId) {
+      throw new Error("当前没有可重试的会话");
+    }
+    await openSession(sessionId, {
+      playback: state.sessionViewMode === "playback",
+      playbackIndex: state.sessionPlaybackStartIndex,
+    });
   }
 
   async function deleteSession(sessionId: string) {
@@ -3921,34 +4010,51 @@ function createToonflowStore() {
     }
   }
 
-  async function performSessionPlayerMessage(content: string) {
+  async function performSessionPlayerMessage(content: string, optimisticMessageId?: number | null) {
     if (!state.currentSessionId) return;
-    const result = await api.addMessage({
-      sessionId: state.currentSessionId,
-      roleType: "player",
-      role: state.playerName || "用户",
-      content,
-      eventType: "on_message",
-    });
-    state.sendText = "";
-    clearRuntimeRetryState();
-    applySessionNarrativeResult(result);
-    await refreshSessionListState();
+    state.sessionRuntimeStage = "提交玩家发言并编排后续剧情";
+    try {
+      const result = await api.addMessage({
+        sessionId: state.currentSessionId,
+        roleType: "player",
+        role: state.playerName || "用户",
+        content,
+        eventType: "on_message",
+      });
+      if (optimisticMessageId) {
+        removeLocalPendingPlayerMessage(optimisticMessageId, false);
+      }
+      state.sendText = "";
+      clearRuntimeRetryState();
+      applySessionNarrativeResult(result);
+      await refreshSessionListState();
+    } finally {
+      if (state.sessionRuntimeStage === "提交玩家发言并编排后续剧情") {
+        state.sessionRuntimeStage = "";
+      }
+    }
   }
 
   async function performContinueSessionNarrative() {
     if (!state.currentSessionId) return;
-    const beforeCount = conversationMessages().length;
-    const result = await api.continueSession(state.currentSessionId);
-    clearRuntimeRetryState();
-    applySessionNarrativeResult(result);
-    await refreshSessionListState();
-    const afterCount = conversationMessages().length;
-    const latest = conversationMessages().slice(-1)[0] || null;
-    const latestStatus = runtimeMessageStatus(latest);
-    const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-    if (afterCount <= beforeCount && !canPlayerSpeakNow && latestStatus !== "waiting_player") {
-      throw new Error("自动推进没有产出新内容");
+    state.sessionRuntimeStage = "继续编排下一轮剧情";
+    try {
+      const beforeCount = conversationMessages().length;
+      const result = await api.continueSession(state.currentSessionId);
+      clearRuntimeRetryState();
+      applySessionNarrativeResult(result);
+      await refreshSessionListState();
+      const afterCount = conversationMessages().length;
+      const latest = conversationMessages().slice(-1)[0] || null;
+      const latestStatus = runtimeMessageStatus(latest);
+      const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+      if (afterCount <= beforeCount && !canPlayerSpeakNow && latestStatus !== "waiting_player") {
+        throw new Error("自动推进没有产出新内容");
+      }
+    } finally {
+      if (state.sessionRuntimeStage === "继续编排下一轮剧情") {
+        state.sessionRuntimeStage = "";
+      }
     }
   }
 
@@ -3980,10 +4086,17 @@ function createToonflowStore() {
         await performDebugPlayerMessage(content, true);
         return;
       }
-      await performSessionPlayerMessage(content);
+      const optimistic = appendLocalPendingPlayerMessage(content);
+      state.sendText = "";
+      await performSessionPlayerMessage(content, optimistic.id);
     } catch (error) {
       const rawMessage = asUiErrorMessage(error);
       if (!state.debugMode && (rawMessage.includes("当前还没轮到用户发言") || rawMessage.includes("409"))) {
+        const pending = state.messages.find((item) => isLocalPendingPlayerMessage(item));
+        if (pending) {
+          removeLocalPendingPlayerMessage(Number(pending.id || 0));
+        }
+        state.sendText = content;
         state.notice = rawMessage;
         try {
           await refreshCurrentSession();
@@ -3993,15 +4106,57 @@ function createToonflowStore() {
         return;
       }
       const message = `发送失败：${asUiErrorMessage(error)}`;
-      const retryTask = state.debugMode
-        ? createRuntimeRetryRunner(() => performDebugPlayerMessage(content, false), {
-          formatErrorMessage: (text) => `发送失败：${text}`,
-        })
-        : createRuntimeRetryRunner(() => performSessionPlayerMessage(content), {
-          formatErrorMessage: (text) => `发送失败：${text}`,
-        });
+      if (!state.debugMode) {
+        const pending = state.messages.find((item) => isLocalPendingPlayerMessage(item));
+        if (pending) {
+          markLocalPendingPlayerMessageFailed(Number(pending.id || 0));
+        }
+        state.sendText = content;
+        state.notice = message;
+        return;
+      }
+      const retryTask = createRuntimeRetryRunner(() => performDebugPlayerMessage(content, false), {
+        formatErrorMessage: (text) => `发送失败：${text}`,
+      });
       showRuntimeRetryMessage(message, retryTask);
     }
+  }
+
+  async function retryFailedPlayerMessage(messageId: number) {
+    const target = state.messages.find((item) => Number(item.id || 0) === Number(messageId || 0));
+    if (!target || !isLocalPendingPlayerMessage(target) || runtimeMessageStatus(target) !== "error") {
+      throw new Error("没有可重试的玩家台词");
+    }
+    const content = String(target.content || "").trim();
+    if (!content) {
+      throw new Error("当前台词为空，无法重试");
+    }
+    updateMessageById(messageId, (message) => ({
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        streaming: false,
+        status: "sending",
+      }),
+    }), true);
+    state.sendText = "";
+    try {
+      await performSessionPlayerMessage(content, messageId);
+    } catch (error) {
+      markLocalPendingPlayerMessageFailed(messageId);
+      state.sendText = content;
+      const message = asUiErrorMessage(error);
+      state.notice = `发送失败：${message}`;
+      throw error;
+    }
+  }
+
+  function restoreFailedPlayerMessageForRewrite(messageId: number) {
+    const target = state.messages.find((item) => Number(item.id || 0) === Number(messageId || 0));
+    if (!target || !isLocalPendingPlayerMessage(target)) {
+      throw new Error("没有可改写的玩家台词");
+    }
+    state.sendText = String(target.content || "").trim();
+    removeLocalPendingPlayerMessage(messageId);
   }
 
   async function deleteMessage(message: MessageItem) {
@@ -4095,6 +4250,7 @@ function createToonflowStore() {
     continueSessionForWorld,
     quickStart,
     openSession,
+    retryOpenCurrentSession,
     syncRuntimeChatTraceNow: syncRuntimeChatTrace,
     deleteSession,
     refreshCurrentSession,
@@ -4103,6 +4259,8 @@ function createToonflowStore() {
     continueSessionNarrative,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
+    retryFailedPlayerMessage,
+    restoreFailedPlayerMessageForRewrite,
     advanceDebugChapterIfNeeded,
     jumpDebugChapter,
     getDebugChapterIndex,

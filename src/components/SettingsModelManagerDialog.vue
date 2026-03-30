@@ -83,6 +83,12 @@ function defaultSlotModelType(): string {
 }
 
 function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelType = defaultSlotModelType()): string {
+  if (props.configType === "text" && manufacturer === "deepseek") {
+    return "deepseek-chat";
+  }
+  if (props.configType === "text" && manufacturer === "lmstudio") {
+    return "qwen3.5-9b";
+  }
   if (isVoiceDesignSlot() && manufacturer === "qwen") {
     return "qwen3-tts-vd-2026-01-26";
   }
@@ -164,15 +170,26 @@ const manufacturerOptions = computed(() =>
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria" || item.value === "aliyun_imageseg" || item.value === "tencent_ci" || item.value === "local_birefnet";
     }
+    if (props.configType === "text") {
+      return item.value !== "ai_voice_tts"
+        && item.value !== "aliyun"
+        && item.value !== "aliyun_direct"
+        && item.value !== "bria"
+        && item.value !== "aliyun_imageseg"
+        && item.value !== "tencent_ci"
+        && item.value !== "local_birefnet";
+    }
     if (props.configType === "voice") {
-      return item.value !== "qwen";
+      return item.value !== "qwen" && item.value !== "lmstudio";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"
       && item.value !== "aliyun_direct"
       && item.value !== "bria"
       && item.value !== "aliyun_imageseg"
-      && item.value !== "tencent_ci";
+      && item.value !== "tencent_ci"
+      && item.value !== "local_birefnet"
+      && item.value !== "lmstudio";
   }),
 );
 
@@ -196,6 +213,12 @@ const slotRows = computed(() =>
 const recommendation = computed(() => store.settingsRecommendedModel(props.slotKey));
 const advisory = computed(() => store.settingsModelAdvisory(props.slotKey));
 const apiKeyPlaceholder = computed(() => {
+  if (props.configType === "text" && form.manufacturer === "lmstudio") {
+    return "本地 LM Studio 可留空";
+  }
+  if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_birefnet") {
+    return "本地模型无需填写";
+  }
   if (!isApiKeyRequiredFor(form.manufacturer, props.configType)) {
     return "本地 ai_voice_tts 可留空";
   }
@@ -205,12 +228,12 @@ const apiKeyPlaceholder = computed(() => {
   if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "tencent_ci") {
     return "SecretId|SecretKey";
   }
-  if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_birefnet") {
-    return "本地模型无需填写";
-  }
   return "请输入 API Key";
 });
 const apiKeyHint = computed(() => {
+  if (props.configType === "text" && form.manufacturer === "lmstudio") {
+    return "LM Studio 运行在本机时不需要 API Key，Base URL 默认可填 http://127.0.0.1:1234/v1。";
+  }
   if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "aliyun_imageseg") {
     return "阿里云视觉这里不是单个 token。请填写 AccessKeyId|AccessKeySecret，或填写 {\"accessKeyId\":\"...\",\"accessKeySecret\":\"...\"}。";
   }

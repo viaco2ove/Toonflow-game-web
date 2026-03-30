@@ -3139,6 +3139,11 @@ textarea::-webkit-scrollbar-thumb {
   scrollbar-color: rgba(120, 150, 210, 0.9) rgba(255, 255, 255, 0.08);
 }
 
+.param-value--raw-setting {
+  max-height: 260px;
+  line-height: 1.7;
+}
+
 .param-value--scroll::-webkit-scrollbar {
   width: 6px;
 }
@@ -4023,6 +4028,18 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(221, 232, 246, 0.82);
 }
 
+.play-loading-action {
+  margin-top: 14px;
+  min-width: 112px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 216, 74, 0.45);
+  background: rgba(255, 216, 74, 0.14);
+  color: #ffe17f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 @keyframes play-loading-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -4191,6 +4208,36 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-bubble-reaction--live {
   width: fit-content;
+}
+
+.play-bubble-status {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: rgba(213, 227, 248, 0.84);
+  font-size: 12px;
+}
+
+.play-bubble-status.is-error {
+  color: #ffd0d0;
+}
+
+.play-bubble-status--live {
+  width: fit-content;
+}
+
+.play-bubble-status__action {
+  min-width: 54px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(218, 229, 244, 0.24);
+  background: rgba(8, 20, 37, 0.36);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .play-sheet {
@@ -4855,6 +4902,9 @@ textarea::-webkit-scrollbar-thumb {
 .play-voice-btn {
   flex: 1;
   height: 40px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .play-voice-btn.is-active,

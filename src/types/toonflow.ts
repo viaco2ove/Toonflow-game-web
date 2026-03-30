@@ -369,7 +369,7 @@ export function createDefaultPlayerRole(): StoryRole {
     voicePromptText: "",
     voiceMixVoices: [],
     sample: "",
-    parameterCardJson: createBasicRoleParameterCard("用户", "用户在故事中的主视角角色", ""),
+    parameterCardJson: null,
   };
 }
 
@@ -390,7 +390,7 @@ export function createDefaultNarratorRole(): StoryRole {
     voicePromptText: "",
     voiceMixVoices: [],
     sample: "",
-    parameterCardJson: createBasicRoleParameterCard("旁白", "负责环境推进、规则提示与节奏控制", "混合（清朗温润）"),
+    parameterCardJson: null,
   };
 }
 

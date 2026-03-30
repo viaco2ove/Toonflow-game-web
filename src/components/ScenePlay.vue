@@ -131,6 +131,22 @@ function runtimeMessageStatus(message: MessageItem | null | undefined): string {
   return scalarText(meta.status);
 }
 
+function isLocalPendingPlayerMessage(message: MessageItem | null | undefined): boolean {
+  if (!message || String(message.roleType || "").trim() !== "player") return false;
+  const meta = asMiniRecord(message.meta);
+  const status = runtimeMessageStatus(message);
+  return meta.kind === "runtime_stream" && Number(message.id || 0) < 0 && ["sending", "error"].includes(status);
+}
+
+function isLocalFailedPlayerMessage(message: MessageItem | null | undefined): boolean {
+  return isLocalPendingPlayerMessage(message) && runtimeMessageStatus(message) === "error";
+}
+
+function playerMessagePendingText(message: MessageItem | null | undefined): string {
+  if (!isLocalPendingPlayerMessage(message)) return "";
+  return isLocalFailedPlayerMessage(message) ? "发送失败" : "发送中...";
+}
+
 function runtimeRetryLabel(message: MessageItem | null | undefined): string {
   if (!isRuntimeRetryMessage(message)) return "重试";
   const label = scalarText(message.meta.retryLabel);
@@ -237,6 +253,15 @@ function normalizePlayableSpeechText(input: unknown): string {
   const compact = text.replace(/\s+/g, "");
   const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
   return meaningful ? text : "";
+}
+
+function speakableUnitCount(input: unknown): number {
+  const text = normalizePlayableSpeechText(input);
+  if (!text) return 0;
+  return text
+    .replace(/\s+/g, "")
+    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
+    .length;
 }
 
 function isDeterministicRuntimeVoiceError(error: unknown): boolean {
@@ -385,47 +410,6 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     : null;
 }
 
-function fallbackRoleDescription(roleType: string, description: unknown): string {
-  const text = scalarText(description);
-  if (text) return text;
-  if (roleType === "player") return "用户在故事中的主视角角色";
-  if (roleType === "narrator") return "负责环境推进、规则提示与节奏控制";
-  return "";
-}
-
-function fallbackRoleParameterCard(role: Partial<StoryRole> | null | undefined): RoleParameterCard | null {
-  const roleType = scalarText(role?.roleType);
-  const name = scalarText(role?.name) || (roleType === "player" ? "用户" : roleType === "narrator" ? "旁白" : "");
-  const rawSetting = fallbackRoleDescription(roleType, role?.description);
-  const voice = scalarText(role?.voice);
-  if (!name && !rawSetting && !voice) return null;
-  return {
-    name,
-    raw_setting: rawSetting,
-    gender: "",
-    age: null,
-    level: 1,
-    level_desc: "初入此界",
-    personality: "",
-    appearance: "",
-    voice,
-    skills: [],
-    items: [],
-    equipment: [],
-    hp: 100,
-    mp: 0,
-    money: 0,
-    other: [],
-  };
-}
-
-function ensureRoleParameterCard(role: StoryRole): StoryRole {
-  return {
-    ...role,
-    parameterCardJson: role.parameterCardJson ?? fallbackRoleParameterCard(role),
-  };
-}
-
 function normalizeRuntimeMixVoices(input: unknown): VoiceMixItem[] {
   return asMiniArray<Record<string, unknown>>(input)
     .map((item) => ({
@@ -456,7 +440,7 @@ function runtimeRoleSnapshot(roleType: "player" | "narrator"): StoryRole | null 
     sample: scalarText(raw.sample),
     parameterCardJson: normalizeRoleParameterCard(raw.parameterCardJson),
   };
-  return ensureRoleParameterCard(snapshot);
+  return snapshot;
 }
 
 function runtimeNpcSnapshot(baseRole: StoryRole): StoryRole | null {
@@ -490,12 +474,12 @@ function runtimeNpcSnapshot(baseRole: StoryRole): StoryRole | null {
     sample: scalarText(raw.sample),
     parameterCardJson: normalizeRoleParameterCard(raw.parameterCardJson),
   };
-  return ensureRoleParameterCard(snapshot);
+  return snapshot;
 }
 
 function mergeRoleSnapshot(base: StoryRole, runtime: StoryRole | null): StoryRole {
-  if (!runtime) return ensureRoleParameterCard(base);
-  return ensureRoleParameterCard({
+  if (!runtime) return base;
+  return {
     ...base,
     ...runtime,
     id: runtime.id || base.id,
@@ -514,7 +498,7 @@ function mergeRoleSnapshot(base: StoryRole, runtime: StoryRole | null): StoryRol
     voiceMixVoices: runtime.voiceMixVoices?.length ? runtime.voiceMixVoices : (base.voiceMixVoices || []),
     sample: runtime.sample || base.sample,
     parameterCardJson: runtime.parameterCardJson ?? base.parameterCardJson ?? null,
-  });
+  };
 }
 
 const roleCards = computed(() => {
@@ -522,11 +506,10 @@ const roleCards = computed(() => {
   const list: StoryRole[] = [];
   const pushRole = (role?: StoryRole | null) => {
     if (!role || !role.name) return;
-    const normalizedRole = ensureRoleParameterCard(role);
-    const key = normalizedRole.id || `${normalizedRole.roleType}:${normalizedRole.name}`;
+    const key = role.id || `${role.roleType}:${role.name}`;
     if (seen.has(key)) return;
     seen.add(key);
-    list.push(normalizedRole);
+    list.push(role);
   };
   if (store.state.debugMode && !currentWorld.value) {
     pushRole({
@@ -545,11 +528,7 @@ const roleCards = computed(() => {
       avatarPath: store.state.userAvatarPath,
       avatarBgPath: store.state.userAvatarBgPath,
       sample: "",
-      parameterCardJson: {
-        name: store.state.playerName || "用户",
-        raw_setting: store.state.playerDesc || "",
-        voice: store.state.playerVoice || "",
-      },
+      parameterCardJson: null,
     } as StoryRole);
     pushRole({
       id: "narrator",
@@ -567,11 +546,7 @@ const roleCards = computed(() => {
       avatarPath: "",
       avatarBgPath: "",
       sample: "",
-      parameterCardJson: {
-        name: store.state.narratorName || "旁白",
-        raw_setting: "负责环境推进、规则提示与节奏控制",
-        voice: store.state.narratorVoice || "",
-      },
+      parameterCardJson: null,
     } as StoryRole);
     (store.state.npcRoles || []).forEach((role) => pushRole(role));
   } else {
@@ -602,24 +577,49 @@ const latestConversationMessage = computed(() => {
 });
 const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
+  if (store.state.sessionOpenError) return "session_error";
   if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
+  if (latestStatus === "sending") return "sending";
+  if (
+    canPlayerSpeak.value
+    && latestStatus
+    && !["streaming", "generated", "revealing", "voicing", "auto_advancing", "sending"].includes(latestStatus)
+  ) {
+    return "waiting_player";
+  }
   if (latestStatus) return latestStatus;
   return canPlayerSpeak.value ? "waiting_player" : "waiting_next";
 });
 const canPlayerInput = computed(() => {
   if (store.state.sessionOpening) return false;
+  if (store.state.sessionOpenError) return false;
+  if (sessionRuntimeStageText.value) return false;
   if (activeMiniGame.value?.acceptsTextInput) return true;
   return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
 const sessionOpeningStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpeningStage) || "正在进入故事...");
+const sessionOpenErrorText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpenError) || "");
+const playOpenOverlayVisible = computed(() => (
+  !store.state.debugMode
+  && !store.state.messages.length
+  && (store.state.sessionOpening || Boolean(sessionOpenErrorText.value))
+));
+const playOpenOverlayTitle = computed(() => (store.state.sessionOpening ? "进入故事中" : "打开会话失败"));
+const playOpenOverlaySub = computed(() => (store.state.sessionOpening ? sessionOpeningStageText.value : sessionOpenErrorText.value));
+const sessionRuntimeStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionRuntimeStage) || "");
 const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
+  if (sessionOpenErrorText.value) return "打开会话失败，请重试";
   if (activeMiniGame.value?.acceptsTextInput) {
     return activeMiniGame.value.inputHint || "直接输入方案";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
+  if (runtimeStatus === "sending") {
+    return "发送中...";
+  }
+  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
   }
@@ -633,16 +633,27 @@ const playInputPlaceholder = computed(() => {
 });
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
+  if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
   if (activeMiniGame.value?.acceptsTextInput) {
     return "小游戏进行中，直接输入方案即可。";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
+  if (runtimeStatus === "sending") {
+    return "正在发送中...";
+  }
+  if (runtimeStatus === "error") {
+    return "发送失败，可重试或重新输入。";
+  }
+  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成，可刷新或返回历史继续查看。";
   }
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败，可返回历史重新开始。";
+  }
+  if (isLocalFailedPlayerMessage(latestConversationMessage.value)) {
+    return "发送失败，可重试或重新输入。";
   }
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     return "";
@@ -887,13 +898,17 @@ const latestRuntimeChatTrace = computed(() => {
 });
 const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
+  if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
-  if (status === "waiting_player") return "玩家";
+  if (status === "waiting_player" || canPlayerSpeak.value) return "玩家";
   return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
   const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;
+  if (!status && canPlayerSpeak.value) return "等待玩家";
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
+  if (status === "session_error") return "打开失败";
+  if (status === "sending") return "发送中";
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待玩家";
   if (status === "auto_advancing") return "自动推进中";
@@ -1317,8 +1332,6 @@ function rewrite(content: string) {
   menuVisibleHint.value = "已填入改写内容";
 }
 
-const latestConversationMessage = computed(() => conversationMessages().slice(-1)[0] || null);
-
 function canDeleteMenuMessage(message: MessageItem | null | undefined) {
   if (!message || isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
   if (String(message.roleType || "").trim() !== "player") return false;
@@ -1556,7 +1569,7 @@ function splitSpeechSegments(input: string): string[] {
   let buffer = "";
   const push = () => {
     const value = normalizePlayableSpeechText(buffer);
-    if (value) segments.push(value);
+    if (value && speakableUnitCount(value) >= 2) segments.push(value);
     buffer = "";
   };
   for (const char of text) {
@@ -1921,7 +1934,7 @@ async function playMessageAudio(
       return true;
     }
     if (!manual) {
-      store.state.notice = "自动语音失败，已跳过";
+      store.state.notice = "自动语音失败，已跳过，可点重听重试";
     }
     if (manual) {
       menuVisibleHint.value = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
@@ -2040,7 +2053,6 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
   };
   return [
     { label: "角色名", value: scalarText(card.name) || fallback },
-    { label: "原始角色设定", value: scalarText(card.raw_setting) || fallback },
     { label: "性别", value: scalarText(card.gender) || fallback },
     { label: "年龄", value: card.age != null ? String(card.age) : fallback },
     { label: "等级", value: card.level != null ? String(card.level) : fallback },
@@ -2056,6 +2068,11 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "金钱", value: card.money != null ? String(card.money) : fallback },
     { label: "其他", value: stringifyOther() },
   ];
+}
+
+function parameterCardRawSetting(card: RoleParameterCard | null | undefined) {
+  if (!card) return "未设定";
+  return scalarText(card.raw_setting) || "未设定";
 }
 
 function roleAvatarForeground(role?: StoryRole | null): string {
@@ -2213,6 +2230,26 @@ function continueFromPlayback() {
 function messageVoiceTail(message: MessageItem): string {
   if (runtimeVoiceMessageKey.value !== messageUiKey(message) || !runtimeVoicePhase.value) return "";
   return runtimeVoiceIndicator.value;
+}
+
+function retryFailedPlayerMessage(message: MessageItem) {
+  void store.retryFailedPlayerMessage(Number(message.id || 0)).catch((error) => {
+    store.state.notice = `重试发送失败：${error instanceof Error ? error.message : "未知错误"}`;
+  });
+}
+
+function rewriteFailedPlayerMessage(message: MessageItem) {
+  try {
+    store.restoreFailedPlayerMessageForRewrite(Number(message.id || 0));
+    playMode.value = "live";
+    inputMode.value = "text";
+    nextTick(() => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
+      textarea?.focus();
+    });
+  } catch (error) {
+    store.state.notice = `恢复改写失败：${error instanceof Error ? error.message : "未知错误"}`;
+  }
 }
 
 function toggleInputMode() {
@@ -2378,12 +2415,44 @@ function handleVoicePrimary() {
   startVoiceRecognition();
 }
 
-function finishVoiceHold(event: PointerEvent | null, cancel = false) {
-  if (!voiceHoldActive.value) return;
-  const target = event?.currentTarget;
-  if (target instanceof HTMLElement && voiceHoldPointerId.value != null) {
+function beginVoiceHoldInteraction(target: EventTarget | null, startY: number, pointerId: number | null) {
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
+    return;
+  }
+  if (voiceTranscribing.value || voiceListening.value || voiceHoldActive.value) {
+    return;
+  }
+  voiceHoldActive.value = true;
+  voiceHoldCancelPending.value = false;
+  voiceHoldStartY.value = startY;
+  voiceHoldPointerId.value = pointerId;
+  if (target instanceof HTMLElement && pointerId != null) {
     try {
-      target.releasePointerCapture(voiceHoldPointerId.value);
+      target.setPointerCapture(pointerId);
+    } catch {
+      // noop
+    }
+  }
+  void startVoiceRecognition().finally(() => {
+    if (!voiceListening.value && !voiceTranscribing.value) {
+      voiceHoldActive.value = false;
+      voiceHoldCancelPending.value = false;
+      voiceHoldPointerId.value = null;
+    }
+  });
+}
+
+function updateVoiceHoldInteraction(currentY: number) {
+  if (!voiceHoldActive.value) return;
+  voiceHoldCancelPending.value = voiceHoldStartY.value - currentY > 72;
+}
+
+function finishVoiceHoldInteraction(target: EventTarget | null, pointerId: number | null, cancel = false) {
+  if (!voiceHoldActive.value) return;
+  if (target instanceof HTMLElement && voiceHoldPointerId.value != null && pointerId != null) {
+    try {
+      target.releasePointerCapture(pointerId);
     } catch {
       // noop
     }
@@ -2401,45 +2470,66 @@ function finishVoiceHold(event: PointerEvent | null, cancel = false) {
 }
 
 function handleVoiceHoldStart(event: PointerEvent) {
-  if (!canPlayerInput.value) {
-    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
-    return;
-  }
-  if (voiceTranscribing.value || voiceListening.value || voiceHoldActive.value) {
-    return;
-  }
-  voiceHoldActive.value = true;
-  voiceHoldCancelPending.value = false;
-  voiceHoldStartY.value = event.clientY;
-  voiceHoldPointerId.value = event.pointerId;
-  const target = event.currentTarget;
-  if (target instanceof HTMLElement) {
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch {
-      // noop
-    }
-  }
-  void startVoiceRecognition().finally(() => {
-    if (!voiceListening.value && !voiceTranscribing.value) {
-      voiceHoldActive.value = false;
-      voiceHoldCancelPending.value = false;
-      voiceHoldPointerId.value = null;
-    }
-  });
+  beginVoiceHoldInteraction(event.currentTarget, event.clientY, event.pointerId);
 }
 
 function handleVoiceHoldMove(event: PointerEvent) {
   if (!voiceHoldActive.value || voiceHoldPointerId.value !== event.pointerId) return;
-  voiceHoldCancelPending.value = voiceHoldStartY.value - event.clientY > 72;
+  updateVoiceHoldInteraction(event.clientY);
 }
 
 function handleVoiceHoldEnd(event: PointerEvent) {
-  finishVoiceHold(event, false);
+  finishVoiceHoldInteraction(event.currentTarget, event.pointerId, false);
 }
 
 function handleVoiceHoldCancel(event: PointerEvent) {
-  finishVoiceHold(event, true);
+  finishVoiceHoldInteraction(event.currentTarget, event.pointerId, true);
+}
+
+function handleVoiceMouseDown(event: MouseEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  if (event.button !== 0) return;
+  beginVoiceHoldInteraction(event.currentTarget, event.clientY, null);
+}
+
+function handleVoiceMouseMove(event: MouseEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  if (!voiceHoldActive.value) return;
+  updateVoiceHoldInteraction(event.clientY);
+}
+
+function handleVoiceMouseUp(event: MouseEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  finishVoiceHoldInteraction(event.currentTarget, null, false);
+}
+
+function handleVoiceMouseLeave(event: MouseEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  finishVoiceHoldInteraction(event.currentTarget, null, true);
+}
+
+function handleVoiceTouchStart(event: TouchEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+  beginVoiceHoldInteraction(event.currentTarget, touch.clientY, null);
+}
+
+function handleVoiceTouchMove(event: TouchEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  const touch = event.touches[0];
+  if (!touch || !voiceHoldActive.value) return;
+  updateVoiceHoldInteraction(touch.clientY);
+}
+
+function handleVoiceTouchEnd(event: TouchEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  finishVoiceHoldInteraction(event.currentTarget, null, false);
+}
+
+function handleVoiceTouchCancel(event: TouchEvent) {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  finishVoiceHoldInteraction(event.currentTarget, null, true);
 }
 
 function onMiniAction(kind: "share" | "comment") {
@@ -2453,6 +2543,14 @@ function onMiniAction(kind: "share" | "comment") {
 
 function toggleFavorite() {
   store.state.notice = "收藏功能待接入";
+}
+
+async function retrySessionOpen() {
+  try {
+    await store.retryOpenCurrentSession();
+  } catch (error) {
+    store.state.notice = `重试打开会话失败: ${error instanceof Error ? error.message : "未知错误"}`;
+  }
 }
 
 function pickTip(option: string) {
@@ -2527,7 +2625,7 @@ onBeforeUnmount(() => {
         class="play-thread"
         :class="{ 'play-thread--history': playMode === 'history', 'play-thread--single-mode': playMode !== 'history' }"
       >
-        <div v-if="!displayMessages.length" class="play-empty">{{ store.state.sessionOpening ? sessionOpeningStageText : "当前会话暂无消息，发送一句话开始。" }}</div>
+        <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">当前会话暂无消息</div>
         <div v-else-if="playMode === 'history'" class="play-thread__history">
           <template v-for="message in displayMessages" :key="message.id">
             <article
@@ -2582,6 +2680,29 @@ onBeforeUnmount(() => {
                   </span>
                 </div>
                 <div v-if="messageReactionText(message)" class="play-bubble-reaction">{{ messageReactionText(message) }}</div>
+                <div
+                  v-if="playerMessagePendingText(message)"
+                  class="play-bubble-status"
+                  :class="{ 'is-error': isLocalFailedPlayerMessage(message) }"
+                >
+                  <span>{{ playerMessagePendingText(message) }}</span>
+                  <button
+                    v-if="isLocalFailedPlayerMessage(message)"
+                    type="button"
+                    class="play-bubble-status__action"
+                    @click.stop="retryFailedPlayerMessage(message)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    v-if="isLocalFailedPlayerMessage(message)"
+                    type="button"
+                    class="play-bubble-status__action"
+                    @click.stop="rewriteFailedPlayerMessage(message)"
+                  >
+                    改写
+                  </button>
+                </div>
               </div>
 
               <div v-if="message.roleType === 'player'" class="play-bubble-avatar">
@@ -2642,6 +2763,29 @@ onBeforeUnmount(() => {
                 <div v-if="messageReactionText(currentLiveMessage)" class="play-bubble-reaction play-bubble-reaction--live">
                   {{ messageReactionText(currentLiveMessage) }}
                 </div>
+                <div
+                  v-if="playerMessagePendingText(currentLiveMessage)"
+                  class="play-bubble-status play-bubble-status--live"
+                  :class="{ 'is-error': isLocalFailedPlayerMessage(currentLiveMessage) }"
+                >
+                  <span>{{ playerMessagePendingText(currentLiveMessage) }}</span>
+                  <button
+                    v-if="isLocalFailedPlayerMessage(currentLiveMessage)"
+                    type="button"
+                    class="play-bubble-status__action"
+                    @click.stop="retryFailedPlayerMessage(currentLiveMessage)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    v-if="isLocalFailedPlayerMessage(currentLiveMessage)"
+                    type="button"
+                    class="play-bubble-status__action"
+                    @click.stop="rewriteFailedPlayerMessage(currentLiveMessage)"
+                  >
+                    改写
+                  </button>
+                </div>
               </article>
               <button
                 v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips' && tipOptions.length"
@@ -2654,6 +2798,21 @@ onBeforeUnmount(() => {
                 </svg>
               </button>
             </div>
+          </div>
+        </div>
+        <div v-if="playOpenOverlayVisible" class="play-loading-mask">
+          <div class="play-loading-card">
+            <div v-if="store.state.sessionOpening" class="play-loading-spinner"></div>
+            <div class="play-loading-title">{{ playOpenOverlayTitle }}</div>
+            <div class="play-loading-sub">{{ playOpenOverlaySub }}</div>
+            <button
+              v-if="sessionOpenErrorText"
+              type="button"
+              class="play-loading-action"
+              @click="retrySessionOpen"
+            >
+              重试打开
+            </button>
           </div>
         </div>
         <div v-if="debugLoading" class="play-loading-mask">
@@ -2920,6 +3079,14 @@ onBeforeUnmount(() => {
               @pointermove.prevent="handleVoiceHoldMove"
               @pointerup.prevent="handleVoiceHoldEnd"
               @pointercancel.prevent="handleVoiceHoldCancel"
+              @mousedown.prevent="handleVoiceMouseDown"
+              @mousemove.prevent="handleVoiceMouseMove"
+              @mouseup.prevent="handleVoiceMouseUp"
+              @mouseleave.prevent="handleVoiceMouseLeave"
+              @touchstart.prevent="handleVoiceTouchStart"
+              @touchmove.prevent="handleVoiceTouchMove"
+              @touchend.prevent="handleVoiceTouchEnd"
+              @touchcancel.prevent="handleVoiceTouchCancel"
               @contextmenu.prevent
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2930,7 +3097,9 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
-            <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">发送</button>
+            <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">
+              {{ currentRuntimeInputStatus === "sending" ? "发送中..." : sessionRuntimeStageText ? "处理中..." : "发送" }}
+            </button>
           </div>
         </template>
         <template v-else>
@@ -2944,6 +3113,14 @@ onBeforeUnmount(() => {
               @pointermove.prevent="handleVoiceHoldMove"
               @pointerup.prevent="handleVoiceHoldEnd"
               @pointercancel.prevent="handleVoiceHoldCancel"
+              @mousedown.prevent="handleVoiceMouseDown"
+              @mousemove.prevent="handleVoiceMouseMove"
+              @mouseup.prevent="handleVoiceMouseUp"
+              @mouseleave.prevent="handleVoiceMouseLeave"
+              @touchstart.prevent="handleVoiceTouchStart"
+              @touchmove.prevent="handleVoiceTouchMove"
+              @touchend.prevent="handleVoiceTouchEnd"
+              @touchcancel.prevent="handleVoiceTouchCancel"
               @contextmenu.prevent
             >
               {{ voiceTranscribing ? "识别处理中..." : voiceListening ? (voiceHoldCancelPending ? "松开取消" : "松开发送，上滑取消") : "按住说话" }}
@@ -3037,15 +3214,18 @@ onBeforeUnmount(() => {
                     {{ roleParameterRawOpen ? "收起原文" : "查看原文" }}
                   </button>
                 </div>
+                <div class="param-item param-item--wide">
+                  <div class="tiny">原始角色设定</div>
+                  <div class="param-value param-value--scroll param-value--raw-setting">{{ parameterCardRawSetting(roleDetail.parameterCardJson) }}</div>
+                </div>
                 <div class="param-grid">
                   <div
                     v-for="item in parameterCardEntries(roleDetail.parameterCardJson)"
                     :key="item.label"
                     class="param-item"
-                    :class="{ 'param-item--wide': item.label === '原始角色设定' }"
                   >
                     <div class="tiny">{{ item.label }}</div>
-                    <div class="param-value" :class="{ 'param-value--scroll': item.label === '原始角色设定' || String(item.value || '').length > 120 }">{{ item.value }}</div>
+                    <div class="param-value" :class="{ 'param-value--scroll': String(item.value || '').length > 120 }">{{ item.value }}</div>
                   </div>
                 </div>
                 <pre v-if="roleParameterRawOpen" class="detail-pre">{{ JSON.stringify(roleDetail.parameterCardJson, null, 2) }}</pre>
