@@ -711,7 +711,7 @@ function stripRoleVoiceConfig(role: StoryRole): StoryRole {
 
 function createToonflowStore() {
   const state = reactive({
-    baseUrl: storageGet("toonflow.baseUrl", "http://127.0.0.1:60000"),
+    baseUrl: storageGet("toonflow.baseUrl", "http://127.0.0.1:60002"),
     token: storageGet("toonflow.token", ""),
     loginUsername: storageGet("toonflow.loginUsername", "admin"),
     loginPassword: storageGet("toonflow.loginPassword", "admin123"),

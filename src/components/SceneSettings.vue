@@ -164,7 +164,7 @@ watch(
       <div class="section-title settings-section-title">请求地址配置</div>
       <div class="field">
         <label>API 地址</label>
-        <input v-model="store.state.baseUrl" class="input" type="text" placeholder="http://127.0.0.1:60000" />
+        <input v-model="store.state.baseUrl" class="input" type="text" placeholder="http://127.0.0.1:60002" />
       </div>
       <div class="settings-action-row">
         <button class="button primary settings-solid-btn" type="button" @click="store.saveConnection">保存连接</button>
@@ -281,7 +281,7 @@ watch(
 
         <div class="field">
           <label>API 地址</label>
-          <input v-model="store.state.baseUrl" class="input" type="text" placeholder="http://127.0.0.1:60000" />
+          <input v-model="store.state.baseUrl" class="input" type="text" placeholder="http://127.0.0.1:60002" />
         </div>
 
         <template v-if="accountDialogMode === 'login'">
