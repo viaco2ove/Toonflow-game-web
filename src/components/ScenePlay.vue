@@ -74,18 +74,11 @@ function readPlayAutoVoicePreference(): boolean {
   return window.localStorage.getItem(PLAY_AUTO_VOICE_STORAGE_KEY) !== "0";
 }
 
-const placeholderNarrativePattern = /^[.。…·•・⋯\s]{1,12}$/u;
 const finishedSessionStatuses = new Set(["chapter_completed", "completed", "success", "finished"]);
 const failedSessionStatuses = new Set(["failed", "dead", "lose", "loss"]);
 
 function sessionStatusKey(input: unknown): string {
   return scalarText(input).toLowerCase();
-}
-
-function isPlaceholderNarrative(input: unknown): boolean {
-  const text = scalarText(input);
-  if (!text) return true;
-  return placeholderNarrativePattern.test(text);
 }
 
 function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
@@ -230,6 +223,14 @@ function sanitizeSpeechText(input: unknown): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function normalizePlayableSpeechText(input: unknown): string {
+  const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
+  if (!text) return "";
+  const compact = text.replace(/\s+/g, "");
+  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
+  return meaningful ? text : "";
 }
 
 function isDeterministicRuntimeVoiceError(error: unknown): boolean {
@@ -452,6 +453,40 @@ function runtimeRoleSnapshot(roleType: "player" | "narrator"): StoryRole | null 
   return ensureRoleParameterCard(snapshot);
 }
 
+function runtimeNpcSnapshot(baseRole: StoryRole): StoryRole | null {
+  const npcBag = asMiniRecord(runtimeState.value.npcs);
+  if (!Object.keys(npcBag).length) return null;
+  const baseId = scalarText(baseRole.id);
+  const baseName = scalarText(baseRole.name);
+  const raw = Object.values(npcBag)
+    .map((item) => asMiniRecord(item))
+    .find((item) => {
+      const itemId = scalarText(item.id);
+      const itemName = scalarText(item.name);
+      return (baseId && itemId && itemId === baseId) || (baseName && itemName && itemName === baseName);
+    });
+  if (!raw || !Object.keys(raw).length) return null;
+  const snapshot: StoryRole = {
+    id: scalarText(raw.id) || baseRole.id,
+    roleType: scalarText(raw.roleType) || baseRole.roleType || "npc",
+    name: scalarText(raw.name) || baseRole.name,
+    avatarPath: scalarText(raw.avatarPath),
+    avatarBgPath: scalarText(raw.avatarBgPath),
+    description: scalarText(raw.description),
+    voice: scalarText(raw.voice),
+    voiceMode: scalarText(raw.voiceMode),
+    voicePresetId: scalarText(raw.voicePresetId),
+    voiceReferenceAudioPath: scalarText(raw.voiceReferenceAudioPath),
+    voiceReferenceAudioName: scalarText(raw.voiceReferenceAudioName),
+    voiceReferenceText: scalarText(raw.voiceReferenceText),
+    voicePromptText: scalarText(raw.voicePromptText),
+    voiceMixVoices: normalizeRuntimeMixVoices(raw.voiceMixVoices),
+    sample: scalarText(raw.sample),
+    parameterCardJson: normalizeRoleParameterCard(raw.parameterCardJson),
+  };
+  return ensureRoleParameterCard(snapshot);
+}
+
 function mergeRoleSnapshot(base: StoryRole, runtime: StoryRole | null): StoryRole {
   if (!runtime) return ensureRoleParameterCard(base);
   return ensureRoleParameterCard({
@@ -548,7 +583,7 @@ const roleCards = computed(() => {
     if (role.roleType === "narrator") {
       return mergeRoleSnapshot(role, runtimeNarrator);
     }
-    return role;
+    return mergeRoleSnapshot(role, runtimeNpcSnapshot(role));
   });
 });
 const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnState));
@@ -556,15 +591,13 @@ const canPlayerSpeak = computed(() => runtimeTurnState.value.canPlayerSpeak !== 
 const playSessionStatus = computed(() => scalarText(session.value?.status));
 const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
 const canPlayerInput = computed(() => {
+  if (store.state.sessionOpening) return false;
   if (activeMiniGame.value?.acceptsTextInput) return true;
-  if (canPlayerSpeak.value) return true;
-  const status = sessionStatusKey(playSessionStatus.value);
-  if (status && !["active", "running", "playing"].includes(status)) return false;
-  const latest = conversationMessages().slice(-1)[0] || null;
-  if (!latest || scalarText(latest.roleType).toLowerCase() === "player") return false;
-  return isPlaceholderNarrative(messageDisplayContent(latest));
+  return canPlayerSpeak.value;
 });
+const sessionOpeningStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpeningStage) || "正在进入故事...");
 const playInputPlaceholder = computed(() => {
+  if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (activeMiniGame.value?.acceptsTextInput) {
     return activeMiniGame.value.inputHint || "直接输入方案";
   }
@@ -578,12 +611,10 @@ const playInputPlaceholder = computed(() => {
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败";
   }
-  if (canPlayerInput.value) {
-    return inputMode.value === "text" ? "台词可能卡住了，直接输入继续" : "台词可能卡住了，点按继续说话";
-  }
   return `当前轮到${expectedSpeaker.value}发言`;
 });
 const playTurnHint = computed(() => {
+  if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (activeMiniGame.value?.acceptsTextInput) {
     return "小游戏进行中，直接输入方案即可。";
   }
@@ -595,35 +626,8 @@ const playTurnHint = computed(() => {
     return "当前故事已失败，可返回历史重新开始。";
   }
   if (canPlayerSpeak.value) return "";
-  if (canPlayerInput.value) {
-    return "当前台词可能卡住了，你也可以直接输入继续。";
-  }
   return `当前还没轮到用户发言，等待${expectedSpeaker.value}继续。`;
 });
-const playShouldAutoRefreshWhileWaiting = computed(() => {
-  if (store.state.debugMode || canPlayerSpeak.value) return false;
-  const status = sessionStatusKey(playSessionStatus.value);
-  if (status && status !== "active") return false;
-  const latest = conversationMessages().slice(-1)[0] || null;
-  if (!latest) return true;
-  return scalarText(latest.roleType).toLowerCase() !== "player";
-});
-const playSessionRefreshFingerprint = computed(() => {
-  const latest = conversationMessages().slice(-1)[0] || null;
-  return [
-    store.state.currentSessionId,
-    playSessionStatus.value,
-    scalarText(session.value?.chapterId),
-    canPlayerSpeak.value ? "1" : "0",
-    expectedSpeaker.value,
-    messages.value.length,
-    scalarText(latest?.id),
-    scalarText(latest?.createTime),
-    scalarText(latest?.roleType),
-    messageDisplayContent(latest),
-  ].join("|");
-});
-
 function miniGamePhaseLabel(gameType: string, phase: string, uiPhaseLabel: string) {
   if (uiPhaseLabel) return uiPhaseLabel;
   if (gameType === "fishing") {
@@ -854,9 +858,15 @@ const latestRuntimeChatTrace = computed(() => {
   const source = scopedRows.length ? scopedRows : rows;
   return source.length ? source[source.length - 1] : null;
 });
+const runtimeDebugNextRoleLabel = computed(() => {
+  if (store.state.sessionOpening) return "加载中";
+  if (canPlayerSpeak.value) return "玩家";
+  if (scalarText(latestRuntimeChatTrace.value?.currentStatus) === "waiting_player") return "玩家";
+  return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
+});
 const runtimeDebugStatusLabel = computed(() => {
   const status = scalarText(latestRuntimeChatTrace.value?.currentStatus);
-  if (!status) return "未知";
+  if (!status) return store.state.sessionOpening ? "进入中" : (canPlayerSpeak.value ? "等待玩家" : "等待下一位");
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待玩家";
   if (status === "auto_advancing") return "自动推进中";
@@ -905,6 +915,7 @@ watch(
     playSessionStatus.value,
   ].join("|"),
   () => {
+    store.syncRuntimeChatTraceNow?.();
     refreshRuntimeChatTrace();
   },
   { immediate: true },
@@ -1101,11 +1112,9 @@ watch(
   ],
   async () => {
     if (
-      !store.state.debugMode
-      || playMode.value !== "live"
+      playMode.value !== "live"
       || store.state.debugLoading
       || store.state.debugEndDialog
-      || canPlayerSpeak.value
     ) {
       return;
     }
@@ -1115,13 +1124,16 @@ watch(
     }
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
     let status = runtimeMessageStatus(latest);
-    if (!sameVoiceTarget && ["", "generated", "revealing", "voicing"].includes(status)) {
+    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "generated", "revealing", "voicing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
     if (!debugAutoAdvancing.value && status === "auto_advancing") {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
+    }
+    if (canPlayerSpeak.value) {
+      return;
     }
     if (status !== "waiting_next") {
       return;
@@ -1133,7 +1145,9 @@ watch(
     debugAutoAdvancing.value = true;
     store.setRuntimeMessageStatus(latest.id, "auto_advancing");
     try {
-      const ok = await store.continueDebugNarrative();
+      const ok = store.state.debugMode
+        ? await store.continueDebugNarrative()
+        : await store.continueSessionNarrative();
       if (!ok) {
         store.setRuntimeMessageStatus(latest.id, "error");
       }
@@ -1156,7 +1170,7 @@ watch(
     runtimeVoicePhase.value,
   ],
   () => {
-    if (!store.state.debugMode || playMode.value !== "live") {
+    if (playMode.value !== "live") {
       return;
     }
     const latest = latestRevealedMessage.value;
@@ -1165,58 +1179,10 @@ watch(
     }
     const status = runtimeMessageStatus(latest);
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
-    if (!sameVoiceTarget && ["", "generated", "revealing", "voicing"].includes(status)) {
+    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "generated", "revealing", "voicing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
-);
-
-watch(
-  () => [
-    store.state.currentSessionId,
-    playMode.value,
-    store.state.debugMode,
-    store.state.debugLoading,
-    canPlayerSpeak.value,
-    playSessionRefreshFingerprint.value,
-  ],
-  async (_, __, onCleanup) => {
-    let cancelled = false;
-    onCleanup(() => {
-      cancelled = true;
-    });
-    if (
-      store.state.debugMode
-      || playMode.value !== "live"
-      || store.state.debugLoading
-      || canPlayerSpeak.value
-      || !playShouldAutoRefreshWhileWaiting.value
-    ) {
-      return;
-    }
-    for (let index = 0; index < 6; index += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1800));
-      if (
-        cancelled
-        || store.state.debugMode
-        || playMode.value !== "live"
-        || canPlayerSpeak.value
-        || !playShouldAutoRefreshWhileWaiting.value
-      ) {
-        return;
-      }
-      const before = playSessionRefreshFingerprint.value;
-      try {
-        await store.refreshCurrentSession();
-      } catch {
-        return;
-      }
-      if (cancelled || canPlayerSpeak.value || playSessionRefreshFingerprint.value !== before) {
-        return;
-      }
-    }
-  },
-  { immediate: true },
 );
 
 watch(playMode, (mode) => {
@@ -1557,12 +1523,12 @@ function normalizeBindingMixVoices(input?: VoiceMixItem[] | null): VoiceMixItem[
 }
 
 function splitSpeechSegments(input: string): string[] {
-  const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
+  const text = normalizePlayableSpeechText(input);
   if (!text) return [];
   const segments: string[] = [];
   let buffer = "";
   const push = () => {
-    const value = buffer.trim();
+    const value = normalizePlayableSpeechText(buffer);
     if (value) segments.push(value);
     buffer = "";
   };
@@ -1891,7 +1857,7 @@ async function playMessageAudio(
   overrideContent?: string,
 ): Promise<boolean> {
   const playableContent = overrideContent ?? messageDisplayContent(message);
-  const speakable = sanitizeSpeechText(playableContent);
+  const speakable = normalizePlayableSpeechText(playableContent);
   if (!speakable) {
     if (manual) menuVisibleHint.value = "这条内容没有可朗读文本";
     return false;
@@ -1926,6 +1892,9 @@ async function playMessageAudio(
     const browserFallbackPlayed = await replayWithBrowserSpeech(playableContent, waitForCompletion);
     if (browserFallbackPlayed) {
       return true;
+    }
+    if (!manual) {
+      store.state.notice = "自动语音失败，已跳过";
     }
     if (manual) {
       menuVisibleHint.value = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
@@ -2405,10 +2374,6 @@ function finishVoiceHold(event: PointerEvent | null, cancel = false) {
 }
 
 function handleVoiceHoldStart(event: PointerEvent) {
-  if (inputMode.value === "text") {
-    void submit();
-    return;
-  }
   if (!canPlayerInput.value) {
     store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
     return;
@@ -2535,7 +2500,7 @@ onBeforeUnmount(() => {
         class="play-thread"
         :class="{ 'play-thread--history': playMode === 'history', 'play-thread--single-mode': playMode !== 'history' }"
       >
-        <div v-if="!displayMessages.length" class="play-empty">当前会话暂无消息，发送一句话开始。</div>
+        <div v-if="!displayMessages.length" class="play-empty">{{ store.state.sessionOpening ? sessionOpeningStageText : "当前会话暂无消息，发送一句话开始。" }}</div>
         <div v-else-if="playMode === 'history'" class="play-thread__history">
           <template v-for="message in displayMessages" :key="message.id">
             <article
@@ -2875,7 +2840,7 @@ onBeforeUnmount(() => {
             <span class="play-debug-badge">序号 {{ latestRuntimeChatTrace.lineIndex || "-" }}</span>
             <span class="play-debug-badge">{{ latestRuntimeChatTrace.currentRole || "未知角色" }}</span>
             <span class="play-debug-badge">状态 {{ runtimeDebugStatusLabel }}</span>
-            <span class="play-debug-badge">下一位 {{ latestRuntimeChatTrace.nextRole || "待定" }}</span>
+            <span class="play-debug-badge">下一位 {{ runtimeDebugNextRoleLabel }}</span>
           </div>
         </div>
         <div
@@ -2919,7 +2884,24 @@ onBeforeUnmount(() => {
         <template v-else-if="inputMode === 'text'">
           <div class="play-text-bar">
             <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerInput"></textarea>
-            <button type="button" class="play-mini-round" @click="toggleInputMode">声</button>
+            <button
+              type="button"
+              class="play-mini-round play-mini-round--voice"
+              :class="{ 'is-active': voiceListening || voiceHoldActive, 'is-cancel': voiceHoldCancelPending }"
+              :disabled="!canPlayerInput || voiceTranscribing"
+              @pointerdown.prevent="handleVoiceHoldStart"
+              @pointermove.prevent="handleVoiceHoldMove"
+              @pointerup.prevent="handleVoiceHoldEnd"
+              @pointercancel.prevent="handleVoiceHoldCancel"
+              @contextmenu.prevent
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>
+                <path d="M7.8 11.8a4.2 4.2 0 0 0 8.4 0"></path>
+                <path d="M12 16v3"></path>
+                <path d="M9.5 19h5"></path>
+              </svg>
+            </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
             <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">发送</button>
           </div>
@@ -2929,6 +2911,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="play-voice-btn"
+              :class="{ 'is-active': voiceListening || voiceHoldActive, 'is-cancel': voiceHoldCancelPending }"
               :disabled="!canPlayerInput || voiceTranscribing"
               @pointerdown.prevent="handleVoiceHoldStart"
               @pointermove.prevent="handleVoiceHoldMove"
@@ -3032,9 +3015,10 @@ onBeforeUnmount(() => {
                     v-for="item in parameterCardEntries(roleDetail.parameterCardJson)"
                     :key="item.label"
                     class="param-item"
+                    :class="{ 'param-item--wide': item.label === '原始角色设定' }"
                   >
                     <div class="tiny">{{ item.label }}</div>
-                    <div class="param-value">{{ item.value }}</div>
+                    <div class="param-value" :class="{ 'param-value--scroll': item.label === '原始角色设定' || String(item.value || '').length > 120 }">{{ item.value }}</div>
                   </div>
                 </div>
                 <pre v-if="roleParameterRawOpen" class="detail-pre">{{ JSON.stringify(roleDetail.parameterCardJson, null, 2) }}</pre>

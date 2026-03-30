@@ -171,6 +171,21 @@ export interface SessionDetail {
   latestSnapshot?: { state?: Record<string, unknown> | null } | null;
 }
 
+export interface SessionNarrativeResult {
+  sessionId: string;
+  status: string;
+  chapterId?: number | null;
+  chapter?: ChapterItem | null;
+  state?: Record<string, unknown> | null;
+  message?: MessageItem | null;
+  chapterSwitchMessage?: MessageItem | null;
+  narrativeMessage?: MessageItem | null;
+  generatedMessages?: MessageItem[];
+  narrativePlan?: DebugNarrativePlan | null;
+  snapshotSaved?: boolean;
+  snapshotReason?: string;
+}
+
 export interface DebugStepResult {
   chapterId: number | null;
   chapterTitle?: string;

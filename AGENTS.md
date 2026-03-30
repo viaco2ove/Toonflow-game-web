@@ -28,6 +28,10 @@ Do not edit `review_xxx.md`; add or update matching `review_xxx.answer.md` files
 [system.yml](system/system.yml)
 
 # web端和安卓端同步修改
+web端和安卓端需要同步修改内容
+但是也得考虑一下web 是否适用！
+例如按住语音输入这个适用安卓，但是不适用web.
+同样的web的实现安卓是否适用
 
 # 设计要点
 按钮多用奥森字体图标而不是文字

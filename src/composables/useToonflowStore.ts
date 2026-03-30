@@ -18,6 +18,7 @@ import {
   RuntimeRetryMessageMeta,
   SessionDetail,
   SessionItem,
+  SessionNarrativeResult,
   StoryRole,
   VoiceBindingDraft,
   VoiceMixItem,
@@ -366,15 +367,19 @@ function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | n
   const messageId = Number(record["messageId"] || 0);
   const lineIndex = Number(record["lineIndex"] || 0);
   const updateTime = Number(record["updateTime"] || 0);
+  const currentStatus = (String(record["currentStatus"] || "").trim() as RuntimeLineStatus | "");
+  const rawNextRole = String(record["nextRole"] || "").trim();
+  const rawNextRoleType = String(record["nextRoleType"] || "").trim();
+  const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
   return {
     conversationId,
     messageId: Number.isFinite(messageId) ? messageId : 0,
     lineIndex: Number.isFinite(lineIndex) ? lineIndex : 0,
     currentRole: String(record["currentRole"] || "").trim(),
     currentRoleType: String(record["currentRoleType"] || "").trim(),
-    currentStatus: (String(record["currentStatus"] || "").trim() as RuntimeLineStatus | ""),
-    nextRole: String(record["nextRole"] || "").trim(),
-    nextRoleType: String(record["nextRoleType"] || "").trim(),
+    currentStatus,
+    nextRole: waitingPlayer ? "玩家" : rawNextRole,
+    nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
     updateTime: Number.isFinite(updateTime) ? updateTime : 0,
   };
 }
@@ -758,6 +763,8 @@ function createToonflowStore() {
     currentSessionId: "",
     sessionViewMode: "live" as "live" | "playback",
     sessionPlaybackStartIndex: 0,
+    sessionOpening: false,
+    sessionOpeningStage: "",
     sessionDetail: null as Loadable<SessionDetail>,
     messages: [] as MessageItem[],
     quickInput: "",
@@ -805,7 +812,7 @@ function createToonflowStore() {
   }
 
   function runtimeConversationId(): string {
-    const runtimeState = state.debugRuntimeState as Record<string, unknown> | null;
+    const runtimeState = runtimeStateRecord();
     const debugRuntimeKey = String(runtimeState?.["debugRuntimeKey"] || "").trim();
     if (debugRuntimeKey) return debugRuntimeKey;
     const sessionId = state.currentSessionId.trim();
@@ -813,9 +820,17 @@ function createToonflowStore() {
     return `world:${state.worldId || 0}:chapter:${state.debugChapterId || 0}`;
   }
 
+  function runtimeStateRecord(): Record<string, unknown> {
+    const source = state.debugMode
+      ? state.debugRuntimeState
+      : (state.sessionDetail?.state || state.sessionDetail?.latestSnapshot?.state || null);
+    return typeof source === "object" && source !== null && !Array.isArray(source)
+      ? (source as Record<string, unknown>)
+      : {};
+  }
+
   function runtimeTurnStateRecord(): Record<string, unknown> {
-    const runtimeState = state.debugRuntimeState as Record<string, unknown> | null;
-    const turnState = runtimeState?.["turnState"];
+    const turnState = runtimeStateRecord()["turnState"];
     return typeof turnState === "object" && turnState !== null && !Array.isArray(turnState)
       ? (turnState as Record<string, unknown>)
       : {};
@@ -993,8 +1008,6 @@ function createToonflowStore() {
   function syncRuntimeChatTrace() {
     const conversationId = runtimeConversationId();
     const turnState = runtimeTurnStateRecord();
-    const fallbackNextRole = String(turnState["expectedRole"] || "").trim();
-    const fallbackNextRoleType = String(turnState["expectedRoleType"] || "").trim();
     const history = conversationMessages().filter((message) => !isRuntimeRetryMessage(message));
     const latestMessage = history.slice(-1)[0] || null;
     const nextRows = readRuntimeChatTraceStorage().filter((item) => item.conversationId !== conversationId);
@@ -1008,13 +1021,21 @@ function createToonflowStore() {
     }
     const latestMeta = runtimeMetaRecord(latestMessage.meta);
     const latestLineIndex = Number(latestMeta?.["lineIndex"]);
+    const currentStatus = runtimeMessageStatus(latestMessage);
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    const fallbackNextRole = canPlayerSpeakNow || currentStatus === "waiting_player"
+      ? "玩家"
+      : String(turnState["expectedRole"] || "").trim() || "当前角色";
+    const fallbackNextRoleType = canPlayerSpeakNow || currentStatus === "waiting_player"
+      ? "player"
+      : String(turnState["expectedRoleType"] || "").trim() || "npc";
     const latestRow: RuntimeChatTraceItem = {
       conversationId,
       messageId: Number(latestMessage.id || 0),
       lineIndex: Number.isFinite(latestLineIndex) && latestLineIndex > 0 ? latestLineIndex : history.length,
       currentRole: String(latestMessage.role || "").trim(),
       currentRoleType: String(latestMessage.roleType || "").trim(),
-      currentStatus: runtimeMessageStatus(latestMessage),
+      currentStatus: currentStatus || (canPlayerSpeakNow ? "waiting_player" : "waiting_next"),
       nextRole: String(latestMeta?.["nextRole"] || fallbackNextRole || "").trim(),
       nextRoleType: String(latestMeta?.["nextRoleType"] || fallbackNextRoleType || "").trim(),
       updateTime: Date.now(),
@@ -1058,12 +1079,13 @@ function createToonflowStore() {
 
   function setRuntimeMessageStatus(messageId: number, status: RuntimeLineStatus) {
     const turnState = runtimeTurnStateRecord();
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
     updateMessageById(messageId, (message) => ({
       ...message,
       meta: buildRuntimeStreamMeta(message.meta, {
         status,
-        nextRole: String(turnState["expectedRole"] || "").trim(),
-        nextRoleType: String(turnState["expectedRoleType"] || "").trim(),
+        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "玩家" : String(turnState["expectedRole"] || "").trim() || "当前角色",
+        nextRoleType: status === "waiting_player" || canPlayerSpeakNow ? "player" : String(turnState["expectedRoleType"] || "").trim() || "npc",
       }),
     }), true);
   }
@@ -1149,6 +1171,130 @@ function createToonflowStore() {
         nextRoleType: String(plan.nextRoleType || "").trim(),
       } satisfies RuntimeStreamMeta,
     };
+  }
+
+  function runtimeMessageIdentity(message: MessageItem | null | undefined): string {
+    if (!message) return "";
+    return `${Number(message.id || 0)}_${Number(message.createTime || 0)}`;
+  }
+
+  function mergeConversationMessages(base: MessageItem[], incoming: MessageItem[]): MessageItem[] {
+    const next = [...base];
+    for (const message of incoming) {
+      const identity = runtimeMessageIdentity(message);
+      if (!identity) continue;
+      const index = next.findIndex((item) => runtimeMessageIdentity(item) === identity);
+      if (index >= 0) {
+        next[index] = {
+          ...next[index],
+          ...message,
+        };
+      } else {
+        next.push(message);
+      }
+    }
+    return next;
+  }
+
+  function normalizeSessionRuntimeMessage(
+    message: MessageItem,
+    lineIndex: number,
+    turnState: Record<string, unknown>,
+  ): MessageItem {
+    if (isRuntimeRetryMessage(message) || scalarText(message.roleType).toLowerCase() === "player") {
+      return message;
+    }
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    return {
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        lineIndex,
+        streaming: false,
+        status: "generated",
+        nextRole: canPlayerSpeakNow ? "玩家" : scalarText(turnState["expectedRole"]),
+        nextRoleType: canPlayerSpeakNow ? "player" : scalarText(turnState["expectedRoleType"]),
+      }),
+    };
+  }
+
+  function sessionTurnState(detail: SessionDetail | null | undefined): Record<string, unknown> {
+    const latestState = asMiniRecord(detail?.latestSnapshot?.state);
+    const currentState = asMiniRecord(detail?.state);
+    return asMiniRecord(latestState.turnState || currentState.turnState);
+  }
+
+  function normalizeLoadedSessionMessages(detail: SessionDetail | null | undefined): MessageItem[] {
+    const source = Array.isArray(detail?.messages) ? detail!.messages! : [];
+    if (!source.length) return [];
+    const turnState = sessionTurnState(detail);
+    if (!Object.keys(turnState).length) return [...source];
+    const normalized = source.map((message, index) => normalizeSessionRuntimeMessage(message, index + 1, turnState));
+    const latestIndex = normalized.map((message) => !isRuntimeRetryMessage(message)).lastIndexOf(true);
+    if (latestIndex < 0) return normalized;
+    const latestMessage = normalized[latestIndex]!;
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    normalized[latestIndex] = {
+      ...latestMessage,
+      meta: buildRuntimeStreamMeta(latestMessage.meta, {
+        streaming: false,
+        lineIndex: latestIndex + 1,
+        status: canPlayerSpeakNow ? "waiting_player" : "waiting_next",
+        nextRole: canPlayerSpeakNow ? "玩家" : (scalarText(turnState["expectedRole"]) || "当前角色"),
+        nextRoleType: canPlayerSpeakNow ? "player" : (scalarText(turnState["expectedRoleType"]) || "npc"),
+      }),
+    };
+    return normalized;
+  }
+
+  function applyLoadedSessionDetail(detail: SessionDetail) {
+    const normalizedMessages = normalizeLoadedSessionMessages(detail);
+    state.sessionDetail = {
+      ...detail,
+      messages: normalizedMessages,
+    };
+    state.messages = normalizedMessages;
+    syncRuntimeChatTrace();
+  }
+
+  function applySessionNarrativeResult(result: SessionNarrativeResult) {
+    const existingDetail = state.sessionDetail || null;
+    const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    const incoming = [
+      result.message || null,
+      ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
+    ].filter(Boolean) as MessageItem[];
+    const existingMessages = conversationMessages();
+    const turnState = typeof nextState === "object" && nextState !== null && !Array.isArray(nextState)
+      ? ((nextState as Record<string, unknown>).turnState as Record<string, unknown> | undefined) || {}
+      : {};
+    const lineStart = existingMessages.length;
+    const normalizedIncoming = incoming.map((message, index) => normalizeSessionRuntimeMessage(message, lineStart + index + 1, turnState));
+    const mergedMessages = mergeConversationMessages(existingMessages, normalizedIncoming);
+
+    state.sessionDetail = {
+      ...(existingDetail || {}),
+      sessionId: result.sessionId || existingDetail?.sessionId || state.currentSessionId,
+      status: result.status || existingDetail?.status || "",
+      chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
+      state: nextState,
+      chapter: result.chapter || existingDetail?.chapter || null,
+      world: existingDetail?.world || null,
+      latestSnapshot: {
+        ...(existingDetail?.latestSnapshot || {}),
+        state: nextState,
+      },
+      messages: mergedMessages,
+    };
+    state.messages = mergedMessages;
+    if (result.chapter) {
+      const index = state.chapters.findIndex((item) => Number(item.id || 0) === Number(result.chapter?.id || 0));
+      if (index >= 0) {
+        state.chapters.splice(index, 1, result.chapter);
+      } else {
+        state.chapters = [...state.chapters, result.chapter];
+      }
+    }
+    syncRuntimeChatTrace();
   }
 
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
@@ -1241,6 +1387,8 @@ function createToonflowStore() {
     state.sessionDetail = null;
     state.messages = [];
     state.currentSessionId = "";
+    state.sessionOpening = false;
+    state.sessionOpeningStage = "";
     state.settingsPanelLoaded = false;
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
@@ -2828,7 +2976,7 @@ function createToonflowStore() {
       voiceReferenceText: state.playerVoiceReferenceText,
       voicePromptText: state.playerVoicePromptText,
       voiceMixVoices: state.playerVoiceMixVoices,
-      parameterCardJson: createBasicRoleParameterCard(state.playerName || "用户", state.playerDesc || "", state.playerVoice || ""),
+      parameterCardJson: null,
     };
   }
 
@@ -2844,7 +2992,7 @@ function createToonflowStore() {
       voiceReferenceText: state.narratorVoiceReferenceText,
       voicePromptText: state.narratorVoicePromptText,
       voiceMixVoices: state.narratorVoiceMixVoices,
-      parameterCardJson: createBasicRoleParameterCard(state.narratorName || "旁白", "负责环境推进、规则提示与节奏控制", state.narratorVoice || ""),
+      parameterCardJson: null,
     };
   }
 
@@ -3276,8 +3424,14 @@ function createToonflowStore() {
 
   async function startFromWorld(world: WorldItem, quickText = "") {
     try {
+      state.notice = "正在进入故事...";
+      state.activeTab = "play";
       state.sessionViewMode = "live";
       state.sessionPlaybackStartIndex = 0;
+      state.sessionOpening = true;
+      state.sessionOpeningStage = "初始化会话";
+      state.sessionDetail = null;
+      state.messages = [];
       const existingSession = await fetchLatestSessionForWorld(Number(world.id || 0))
         || state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
         || null;
@@ -3287,11 +3441,11 @@ function createToonflowStore() {
           state.sendText = quickText.trim();
           await sendMessage();
         }
-        state.activeTab = "play";
         return;
       }
       const chapters = await api.getChapter(world.id).catch(() => []);
       const startChapter = chapters[0] || null;
+      state.sessionOpeningStage = "创建会话";
       const session = await api.startSession({
         worldId: world.id,
         projectId: world.projectId,
@@ -3304,9 +3458,11 @@ function createToonflowStore() {
         state.sendText = quickText.trim();
         await sendMessage();
       }
-      state.activeTab = "play";
     } catch (error) {
       state.notice = `进入游玩失败: ${asUiErrorMessage(error)}`;
+    } finally {
+      state.sessionOpening = false;
+      state.sessionOpeningStage = "";
     }
   }
 
@@ -3315,6 +3471,9 @@ function createToonflowStore() {
     fallbackSessionId = "",
     options?: { playback?: boolean; playbackIndex?: number },
   ) {
+    state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
+    state.sessionOpening = true;
+    state.sessionOpeningStage = options?.playback ? "加载回放进度" : "定位会话";
     const targetWorldId = Number(worldId || 0);
     const fallbackId = String(fallbackSessionId || "").trim();
     const existingSession = Number.isFinite(targetWorldId) && targetWorldId > 0
@@ -3324,9 +3483,16 @@ function createToonflowStore() {
       : null;
     const sessionId = String(existingSession?.sessionId || fallbackId).trim();
     if (!sessionId) {
+      state.sessionOpening = false;
+      state.sessionOpeningStage = "";
       throw new Error("未找到可继续的会话");
     }
-    await openSession(sessionId, options);
+    try {
+      await openSession(sessionId, options);
+    } finally {
+      state.sessionOpening = false;
+      state.sessionOpeningStage = "";
+    }
   }
 
   async function quickStart() {
@@ -3343,16 +3509,26 @@ function createToonflowStore() {
     clearRuntimeRetryState();
     state.debugMode = false;
     state.debugLoading = false;
+    state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
+    state.activeTab = "play";
     state.sessionViewMode = options?.playback ? "playback" : "live";
     state.sessionPlaybackStartIndex = Math.max(0, Number(options?.playbackIndex || 0));
     state.currentSessionId = sessionId;
-    const [detail] = await Promise.all([
-      api.getSession(sessionId),
-      refreshSessionListState(),
-    ]);
-    state.sessionDetail = detail;
-    state.messages = detail.messages || [];
-    state.activeTab = "play";
+    state.sessionOpening = true;
+    state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆";
+    state.sessionDetail = null;
+    state.messages = [];
+    try {
+      const [detail] = await Promise.all([
+        api.getSession(sessionId),
+        refreshSessionListState(),
+      ]);
+      state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
+      applyLoadedSessionDetail(detail);
+    } finally {
+      state.sessionOpening = false;
+      state.sessionOpeningStage = "";
+    }
   }
 
   async function deleteSession(sessionId: string) {
@@ -3377,8 +3553,7 @@ function createToonflowStore() {
       api.getSession(state.currentSessionId),
       refreshSessionListState(),
     ]);
-    state.sessionDetail = detail;
-    state.messages = detail.messages || [];
+    applyLoadedSessionDetail(detail);
   }
 
   function applyDebugOrchestrationResult(
@@ -3745,7 +3920,7 @@ function createToonflowStore() {
 
   async function performSessionPlayerMessage(content: string) {
     if (!state.currentSessionId) return;
-    await api.addMessage({
+    const result = await api.addMessage({
       sessionId: state.currentSessionId,
       roleType: "player",
       role: state.playerName || "用户",
@@ -3754,7 +3929,43 @@ function createToonflowStore() {
     });
     state.sendText = "";
     clearRuntimeRetryState();
-    await refreshCurrentSession();
+    applySessionNarrativeResult(result);
+    await refreshSessionListState();
+  }
+
+  async function performContinueSessionNarrative() {
+    if (!state.currentSessionId) return;
+    const beforeCount = conversationMessages().length;
+    const result = await api.continueSession(state.currentSessionId);
+    clearRuntimeRetryState();
+    applySessionNarrativeResult(result);
+    await refreshSessionListState();
+    const afterCount = conversationMessages().length;
+    const latest = conversationMessages().slice(-1)[0] || null;
+    const latestStatus = runtimeMessageStatus(latest);
+    const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+    if (afterCount <= beforeCount && !canPlayerSpeakNow && latestStatus !== "waiting_player") {
+      throw new Error("自动推进没有产出新内容");
+    }
+  }
+
+  async function continueSessionNarrative() {
+    clearRuntimeRetryState();
+    try {
+      await performContinueSessionNarrative();
+      return true;
+    } catch (error) {
+      if (isBenignRuntimeCancellation(error)) {
+        return false;
+      }
+      showRuntimeRetryMessage(
+        `继续剧情失败：${asUiErrorMessage(error)}`,
+        createRuntimeRetryRunner(performContinueSessionNarrative, {
+          formatErrorMessage: (message) => `继续剧情失败：${message}`,
+        }),
+      );
+      return false;
+    }
   }
 
   async function sendMessage() {
@@ -3881,10 +4092,12 @@ function createToonflowStore() {
     continueSessionForWorld,
     quickStart,
     openSession,
+    syncRuntimeChatTraceNow: syncRuntimeChatTrace,
     deleteSession,
     refreshCurrentSession,
     startDebugCurrentChapter,
     continueDebugNarrative,
+    continueSessionNarrative,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
     advanceDebugChapterIfNeeded,
