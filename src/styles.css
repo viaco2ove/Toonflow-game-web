@@ -3132,9 +3132,25 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .param-value--scroll {
-  max-height: 132px;
+  max-height: 220px;
   overflow: auto;
-  padding-right: 4px;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 150, 210, 0.9) rgba(255, 255, 255, 0.08);
+}
+
+.param-value--scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.param-value--scroll::-webkit-scrollbar-thumb {
+  background: rgba(120, 150, 210, 0.9);
+  border-radius: 999px;
+}
+
+.param-value--scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
 }
 
 .tag-row {

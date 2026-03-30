@@ -607,10 +607,17 @@ const waitingForIdentityBinding = computed(() => {
   if (!playerNeedsIdentity) return false;
   return /(姓名|名字|名称).{0,20}(性别).{0,20}(年龄)|身份绑定|请先告诉我你的姓名|请提供你的姓名、性别与年龄|请输入你的名称、性别与年龄/.test(latestContent);
 });
+const currentRuntimeInputStatus = computed(() => {
+  if (store.state.sessionOpening) return "session_opening";
+  if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
+  const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
+  if (latestStatus) return latestStatus;
+  return canPlayerSpeak.value ? "waiting_player" : "waiting_next";
+});
 const canPlayerInput = computed(() => {
   if (store.state.sessionOpening) return false;
   if (activeMiniGame.value?.acceptsTextInput) return true;
-  return canPlayerSpeak.value;
+  return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
 const sessionOpeningStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpeningStage) || "正在进入故事...");
 const playInputPlaceholder = computed(() => {
@@ -618,8 +625,9 @@ const playInputPlaceholder = computed(() => {
   if (activeMiniGame.value?.acceptsTextInput) {
     return activeMiniGame.value.inputHint || "直接输入方案";
   }
+  const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
-  if (canPlayerSpeak.value) {
+  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     if (waitingForIdentityBinding.value) {
       return inputMode.value === "text" ? "请输入姓名、性别、年龄完成身份绑定" : "按住说出姓名、性别、年龄";
     }
@@ -638,6 +646,7 @@ const playTurnHint = computed(() => {
   if (activeMiniGame.value?.acceptsTextInput) {
     return "小游戏进行中，直接输入方案即可。";
   }
+  const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成，可刷新或返回历史继续查看。";
@@ -645,10 +654,16 @@ const playTurnHint = computed(() => {
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败，可返回历史重新开始。";
   }
-  if (canPlayerSpeak.value) {
+  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     return waitingForIdentityBinding.value ? "当前轮到你完成身份绑定，请输入姓名、性别、年龄。" : "";
   }
-  return `当前还没轮到用户发言，等待${expectedSpeaker.value}继续。`;
+  if (runtimeStatus === "voicing") {
+    return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
+  }
+  if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing") {
+    return "正在生成下一句内容...";
+  }
+  return `当前还没轮到用户发言，等待${runtimeDebugNextRoleLabel.value}继续。`;
 });
 function miniGamePhaseLabel(gameType: string, phase: string, uiPhaseLabel: string) {
   if (uiPhaseLabel) return uiPhaseLabel;
@@ -882,13 +897,13 @@ const latestRuntimeChatTrace = computed(() => {
 });
 const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
-  if (canPlayerSpeak.value) return "玩家";
-  if (scalarText(latestRuntimeChatTrace.value?.currentStatus) === "waiting_player") return "玩家";
+  const status = currentRuntimeInputStatus.value;
+  if (status === "waiting_player") return "玩家";
   return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
-  const status = scalarText(latestRuntimeChatTrace.value?.currentStatus);
-  if (!status) return store.state.sessionOpening ? "进入中" : (canPlayerSpeak.value ? "等待玩家" : "等待下一位");
+  const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;
+  if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待玩家";
   if (status === "auto_advancing") return "自动推进中";
