@@ -600,19 +600,6 @@ const latestConversationMessage = computed(() => {
   const list = conversationMessages();
   return list.length ? list[list.length - 1] : null;
 });
-const runtimePlayerCard = computed(() => asMiniRecord(asMiniRecord(runtimeState.value.player).parameterCardJson));
-const waitingForIdentityBinding = computed(() => {
-  if (!canPlayerSpeak.value) return false;
-  const latest = latestConversationMessage.value;
-  const latestContent = messageDisplayContent(latest).replace(/\s+/g, "");
-  if (!latestContent) return false;
-  const runtimePlayerName = scalarText(asMiniRecord(runtimeState.value.player).name);
-  const gender = scalarText(runtimePlayerCard.value.gender);
-  const age = Number(runtimePlayerCard.value.age || 0);
-  const playerNeedsIdentity = !runtimePlayerName || runtimePlayerName === "玩家" || !gender || !Number.isFinite(age) || age <= 0;
-  if (!playerNeedsIdentity) return false;
-  return /(姓名|名字|名称).{0,20}(性别).{0,20}(年龄)|身份绑定|请先告诉我你的姓名|请提供你的姓名、性别与年龄|请输入你的名称、性别与年龄/.test(latestContent);
-});
 const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
   if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
@@ -634,9 +621,6 @@ const playInputPlaceholder = computed(() => {
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
-    if (waitingForIdentityBinding.value) {
-      return inputMode.value === "text" ? "请输入姓名、性别、年龄完成身份绑定" : "按住说出姓名、性别、年龄";
-    }
     return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
   }
   if (finishedSessionStatuses.has(status)) {
@@ -661,7 +645,7 @@ const playTurnHint = computed(() => {
     return "当前故事已失败，可返回历史重新开始。";
   }
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
-    return waitingForIdentityBinding.value ? "当前轮到你完成身份绑定，请输入姓名、性别、年龄。" : "";
+    return "";
   }
   if (runtimeStatus === "voicing") {
     return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
