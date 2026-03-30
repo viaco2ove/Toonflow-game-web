@@ -149,17 +149,23 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
     if (!Array.isArray(parsed)) return [];
     const rows = parsed
       .map((item) => asMiniRecord(item))
-      .map((item) => ({
-        conversationId: scalarText(item.conversationId),
-        messageId: Number(item.messageId || 0),
-        lineIndex: Number(item.lineIndex || 0),
-        currentRole: scalarText(item.currentRole),
-        currentRoleType: scalarText(item.currentRoleType),
-        currentStatus: scalarText(item.currentStatus),
-        nextRole: scalarText(item.nextRole),
-        nextRoleType: scalarText(item.nextRoleType),
-        updateTime: Number(item.updateTime || 0),
-      }))
+      .map((item) => {
+        const currentStatus = scalarText(item.currentStatus);
+        const rawNextRole = scalarText(item.nextRole);
+        const rawNextRoleType = scalarText(item.nextRoleType);
+        const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
+        return {
+          conversationId: scalarText(item.conversationId),
+          messageId: Number(item.messageId || 0),
+          lineIndex: Number(item.lineIndex || 0),
+          currentRole: scalarText(item.currentRole),
+          currentRoleType: scalarText(item.currentRoleType),
+          currentStatus,
+          nextRole: waitingPlayer ? "玩家" : rawNextRole,
+          nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
+          updateTime: Number(item.updateTime || 0),
+        };
+      })
       .filter((item) => item.conversationId);
     const latestByConversation = new Map<string, RuntimeChatTraceRow>();
     rows.forEach((item) => {
