@@ -972,7 +972,7 @@ function cancelRemoveCurrentNpc() {
           </div>
           <div class="field">
             <label>角色名（选填）</label>
-            <input v-model="store.state.playerName" class="input" type="text" placeholder="玩家" />
+            <input v-model="store.state.playerName" class="input" type="text" placeholder="用户" />
           </div>
           <div class="field">
             <label>角色设定（选填）</label>

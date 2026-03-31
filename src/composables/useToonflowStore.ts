@@ -1,6 +1,7 @@
 import { computed, reactive, watch } from "vue";
 import { ToonflowApi } from "../api/toonflow";
 import {
+  AiModelListMap,
   AiModelMapItem,
   AppTab,
   ChapterExtra,
@@ -378,7 +379,7 @@ function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | n
     currentRole: String(record["currentRole"] || "").trim(),
     currentRoleType: String(record["currentRoleType"] || "").trim(),
     currentStatus,
-    nextRole: waitingPlayer ? "玩家" : rawNextRole,
+    nextRole: waitingPlayer ? "用户" : rawNextRole,
     nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
     updateTime: Number.isFinite(updateTime) ? updateTime : 0,
   };
@@ -750,6 +751,7 @@ function createToonflowStore() {
     settingsVoiceDesignConfigs: [] as ModelConfigItem[],
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
+    settingsTextModelList: {} as AiModelListMap,
     storyPrompts: [] as PromptItem[],
     aiGenerating: false,
     avatarProcessingTarget: "" as "" | "account" | "user" | "npc",
@@ -769,6 +771,7 @@ function createToonflowStore() {
     currentSessionId: "",
     sessionViewMode: "live" as "live" | "playback",
     sessionPlaybackStartIndex: 0,
+    sessionResumeLatestOnOpen: false,
     sessionOpening: false,
     sessionOpeningStage: "",
     sessionOpenError: "",
@@ -1037,7 +1040,7 @@ function createToonflowStore() {
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
     const fallbackNextRole = canPlayerSpeakNow || currentStatus === "waiting_player"
-      ? "玩家"
+      ? "用户"
       : String(turnState["expectedRole"] || "").trim() || "当前角色";
     const fallbackNextRoleType = canPlayerSpeakNow || currentStatus === "waiting_player"
       ? "player"
@@ -1097,7 +1100,7 @@ function createToonflowStore() {
       ...message,
       meta: buildRuntimeStreamMeta(message.meta, {
         status,
-        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "玩家" : String(turnState["expectedRole"] || "").trim() || "当前角色",
+        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "用户" : String(turnState["expectedRole"] || "").trim() || "当前角色",
         nextRoleType: status === "waiting_player" || canPlayerSpeakNow ? "player" : String(turnState["expectedRoleType"] || "").trim() || "npc",
       }),
     }), true);
@@ -1272,7 +1275,7 @@ function createToonflowStore() {
         lineIndex,
         streaming: false,
         status: "generated",
-        nextRole: canPlayerSpeakNow ? "玩家" : scalarText(turnState["expectedRole"]),
+        nextRole: canPlayerSpeakNow ? "用户" : scalarText(turnState["expectedRole"]),
         nextRoleType: canPlayerSpeakNow ? "player" : scalarText(turnState["expectedRoleType"]),
       }),
     };
@@ -1300,7 +1303,7 @@ function createToonflowStore() {
         streaming: false,
         lineIndex: latestIndex + 1,
         status: canPlayerSpeakNow ? "waiting_player" : "waiting_next",
-        nextRole: canPlayerSpeakNow ? "玩家" : (scalarText(turnState["expectedRole"]) || "当前角色"),
+        nextRole: canPlayerSpeakNow ? "用户" : (scalarText(turnState["expectedRole"]) || "当前角色"),
         nextRoleType: canPlayerSpeakNow ? "player" : (scalarText(turnState["expectedRoleType"]) || "npc"),
       }),
     };
@@ -1460,6 +1463,7 @@ function createToonflowStore() {
     state.settingsVoiceDesignConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
+    state.settingsTextModelList = {};
     state.storyPrompts = [];
     state.debugLoading = false;
     state.debugLoadingStage = "";
@@ -2806,11 +2810,12 @@ function createToonflowStore() {
     if (state.settingsPanelLoaded && !force) return;
     state.settingsPanelLoading = true;
     try {
-      const [configs, voiceConfigs, aiModelMap, prompts] = await Promise.all([
+      const [configs, voiceConfigs, aiModelMap, prompts, textModelList] = await Promise.all([
         api.getModelConfigs().catch(() => []),
         api.getVoiceModels().catch(() => []),
         api.getAiModelMap().catch(() => []),
         api.getPrompts().catch(() => []),
+        api.getAiModelList("text").catch(() => ({} as AiModelListMap)),
       ]);
       state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
       state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
@@ -2819,6 +2824,7 @@ function createToonflowStore() {
         .map(normalizeVoiceModelConfig)
         .filter((item) => String(item.type || "voice").trim() === "voice");
       state.settingsAiModelMap = aiModelMap.filter((item) => GAME_MODEL_SLOTS.some((slot) => slot.key === item.key));
+      state.settingsTextModelList = textModelList || {};
       state.storyPrompts = prompts.filter((item) => STORY_PROMPT_CODES.includes(item.code as (typeof STORY_PROMPT_CODES)[number]));
       state.settingsPanelLoaded = true;
     } catch (err) {
@@ -3187,6 +3193,7 @@ function createToonflowStore() {
     state.settingsVoiceDesignConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
+    state.settingsTextModelList = {};
     state.storyPrompts = [];
     saveSettings();
     clearRuntime();
@@ -3497,13 +3504,14 @@ function createToonflowStore() {
       state.sessionOpeningStage = "初始化会话";
       state.sessionOpenError = "";
       state.sessionRuntimeStage = "";
+      state.sessionResumeLatestOnOpen = false;
       state.sessionDetail = null;
       state.messages = [];
       const existingSession = await fetchLatestSessionForWorld(Number(world.id || 0))
         || state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
         || null;
       if (existingSession?.sessionId) {
-        await openSession(existingSession.sessionId);
+        await openSession(existingSession.sessionId, { resumeLatest: true });
         if (quickText.trim()) {
           state.sendText = quickText.trim();
           await sendMessage();
@@ -3521,7 +3529,7 @@ function createToonflowStore() {
         title: world.name || "会话",
         initialState: null,
       });
-      await openSession(session.sessionId);
+      await openSession(session.sessionId, { resumeLatest: false });
       if (quickText.trim()) {
         state.sendText = quickText.trim();
         await sendMessage();
@@ -3560,7 +3568,10 @@ function createToonflowStore() {
       throw new Error("未找到可继续的会话");
     }
     try {
-      await openSession(sessionId, options);
+      await openSession(sessionId, {
+        ...options,
+        resumeLatest: !options?.playback,
+      });
     } finally {
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
@@ -3577,7 +3588,7 @@ function createToonflowStore() {
     state.quickInput = "";
   }
 
-  async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number }) {
+  async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
     clearRuntimeRetryState();
     state.debugMode = false;
     state.debugLoading = false;
@@ -3585,6 +3596,7 @@ function createToonflowStore() {
     state.activeTab = "play";
     state.sessionViewMode = options?.playback ? "playback" : "live";
     state.sessionPlaybackStartIndex = Math.max(0, Number(options?.playbackIndex || 0));
+    state.sessionResumeLatestOnOpen = Boolean(options?.resumeLatest && !options?.playback);
     state.currentSessionId = sessionId;
     state.sessionOpening = true;
     state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆与角色参数";
@@ -3620,6 +3632,7 @@ function createToonflowStore() {
     await openSession(sessionId, {
       playback: state.sessionViewMode === "playback",
       playbackIndex: state.sessionPlaybackStartIndex,
+      resumeLatest: state.sessionResumeLatestOnOpen,
     });
   }
 
@@ -4012,7 +4025,7 @@ function createToonflowStore() {
 
   async function performSessionPlayerMessage(content: string, optimisticMessageId?: number | null) {
     if (!state.currentSessionId) return;
-    state.sessionRuntimeStage = "提交玩家发言并编排后续剧情";
+    state.sessionRuntimeStage = "提交用户发言并编排后续剧情";
     try {
       const result = await api.addMessage({
         sessionId: state.currentSessionId,
@@ -4029,7 +4042,7 @@ function createToonflowStore() {
       applySessionNarrativeResult(result);
       await refreshSessionListState();
     } finally {
-      if (state.sessionRuntimeStage === "提交玩家发言并编排后续剧情") {
+      if (state.sessionRuntimeStage === "提交用户发言并编排后续剧情") {
         state.sessionRuntimeStage = "";
       }
     }
@@ -4125,7 +4138,7 @@ function createToonflowStore() {
   async function retryFailedPlayerMessage(messageId: number) {
     const target = state.messages.find((item) => Number(item.id || 0) === Number(messageId || 0));
     if (!target || !isLocalPendingPlayerMessage(target) || runtimeMessageStatus(target) !== "error") {
-      throw new Error("没有可重试的玩家台词");
+      throw new Error("没有可重试的用户台词");
     }
     const content = String(target.content || "").trim();
     if (!content) {
@@ -4153,7 +4166,7 @@ function createToonflowStore() {
   function restoreFailedPlayerMessageForRewrite(messageId: number) {
     const target = state.messages.find((item) => Number(item.id || 0) === Number(messageId || 0));
     if (!target || !isLocalPendingPlayerMessage(target)) {
-      throw new Error("没有可改写的玩家台词");
+      throw new Error("没有可改写的用户台词");
     }
     state.sendText = String(target.content || "").trim();
     removeLocalPendingPlayerMessage(messageId);
@@ -4169,7 +4182,7 @@ function createToonflowStore() {
       throw new Error("当前只支持删除最后一条台词");
     }
     if (String(message.roleType || "").trim() !== "player") {
-      throw new Error("当前只支持删除最后一条玩家台词");
+      throw new Error("当前只支持删除最后一条用户台词");
     }
 
     if (state.debugMode) {
@@ -4177,7 +4190,7 @@ function createToonflowStore() {
       delete state.messageReactions[String(messageId)];
       restoreDebugPlayerTurnAfterDeletion();
       syncRuntimeChatTrace();
-      state.notice = "已删除上一句玩家台词";
+      state.notice = "已删除上一句用户台词";
       return;
     }
 
@@ -4187,7 +4200,7 @@ function createToonflowStore() {
     await api.deleteMessage(state.currentSessionId, messageId);
     delete state.messageReactions[String(messageId)];
     await refreshCurrentSession();
-    state.notice = "已删除上一句玩家台词";
+    state.notice = "已删除上一句用户台词";
   }
 
   function copyMessageText(text: string) {

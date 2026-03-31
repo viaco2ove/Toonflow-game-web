@@ -1842,11 +1842,18 @@ a {
 
 .settings-model-manager {
   width: min(96vw, 1280px);
+  max-height: min(88vh, 920px);
+  display: flex;
+  flex-direction: column;
 }
 
 .settings-manager-body {
-  display: grid;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
+  overflow: hidden;
 }
 
 .settings-manager-recommend {
@@ -1902,6 +1909,8 @@ a {
 }
 
 .settings-manager-table-wrap {
+  min-height: 0;
+  max-height: 100%;
   overflow: auto;
   border: 1px solid #eceff5;
   border-radius: 16px;

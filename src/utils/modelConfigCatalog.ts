@@ -47,6 +47,14 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "autodl_chat",
+    label: "AutoDL",
+    website: "https://www.autodl.art/docs/DeepSeek-V3.2/",
+    defaults: {
+      text: "https://www.autodl.art/api/v1",
+    },
+  },
+  {
     value: "openai",
     label: "OpenAI",
     defaults: {
@@ -193,6 +201,9 @@ export function defaultBaseUrlFor(
 export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind, modelType = defaultModelTypeFor(type)): string {
   if (type === "text" && manufacturer === "volcengine") {
     return "doubao-seed-2-0-lite-260215";
+  }
+  if (type === "text" && manufacturer === "autodl_chat") {
+    return "DeepSeek-R1-0528";
   }
   if (type === "text" && manufacturer === "deepseek") {
     return "deepseek-chat";

@@ -59,6 +59,10 @@ function isLocalBiRefNetManufacturer(manufacturer?: string | null): boolean {
   return String(manufacturer || "").trim().toLowerCase() === "local_birefnet";
 }
 
+function isAutoDlTextManufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim().toLowerCase() === "autodl_chat";
+}
+
 function defaultSlotManufacturer(): string {
   if (isVoiceDesignSlot()) {
     return "qwen";
@@ -85,6 +89,9 @@ function defaultSlotModelType(): string {
 function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelType = defaultSlotModelType()): string {
   if (props.configType === "text" && manufacturer === "deepseek") {
     return "deepseek-chat";
+  }
+  if (props.configType === "text" && manufacturer === "autodl_chat") {
+    return "DeepSeek-R1-0528";
   }
   if (props.configType === "text" && manufacturer === "lmstudio") {
     return "qwen3.5-9b";
@@ -146,6 +153,7 @@ const editingId = ref<number | null>(null);
 const testingId = ref<number | null>(null);
 const visibleKeys = reactive<Record<number, boolean>>({});
 const localAvatarMattingStatus = ref<LocalAvatarMattingStatus | null>(null);
+const autodlModelPreset = ref<string>("__custom__");
 const localAvatarMattingInstalling = ref(false);
 const form = reactive({
   manufacturer: defaultSlotManufacturer(),
@@ -180,7 +188,7 @@ const manufacturerOptions = computed(() =>
         && item.value !== "local_birefnet";
     }
     if (props.configType === "voice") {
-      return item.value !== "qwen" && item.value !== "lmstudio";
+      return item.value !== "qwen" && item.value !== "lmstudio" && item.value !== "autodl_chat";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"
@@ -203,6 +211,8 @@ const modelTypeOptions = computed(() => {
 const shouldShowModelType = computed(() => props.configType !== "image" && modelTypeOptions.value.length > 1);
 const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalBiRefNetManufacturer(form.manufacturer));
 const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value);
+const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
+const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
 
 const slotRows = computed(() =>
   store
@@ -253,6 +263,7 @@ watch(
   () => props.modelValue,
   (value) => {
     if (value) {
+      store.ensureSettingsPanelData();
       keyword.value = "";
       selectedId.value = slotRows.value.some((item) => item.id === (props.selectedId ?? null)) ? (props.selectedId ?? null) : null;
     }
@@ -321,7 +332,12 @@ watch(
 
 watch(
   () => [showEditor.value, form.manufacturer, form.model] as const,
-  async ([visible, manufacturer]) => {
+  async ([visible, manufacturer, model]) => {
+    if (isAutoDlTextConfig.value) {
+      autodlModelPreset.value = autodlTextModelOptions.value.some((item) => item.value === model) ? String(model || "") : "__custom__";
+    } else {
+      autodlModelPreset.value = "__custom__";
+    }
     if (!visible || !isLocalBiRefNetManufacturer(manufacturer)) {
       if (!visible) {
         localAvatarMattingStatus.value = null;
@@ -399,6 +415,18 @@ async function installLocalAvatarMattingFromButton() {
   }
 }
 
+function applyAutodlModelPreset(value: string) {
+  autodlModelPreset.value = value;
+  if (value !== "__custom__") {
+    form.model = value;
+  }
+}
+
+function syncAutodlModelPreset(value?: string | null) {
+  const model = String(value || form.model || "").trim();
+  autodlModelPreset.value = autodlTextModelOptions.value.some((item) => item.value === model) ? model : "__custom__";
+}
+
 function close() {
   emit("update:modelValue", false);
 }
@@ -416,6 +444,7 @@ function openCreate() {
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = "";
   localAvatarMattingStatus.value = null;
+  syncAutodlModelPreset(form.model);
   showEditor.value = true;
 }
 
@@ -433,6 +462,7 @@ function openEdit(row: ModelConfigItem) {
   form.baseUrl = row.baseUrl || defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = row.apiKey || "";
   localAvatarMattingStatus.value = null;
+  syncAutodlModelPreset(form.model);
   showEditor.value = true;
 }
 
@@ -660,7 +690,38 @@ async function confirmBinding() {
         </div>
         <div class="field">
           <label>模型</label>
-          <input v-model="form.model" class="input" type="text" placeholder="请输入模型标识" />
+          <template v-if="isAutoDlTextConfig">
+            <select
+              v-model="autodlModelPreset"
+              class="select"
+              @change="applyAutodlModelPreset(autodlModelPreset)"
+            >
+              <option value="__custom__">手动输入模型标识</option>
+              <option
+                v-for="item in autodlTextModelOptions"
+                :key="item.value"
+                :value="item.value"
+              >
+                {{ item.label }}
+              </option>
+            </select>
+            <input
+              v-model="form.model"
+              class="input"
+              type="text"
+              placeholder="也可直接输入 AutoDL 模型标识"
+            />
+            <div class="settings-field-hint">
+              可先从下拉框选预设模型，也可以直接手动输入 AutoDL 支持的模型标识。
+            </div>
+          </template>
+          <input
+            v-else
+            v-model="form.model"
+            class="input"
+            type="text"
+            placeholder="请输入模型标识"
+          />
         </div>
         <div v-if="usesLocalAvatarMatting" class="field">
           <label>本地安装</label>

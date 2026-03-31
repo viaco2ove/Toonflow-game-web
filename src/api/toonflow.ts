@@ -1,6 +1,7 @@
 import axios from "axios";
 import type {
   ApiEnvelope,
+  AiModelListMap,
   AiModelMapItem,
   ChapterItem,
   DebugOrchestrationResult,
@@ -341,6 +342,10 @@ export class ToonflowApi {
 
   getAiModelMap() {
     return this.post<AiModelMapItem[]>("/setting/getAiModelMap", {});
+  }
+
+  getAiModelList(type: "text" | "image" | "video" | "voice") {
+    return this.post<AiModelListMap>("/setting/getAiModelList", { type });
   }
 
   bindModelConfig(id: number, configId: number) {

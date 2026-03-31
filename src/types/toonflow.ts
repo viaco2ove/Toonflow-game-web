@@ -315,6 +315,13 @@ export interface AiModelMapItem {
   manufacturer?: string | null;
 }
 
+export interface AiModelOptionItem {
+  label: string;
+  value: string;
+}
+
+export type AiModelListMap = Record<string, AiModelOptionItem[]>;
+
 export interface PromptItem {
   id: number;
   code: string;

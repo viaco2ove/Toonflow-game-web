@@ -177,7 +177,7 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          nextRole: waitingPlayer ? "玩家" : rawNextRole,
+          nextRole: waitingPlayer ? "用户" : rawNextRole,
           nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
           updateTime: Number(item.updateTime || 0),
         };
@@ -918,17 +918,17 @@ const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
-  if (status === "waiting_player" || canPlayerSpeak.value) return "玩家";
+  if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
   return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
   const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;
-  if (!status && canPlayerSpeak.value) return "等待玩家";
+  if (!status && canPlayerSpeak.value) return "等待用户";
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "session_error") return "打开失败";
   if (status === "sending") return "发送中";
   if (status === "waiting_next") return "等待下一位";
-  if (status === "waiting_player") return "等待玩家";
+  if (status === "waiting_player") return "等待用户";
   if (status === "auto_advancing") return "自动推进中";
   if (status === "revealing") return "展示中";
   if (status === "streaming") return "流式生成中";
@@ -1082,6 +1082,11 @@ watch(
       revealedMessages.value = [];
       return;
     }
+    if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
+      revealedMessages.value = [...nextMessages];
+      store.state.sessionResumeLatestOnOpen = false;
+      return;
+    }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
     const revealedKeys = revealedMessages.value.map((message) => messageUiKey(message));
     const mismatched = nextKeys.length < revealedKeys.length || revealedKeys.some((key, index) => nextKeys[index] !== key);
@@ -1122,6 +1127,11 @@ watch(
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
       revealedMessages.value = [];
+      return;
+    }
+    if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
+      revealedMessages.value = [...nextMessages];
+      store.state.sessionResumeLatestOnOpen = false;
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2028,7 +2038,7 @@ function menuRewrite() {
 function menuDelete() {
   const message = menuMessage.value;
   if (!message || !canDeleteMenuMessage(message)) return;
-  const confirmed = window.confirm("确认删除这条玩家台词吗？删除后将回到可重新输入状态。");
+  const confirmed = window.confirm("确认删除这条用户台词吗？删除后将回到可重新输入状态。");
   if (!confirmed) return;
   void store.deleteMessage(message).catch((error) => {
     store.state.notice = `删除失败：${error instanceof Error ? error.message : "未知错误"}`;
