@@ -4934,6 +4934,9 @@ textarea::-webkit-scrollbar-thumb {
 .play-mini-round--voice {
   display: grid;
   place-items: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .play-mini-round--voice svg {
@@ -4944,6 +4947,36 @@ textarea::-webkit-scrollbar-thumb {
   stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.play-mini-round--cancel {
+  display: grid;
+  place-items: center;
+  border-color: rgba(215, 128, 128, 0.28);
+  color: #ffecec;
+  background: rgba(133, 67, 67, 0.22);
+}
+
+.play-mini-round--cancel svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.play-voice-status {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(7, 17, 31, 0.72);
+  border: 1px solid rgba(188, 204, 226, 0.14);
+  color: rgba(235, 242, 255, 0.86);
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
 }
 
 .play-message-menu {

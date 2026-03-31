@@ -806,6 +806,13 @@ const runtimeVoiceBlobCache = new Map<string, Blob>();
 const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
 const runtimeVoiceWarmCache = new Set<string>();
 const revealedMessages = ref<MessageItem[]>([]);
+
+function resetVoiceHoldState() {
+  voiceHoldActive.value = false;
+  voiceHoldCancelPending.value = false;
+  voiceHoldPointerId.value = null;
+}
+
 const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
 const liveMessageProgressFingerprint = computed(() => messages.value.map((message) => [
   messageUiKey(message),
@@ -815,9 +822,6 @@ const liveMessageProgressFingerprint = computed(() => messages.value.map((messag
 ].join("_")).join("|"));
 const playbackMessages = computed(() => messages.value.filter((message) => !isRuntimeRetryMessage(message)));
 const displayMessages = computed(() => {
-  if (playMode.value === "history" && isSessionPlaybackMode.value) {
-    return playbackMessages.value.slice(0, Math.min(playbackCursor.value + 1, playbackMessages.value.length));
-  }
   return playMode.value === "history" ? messages.value : revealedMessages.value.slice(-1);
 });
 const latestRevealedMessage = computed(() => {
@@ -855,6 +859,13 @@ const statePreviewText = computed(() => {
     return String(state || "{}");
   }
 });
+const playbackMaxIndex = computed(() => Math.max(0, playbackMessages.value.length - 1));
+const playbackCurrentMessage = computed(() => playbackMessages.value[playbackCursor.value] || null);
+const playbackProgressLabel = computed(() => {
+  if (!playbackMessages.value.length) return "暂无可回放台词";
+  return `${playbackCursor.value + 1}/${playbackMessages.value.length} · ${messageTitle(playbackCurrentMessage.value)}`;
+});
+const playbackCanPlay = computed(() => playbackMessages.value.length > 0 && playbackCursor.value <= playbackMaxIndex.value);
 const allowRoleView = computed(() => currentWorld.value?.settings?.allowRoleView !== false);
 const canEditCurrentWorld = computed(() => store.canEditWorld(currentWorld.value));
 const settingSelectedRole = computed(() => roleCards.value.find((item) => item.id === settingRoleId.value) || roleCards.value[0] || null);
@@ -870,6 +881,13 @@ const tipOptions = computed(() => {
 const browserSpeechSupported = computed(() => {
   if (typeof window === "undefined") return false;
   return Boolean(window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
+});
+const voiceRecordingStatusText = computed(() => {
+  if (voiceTranscribing.value) return "语音识别处理中...";
+  if (voiceListening.value || voiceHoldActive.value) {
+    return "录音中，再次点击结束并发送";
+  }
+  return "";
 });
 const debugLoading = computed(() => store.state.debugLoading);
 const debugLoadingStage = computed(() => store.state.debugLoadingStage || "正在初始化调试上下文...");
@@ -920,14 +938,6 @@ const runtimeDebugStatusLabel = computed(() => {
   return status;
 });
 const runtimeDebugConversationLabel = computed(() => shortRuntimeConversationId(latestRuntimeChatTrace.value?.conversationId || ""));
-const playbackMaxIndex = computed(() => Math.max(0, playbackMessages.value.length - 1));
-const playbackCurrentMessage = computed(() => playbackMessages.value[playbackCursor.value] || null);
-const playbackProgressLabel = computed(() => {
-  if (!playbackMessages.value.length) return "暂无可回放台词";
-  return `${playbackCursor.value + 1}/${playbackMessages.value.length} · ${messageTitle(playbackCurrentMessage.value)}`;
-});
-const playbackCanPlay = computed(() => playbackMessages.value.length > 0 && playbackCursor.value <= playbackMaxIndex.value);
-
 function refreshRuntimeChatTrace() {
   runtimeChatTraceRows.value = readRuntimeChatTraceRows();
 }
@@ -2164,8 +2174,7 @@ function exitDebugMode() {
 
 function toggleHistoryMode() {
   if (isSessionPlaybackMode.value && playMode.value === "history") {
-    playbackPlaying.value = false;
-    playbackRunId += 1;
+    stopPlaybackSequence();
     stopRuntimeVoicePlayback();
     store.state.sessionViewMode = "live";
     store.state.sessionPlaybackStartIndex = 0;
@@ -2179,6 +2188,12 @@ function toggleTipsMode() {
   playMode.value = playMode.value === "tips" ? "live" : "tips";
 }
 
+function stopPlaybackSequence() {
+  playbackPlaying.value = false;
+  playbackRunId += 1;
+  stopRuntimeVoicePlayback();
+}
+
 function openChapterObjective() {
   chapterDetailOpen.value = true;
   playMode.value = "setting";
@@ -2186,12 +2201,6 @@ function openChapterObjective() {
 
 function openSettingMode() {
   playMode.value = playMode.value === "setting" ? "live" : "setting";
-}
-
-function stopPlaybackSequence() {
-  playbackPlaying.value = false;
-  playbackRunId += 1;
-  stopRuntimeVoicePlayback();
 }
 
 async function startPlaybackSequence() {
@@ -2358,6 +2367,8 @@ async function startVoiceRecognition() {
         : "";
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     mediaRecorder = recorder;
+    // 立即进入录音态，避免 onstart 延迟时看起来像“没有按住效果”。
+    voiceListening.value = true;
     recorder.onstart = () => {
       voiceListening.value = true;
     };
@@ -2394,6 +2405,7 @@ async function startVoiceRecognition() {
   } catch (error: any) {
     inputMode.value = "text";
     voiceListening.value = false;
+    resetVoiceHoldState();
     store.state.notice = `无法开始录音: ${error?.message || "未知错误"}`;
   }
 }
@@ -2401,10 +2413,6 @@ async function startVoiceRecognition() {
 function handleVoicePrimary() {
   if (!canPlayerInput.value) {
     store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
-    return;
-  }
-  if (inputMode.value === "text") {
-    void submit();
     return;
   }
   if (voiceTranscribing.value) return;
@@ -2434,12 +2442,9 @@ function beginVoiceHoldInteraction(target: EventTarget | null, startY: number, p
       // noop
     }
   }
-  void startVoiceRecognition().finally(() => {
-    if (!voiceListening.value && !voiceTranscribing.value) {
-      voiceHoldActive.value = false;
-      voiceHoldCancelPending.value = false;
-      voiceHoldPointerId.value = null;
-    }
+  void startVoiceRecognition().catch(() => {
+    voiceListening.value = false;
+    resetVoiceHoldState();
   });
 }
 
@@ -2458,9 +2463,7 @@ function finishVoiceHoldInteraction(target: EventTarget | null, pointerId: numbe
     }
   }
   const shouldCancel = cancel || voiceHoldCancelPending.value;
-  voiceHoldActive.value = false;
-  voiceHoldCancelPending.value = false;
-  voiceHoldPointerId.value = null;
+  resetVoiceHoldState();
   if (!voiceListening.value) return;
   if (shouldCancel) {
     stopVoiceRecognition();
@@ -3029,23 +3032,22 @@ onBeforeUnmount(() => {
             <span class="play-debug-badge">下一位 {{ runtimeDebugNextRoleLabel }}</span>
           </div>
         </div>
-        <div
-          v-if="playMode === 'history' && isSessionPlaybackMode"
-          class="playback-panel"
-        >
+        <div v-if="playMode === 'history' && isSessionPlaybackMode" class="playback-panel">
           <div class="playback-panel__head">
             <span class="playback-panel__label">剧情回放</span>
-            <span class="playback-panel__meta">{{ playbackProgressLabel }}</span>
+            <span class="playback-panel__meta">可直接查看全部历史台词</span>
           </div>
-          <input
-            v-model.number="playbackCursor"
-            class="playback-panel__slider"
-            type="range"
-            min="0"
-            :max="playbackMaxIndex"
-            :disabled="!playbackMessages.length"
-            @input="onPlaybackCursorInput"
-          />
+          <div class="playback-panel__slider">
+            <input
+              v-model.number="playbackCursor"
+              type="range"
+              :min="0"
+              :max="playbackMaxIndex"
+              :disabled="!playbackCanPlay || playbackPlaying"
+              @input="onPlaybackCursorInput"
+            >
+            <div class="playback-panel__progress">{{ playbackProgressLabel }}</div>
+          </div>
           <div class="playback-panel__actions">
             <button
               type="button"
@@ -3053,7 +3055,7 @@ onBeforeUnmount(() => {
               :disabled="!playbackCanPlay"
               @click="playbackPlaying ? stopPlaybackSequence() : startPlaybackSequence()"
             >
-              {{ playbackPlaying ? "暂停" : "播放" }}
+              {{ playbackPlaying ? "暂停回放" : "开始回放" }}
             </button>
             <button type="button" class="playback-panel__btn playback-panel__btn--primary" @click="continueFromPlayback">
               继续聊
@@ -3065,7 +3067,7 @@ onBeforeUnmount(() => {
           小游戏进行中，请使用上方面板操作。
         </div>
         <template v-else-if="playMode === 'history' && isSessionPlaybackMode">
-          <div class="play-playback-lock">当前为剧情回放模式，拖动进度条或点击播放继续观看。</div>
+          <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
         </template>
         <template v-else-if="inputMode === 'text'">
           <div class="play-text-bar">
@@ -3073,27 +3075,30 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="play-mini-round play-mini-round--voice"
-              :class="{ 'is-active': voiceListening || voiceHoldActive, 'is-cancel': voiceHoldCancelPending }"
-              :disabled="!canPlayerInput || voiceTranscribing"
-              @pointerdown.prevent="handleVoiceHoldStart"
-              @pointermove.prevent="handleVoiceHoldMove"
-              @pointerup.prevent="handleVoiceHoldEnd"
-              @pointercancel.prevent="handleVoiceHoldCancel"
-              @mousedown.prevent="handleVoiceMouseDown"
-              @mousemove.prevent="handleVoiceMouseMove"
-              @mouseup.prevent="handleVoiceMouseUp"
-              @mouseleave.prevent="handleVoiceMouseLeave"
-              @touchstart.prevent="handleVoiceTouchStart"
-              @touchmove.prevent="handleVoiceTouchMove"
-              @touchend.prevent="handleVoiceTouchEnd"
-              @touchcancel.prevent="handleVoiceTouchCancel"
-              @contextmenu.prevent
+              :class="{ 'is-active': voiceListening, 'is-cancel': false }"
+              :disabled="voiceTranscribing || (!canPlayerInput && !voiceListening)"
+              @click="handleVoicePrimary"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              <svg v-if="!voiceListening" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>
                 <path d="M7.8 11.8a4.2 4.2 0 0 0 8.4 0"></path>
                 <path d="M12 16v3"></path>
                 <path d="M9.5 19h5"></path>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="7.2" y="7.2" width="9.6" height="9.6" rx="2.2"></rect>
+              </svg>
+            </button>
+            <button
+              v-if="voiceListening"
+              type="button"
+              class="play-mini-round play-mini-round--cancel"
+              aria-label="取消录音"
+              @click="stopVoiceRecognition"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 7l10 10"></path>
+                <path d="M17 7 7 17"></path>
               </svg>
             </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
@@ -3101,33 +3106,35 @@ onBeforeUnmount(() => {
               {{ currentRuntimeInputStatus === "sending" ? "发送中..." : sessionRuntimeStageText ? "处理中..." : "发送" }}
             </button>
           </div>
+          <div v-if="voiceRecordingStatusText" class="play-voice-status">{{ voiceRecordingStatusText }}</div>
         </template>
         <template v-else>
           <div class="play-voice-bar">
             <button
               type="button"
               class="play-voice-btn"
-              :class="{ 'is-active': voiceListening || voiceHoldActive, 'is-cancel': voiceHoldCancelPending }"
-              :disabled="!canPlayerInput || voiceTranscribing"
-              @pointerdown.prevent="handleVoiceHoldStart"
-              @pointermove.prevent="handleVoiceHoldMove"
-              @pointerup.prevent="handleVoiceHoldEnd"
-              @pointercancel.prevent="handleVoiceHoldCancel"
-              @mousedown.prevent="handleVoiceMouseDown"
-              @mousemove.prevent="handleVoiceMouseMove"
-              @mouseup.prevent="handleVoiceMouseUp"
-              @mouseleave.prevent="handleVoiceMouseLeave"
-              @touchstart.prevent="handleVoiceTouchStart"
-              @touchmove.prevent="handleVoiceTouchMove"
-              @touchend.prevent="handleVoiceTouchEnd"
-              @touchcancel.prevent="handleVoiceTouchCancel"
-              @contextmenu.prevent
+              :class="{ 'is-active': voiceListening, 'is-cancel': false }"
+              :disabled="voiceTranscribing || (!canPlayerInput && !voiceListening)"
+              @click="handleVoicePrimary"
             >
-              {{ voiceTranscribing ? "识别处理中..." : voiceListening ? (voiceHoldCancelPending ? "松开取消" : "松开发送，上滑取消") : "按住说话" }}
+              {{ voiceTranscribing ? "识别处理中..." : voiceListening ? "结束并发送" : "点击说话" }}
+            </button>
+            <button
+              v-if="voiceListening"
+              type="button"
+              class="play-mini-round play-mini-round--cancel"
+              aria-label="取消录音"
+              @click="stopVoiceRecognition"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 7l10 10"></path>
+                <path d="M17 7 7 17"></path>
+              </svg>
             </button>
             <button type="button" class="play-mini-round" @click="toggleInputMode">键</button>
             <button type="button" class="play-mini-round" @click="onMiniAction('share')">＋</button>
           </div>
+          <div v-if="voiceRecordingStatusText" class="play-voice-status">{{ voiceRecordingStatusText }}</div>
         </template>
       </div>
     </div>

@@ -527,19 +527,25 @@ function closeVoiceDialog() {
   voiceDialogNpcIndex.value = null;
 }
 
-function handleVoiceConfirm(binding: VoiceBindingDraft) {
+async function handleVoiceConfirm(binding: VoiceBindingDraft) {
   const target = voiceDialogTarget.value;
   if (!target) return;
-  if (target === "player") {
-    store.setPlayerVoiceBinding(binding);
-  } else if (target === "narrator") {
-    store.setNarratorVoiceBinding(binding);
-  } else if (target === "npc" && typeof voiceDialogNpcIndex.value === "number") {
-    store.setNpcRoleVoice(voiceDialogNpcIndex.value, binding);
+  try {
+    if (target === "player") {
+      store.setPlayerVoiceBinding(binding);
+    } else if (target === "narrator") {
+      store.setNarratorVoiceBinding(binding);
+    } else if (target === "npc" && typeof voiceDialogNpcIndex.value === "number") {
+      store.setNpcRoleVoice(voiceDialogNpcIndex.value, binding);
+    }
+    // 旁白音色需要立即落库，避免调试入口拿到旧配置。
+    await store.saveWorldOnly(false);
+    store.state.notice = target === "narrator" ? "旁白音色已保存" : "音色已更新";
+    store.scheduleStoryEditorAutoPersist(120);
+    closeVoiceDialog();
+  } catch (err) {
+    store.state.notice = `音色保存失败: ${(err as Error).message}`;
   }
-  store.state.notice = "音色已更新";
-  store.scheduleStoryEditorAutoPersist(120);
-  closeVoiceDialog();
 }
 
 function cycleOpeningRole() {
