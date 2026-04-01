@@ -44,6 +44,7 @@ const imageDialogNpcIndex = ref<number | null>(null);
 const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
 const showDeleteNpcConfirm = ref(false);
+const publishPending = ref(false);
 let runtimeAudioUnlockContext: AudioContext | null = null;
 let runtimeAudioUnlockElement: HTMLAudioElement | null = null;
 
@@ -556,12 +557,12 @@ function cycleOpeningRole() {
 }
 
 async function goNextStep() {
-  await store.saveStoryEditor(false, false, null);
+  await store.saveStoryEditor(null, false, null);
   store.state.createStep = 1;
 }
 
 async function backToStoryStep() {
-  await store.saveStoryEditor(false, false, null);
+  await store.saveStoryEditor(null, false, null);
   store.state.createStep = 0;
 }
 
@@ -570,11 +571,19 @@ async function saveDraft() {
 }
 
 async function publishStory() {
-  await store.saveStoryEditor(true, false, "故事已发布并可游玩");
+  if (publishPending.value) return;
+  publishPending.value = true;
+  try {
+    await store.saveStoryEditor(true, false, "故事已发布并可游玩");
+  } catch (err) {
+    store.state.notice = `发布失败: ${(err as Error).message}`;
+  } finally {
+    publishPending.value = false;
+  }
 }
 
 async function addNextChapter() {
-  await store.saveStoryEditor(false, true, "当前章节已保存，并已新建下一章节草稿");
+  await store.saveStoryEditor(null, true, "当前章节已保存，并已新建下一章节草稿");
 }
 
 async function primeRuntimeAudioUnlock() {
@@ -698,9 +707,11 @@ function cancelRemoveCurrentNpc() {
           <textarea v-model="store.state.worldIntro" class="textarea" rows="5" placeholder="输入故事简介"></textarea>
         </div>
         <div class="create-footer-actions">
-          <button class="create-footer-btn" type="button" @click="backToStoryStep">返回</button>
-          <button class="create-footer-btn" type="button" @click="saveDraft">存草稿</button>
-          <button class="create-footer-btn create-footer-btn--primary" type="button" @click="publishStory">发布</button>
+          <button class="create-footer-btn" type="button" :disabled="publishPending" @click="backToStoryStep">返回</button>
+          <button class="create-footer-btn" type="button" :disabled="publishPending" @click="saveDraft">存草稿</button>
+          <button class="create-footer-btn create-footer-btn--primary" type="button" :disabled="publishPending" @click="publishStory">
+            {{ publishPending ? "发布中..." : "发布" }}
+          </button>
         </div>
       </section>
     </div>

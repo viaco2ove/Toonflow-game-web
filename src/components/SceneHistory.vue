@@ -5,6 +5,7 @@ import StoryCover from "./StoryCover.vue";
 
 const store = useToonflowStore();
 const sessions = computed(() => store.state.sessions);
+const sessionListError = computed(() => store.state.sessionListError || "");
 
 function historyCoverPath(sessionId: string) {
   const item = sessions.value.find((row) => row.sessionId === sessionId);
@@ -32,7 +33,12 @@ async function removeSession(sessionId: string, title: string) {
       <button class="history-refresh-btn" type="button" @click="store.reloadAll">刷新</button>
     </div>
 
-    <div v-if="!sessions.length" class="history-empty">暂无会话记录</div>
+    <div v-if="sessionListError" class="history-empty">
+      <div>会话列表加载失败：{{ sessionListError }}</div>
+      <button class="history-refresh-btn" type="button" @click="store.reloadAll">重试</button>
+    </div>
+
+    <div v-else-if="!sessions.length" class="history-empty">暂无会话记录</div>
 
     <div v-else class="history-list">
       <article

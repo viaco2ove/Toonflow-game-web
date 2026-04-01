@@ -680,6 +680,8 @@ interface StoryEditorSnapshot {
   chapterConditionVisible: boolean;
 }
 
+type SaveWorldStatusMode = "preserve" | "draft" | "published";
+
 type ToonflowStore = ReturnType<typeof createToonflowStore>;
 type DebugChapterResult = "continue" | "success" | "failed";
 
@@ -768,6 +770,7 @@ function createToonflowStore() {
     chapterMusic: "",
     chapterConditionVisible: true,
     sessions: [] as SessionItem[],
+    sessionListError: "",
     currentSessionId: "",
     sessionViewMode: "live" as "live" | "playback",
     sessionPlaybackStartIndex: 0,
@@ -796,19 +799,56 @@ function createToonflowStore() {
   let runtimeRetryTask: RuntimeRetryTask | null = null;
   let runtimeRetrySeed = 0;
   let runtimeRetrying = false;
+  let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
+  const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
+
+  async function requestSessionList(worldId?: number): Promise<SessionItem[]> {
+    try {
+      const rows = await api.listSession(undefined, worldId);
+      state.sessionListError = "";
+      return rows;
+    } catch (error) {
+      state.sessionListError = asUiErrorMessage(error);
+      throw error;
+    }
+  }
 
   async function fetchLatestSessionForWorld(worldId: number): Promise<SessionItem | null> {
     const targetWorldId = Number(worldId || 0);
     if (!Number.isFinite(targetWorldId) || targetWorldId <= 0) return null;
-    const rows = await api.listSession(undefined, targetWorldId).catch(() => []);
-    const [latest] = dedupeSessionsByWorld(rows || []);
-    return (latest as SessionItem | undefined) || null;
+    const cached = latestSessionByWorldPromise.get(targetWorldId);
+    if (cached) {
+      return cached;
+    }
+    const task = requestSessionList(targetWorldId)
+      .then((rows) => {
+        const [latest] = dedupeSessionsByWorld(rows || []);
+        return (latest as SessionItem | undefined) || null;
+      })
+      .catch(() => null)
+      .finally(() => {
+        latestSessionByWorldPromise.delete(targetWorldId);
+      });
+    latestSessionByWorldPromise.set(targetWorldId, task);
+    return task;
   }
 
   async function refreshSessionListState() {
-    const sessions = await api.listSession(undefined).catch(() => state.sessions);
+    if (refreshSessionListPromise) {
+      const sessions = await refreshSessionListPromise;
+      state.sessions = dedupeSessionsByWorld(sessions || []);
+      return;
+    }
+    // Avoid firing duplicated /game/listSession requests when multiple flows
+    // (session open, autosave, continue, reload) refresh the same sidebar state.
+    refreshSessionListPromise = requestSessionList(undefined)
+      .catch(() => state.sessions)
+      .finally(() => {
+        refreshSessionListPromise = null;
+      });
+    const sessions = await refreshSessionListPromise;
     state.sessions = dedupeSessionsByWorld(sessions || []);
   }
   let editorAutoPersistTimer: number | null = null;
@@ -1451,6 +1491,7 @@ function createToonflowStore() {
     state.selectedProjectId = -1;
     state.worlds = [];
     state.sessions = [];
+    state.sessionListError = "";
     state.sessionDetail = null;
     state.messages = [];
     state.currentSessionId = "";
@@ -1653,7 +1694,7 @@ function createToonflowStore() {
     const previous = lastPersistedEditorSnapshot ? cloneStoryEditorSnapshot(lastPersistedEditorSnapshot) : null;
     editorPersistMuted = true;
     try {
-      await saveStoryEditor(false, false, null);
+      await saveStoryEditor(null, false, null);
       lastPersistedEditorSnapshot = captureStoryEditorSnapshot();
       lastPersistedEditorSignature = JSON.stringify(lastPersistedEditorSnapshot);
       undoEditorSnapshot = previous;
@@ -1680,7 +1721,7 @@ function createToonflowStore() {
     applyStoryEditorSnapshot(target);
     editorPersistMuted = true;
     try {
-      await saveStoryEditor(false, false, "已撤回到上一次自动保存前");
+      await saveStoryEditor(null, false, "已撤回到上一次自动保存前");
       lastPersistedEditorSnapshot = captureStoryEditorSnapshot();
       lastPersistedEditorSignature = JSON.stringify(lastPersistedEditorSnapshot);
     } finally {
@@ -1688,8 +1729,30 @@ function createToonflowStore() {
     }
   }
 
+  function worldPublishStatus(world: WorldItem | null | undefined): string {
+    return String(world?.publishStatus || world?.settings?.publishStatus || "draft").trim().toLowerCase();
+  }
+
   function isWorldPublished(world: WorldItem): boolean {
-    return String(world?.publishStatus || world?.settings?.publishStatus || "draft") === "published";
+    return worldPublishStatus(world) === "published";
+  }
+
+  // “我的作品”需要把发布过程中的故事放在已发布分区里，而大厅/推荐仍只认真正已发布。
+  function isWorldInPublishedLane(world: WorldItem): boolean {
+    return ["published", "publishing", "publish_failed"].includes(worldPublishStatus(world));
+  }
+
+  function worldPublishStatusLabel(world: WorldItem): string {
+    switch (worldPublishStatus(world)) {
+      case "publishing":
+        return "发布中";
+      case "publish_failed":
+        return "发布失败";
+      case "published":
+        return "已发布";
+      default:
+        return "草稿";
+    }
   }
 
   function worldCoverPath(world: WorldItem | null | undefined): string {
@@ -1722,11 +1785,11 @@ function createToonflowStore() {
   }
 
   function publishedWorldsForSelectedProject(): WorldItem[] {
-    return worldsForSelectedProject().filter((item) => isWorldPublished(item));
+    return worldsForSelectedProject().filter((item) => isWorldInPublishedLane(item));
   }
 
   function draftWorldsForSelectedProject(): WorldItem[] {
-    return worldsForSelectedProject().filter((item) => !isWorldPublished(item));
+    return worldsForSelectedProject().filter((item) => !isWorldInPublishedLane(item));
   }
 
   function allPublishedWorlds(): WorldItem[] {
@@ -3079,7 +3142,7 @@ function createToonflowStore() {
         api.getUser().catch(() => null),
         api.getProjects().catch(() => []),
         api.listWorlds(undefined, true).catch(() => []),
-        api.listSession(undefined).catch(() => []),
+        requestSessionList(undefined).catch(() => state.sessions),
       ]);
       if (user) {
         state.userName = String((user as any).name || "");
@@ -3205,6 +3268,9 @@ function createToonflowStore() {
     if (tab === "home") {
       refreshRecommendedWorld();
     }
+    if (tab === "history" && state.token.trim()) {
+      void refreshSessionListState();
+    }
     if (tab === "settings" && state.token.trim()) {
       void ensureSettingsPanelData();
     }
@@ -3302,7 +3368,7 @@ function createToonflowStore() {
     }
     await loadWorldForEdit(world);
     state.worldPublishStatus = "draft";
-    await saveWorldOnly(false);
+    await saveWorldOnly("draft");
     state.notice = "已转回草稿，可继续编辑";
   }
 
@@ -3379,28 +3445,38 @@ function createToonflowStore() {
     primeStoryEditorPersistState();
   }
 
-  async function saveWorldOnly(publish = false) {
+  async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve") {
+    const targetStatus = statusMode === "published"
+      ? "published"
+      : statusMode === "draft"
+        ? "draft"
+        : state.worldPublishStatus || "draft";
     const payload = {
       worldId: state.worldId || undefined,
       projectId: state.selectedProjectId,
       name: state.worldName.trim(),
       intro: state.worldIntro.trim(),
       coverPath: state.worldCoverPath,
-      publishStatus: publish ? "published" : state.worldPublishStatus || "draft",
+      publishStatus: targetStatus,
       settings: storySettingsObject(),
       playerRole: currentPlayerRole(),
       narratorRole: currentNarratorRole(),
     };
     const result = await api.saveWorld(payload);
     state.worldId = result.id;
-    state.worldPublishStatus = publish ? "published" : "draft";
+    state.worldPublishStatus = result.publishStatus || result.settings?.publishStatus || targetStatus;
     await reloadWorldsAfterSave();
     return result;
   }
 
-  async function saveChapterDraft(showNotice = true, statusOverride?: "draft" | "published") {
+  async function saveChapterDraft(
+    showNotice = true,
+    statusOverride?: "draft" | "published",
+    worldStatusMode: SaveWorldStatusMode = "preserve",
+    persistWorldAfter = true,
+  ) {
     if (!state.worldId) {
-      const world = await saveWorldOnly(false);
+      const world = await saveWorldOnly("draft");
       state.worldId = world.id;
     }
     const chapterBody = stripLeadingOpeningArtifacts(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
@@ -3450,34 +3526,58 @@ function createToonflowStore() {
     if (showNotice) {
       state.notice = "章节已保存";
     }
-    await saveWorldOnly(statusOverride === "published");
-    await reloadWorldsAfterSave();
+    if (persistWorldAfter) {
+      await saveWorldOnly(worldStatusMode);
+      await reloadWorldsAfterSave();
+    }
     primeStoryEditorPersistState();
     return saved;
   }
 
-  async function saveStoryEditor(publish = false, startNextDraft = false, successNotice: string | null = "保存成功") {
-    const world = await saveWorldOnly(publish);
-    if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
-      await saveChapterDraft(false, publish ? "published" : "draft");
+  async function saveStoryEditor(publish: boolean | null = null, startNextDraft = false, successNotice: string | null = "保存成功") {
+    const targetWorldStatusMode: SaveWorldStatusMode = publish === true ? "published" : publish === false ? "draft" : "preserve";
+    const targetChapterStatus = targetWorldStatusMode === "published"
+      ? "published"
+      : targetWorldStatusMode === "draft"
+        ? "draft"
+        : state.worldPublishStatus === "published"
+          ? "published"
+          : "draft";
+    if (publish === true) {
+      state.notice = "发布中，正在生成角色参数和章节快照...";
     }
-    if (startNextDraft) {
-      beginNewChapterDraft();
+    if (!state.worldId) {
+      const world = await saveWorldOnly("draft");
+      state.worldId = world.id;
     }
-    if (successNotice !== null) {
-      state.notice = successNotice || (publish ? "故事已发布" : "故事已保存");
+    try {
+      if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
+        await saveChapterDraft(false, targetChapterStatus, "preserve", false);
+      }
+      const world = await saveWorldOnly(targetWorldStatusMode);
+      if (startNextDraft) {
+        beginNewChapterDraft();
+      }
+      if (successNotice !== null) {
+        state.notice = successNotice || (targetWorldStatusMode === "published" ? "故事已发布" : "故事已保存");
+      }
+      primeStoryEditorPersistState();
+      return world;
+    } catch (err) {
+      if (publish === true && state.worldId) {
+        await Promise.allSettled([
+          loadWorldForEdit({ id: state.worldId } as WorldItem),
+          reloadWorldsAfterSave(),
+        ]);
+      }
+      throw err;
     }
-    if (publish) {
-      state.worldPublishStatus = "published";
-    }
-    primeStoryEditorPersistState();
-    return world;
   }
 
   async function reloadWorldsAfterSave() {
     const [worlds, sessions] = await Promise.all([
       api.listWorlds(undefined, true).catch(() => state.worlds),
-      api.listSession(undefined).catch(() => state.sessions),
+      requestSessionList(undefined).catch(() => state.sessions),
     ]);
     state.worlds = worlds;
     refreshRecommendedWorld();
@@ -3606,13 +3706,11 @@ function createToonflowStore() {
     state.sessionDetail = null;
     state.messages = [];
     try {
-      const [detail] = await Promise.all([
-        api.getSession(sessionId),
-        refreshSessionListState(),
-      ]);
+      const detail = await api.getSession(sessionId);
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
+      void refreshSessionListState();
     } catch (error) {
       const message = asUiErrorMessage(error);
       state.sessionOpenError = message;
@@ -3654,11 +3752,9 @@ function createToonflowStore() {
 
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
-    const [detail] = await Promise.all([
-      api.getSession(state.currentSessionId),
-      refreshSessionListState(),
-    ]);
+    const detail = await api.getSession(state.currentSessionId);
     applyLoadedSessionDetail(detail);
+    void refreshSessionListState();
   }
 
   function applyDebugOrchestrationResult(
@@ -3866,7 +3962,7 @@ function createToonflowStore() {
     state.notice = "进入调试中...";
     try {
       state.debugLoadingStage = "保存草稿";
-      await saveWorldOnly(false);
+      await saveWorldOnly("preserve");
       if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
         await saveChapterDraft(false, state.worldPublishStatus === "published" ? "published" : "draft");
       }
@@ -4322,7 +4418,10 @@ function createToonflowStore() {
     setNpcRoleSample,
     addNpcRole,
     removeNpcRole,
+    worldPublishStatus,
     isWorldPublished,
+    isWorldInPublishedLane,
+    worldPublishStatusLabel,
     worldCoverPath,
     selectedProjectName,
     selectedProjectIntro,

@@ -246,7 +246,12 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         :key="world.id"
         class="my-work-card my-summary-card my-published-entry-card"
       >
-        <button class="my-work-cover-btn" type="button" @click="store.startFromWorld(world)">
+        <button
+          class="my-work-cover-btn"
+          type="button"
+          :disabled="!store.isWorldPublished(world)"
+          @click="store.isWorldPublished(world) && store.startFromWorld(world)"
+        >
           <StoryCover
             :title="world.name || '故事'"
             :cover-path="store.worldCoverPath(world)"
@@ -257,7 +262,9 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         <div class="my-work-body my-work-body--compact">
           <div class="my-work-row">
             <h3 :title="world.name || '未命名故事'">{{ world.name || "未命名故事" }}</h3>
-            <span class="my-work-status published">已发布</span>
+            <span class="my-work-status" :class="store.worldPublishStatus(world)">
+              {{ store.worldPublishStatusLabel(world) }}
+            </span>
           </div>
           <div class="my-work-actions one">
             <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(world)">编辑</button>
