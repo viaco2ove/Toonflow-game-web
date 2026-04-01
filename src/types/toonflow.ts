@@ -125,6 +125,7 @@ export interface ChapterItem {
   openingText?: string;
   bgmPath?: string;
   showCompletionCondition?: boolean;
+  runtimeOutline?: unknown;
 }
 
 export interface MessageItem {
@@ -210,8 +211,6 @@ export interface DebugNarrativePlan {
   awaitUser?: boolean;
   nextRole?: string;
   nextRoleType?: string;
-  chapterOutcome?: "continue" | "success" | "failed";
-  nextChapterId?: number | null;
   source?: "ai" | "fallback";
   triggerMemoryAgent?: boolean;
   eventType?: string;
@@ -437,5 +436,6 @@ export function createEmptyChapter(sort = 1): ChapterItem {
     openingText: "",
     bgmPath: "",
     showCompletionCondition: true,
+    runtimeOutline: null,
   };
 }

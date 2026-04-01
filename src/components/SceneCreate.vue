@@ -53,6 +53,43 @@ const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
 const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
 const mentionRoles = computed(() => store.mentionRoleNames());
 const chapterUsed = computed(() => (store.state.chapterContent || "").length);
+const runtimeOutlinePreview = computed(() => {
+  const raw = String(store.state.chapterRuntimeOutlineText || "").trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const phases = Array.isArray(parsed?.phases) ? parsed.phases as Array<Record<string, unknown>> : [];
+    const userNodes = Array.isArray(parsed?.userNodes) ? parsed.userNodes as Array<Record<string, unknown>> : [];
+    const fixedEvents = Array.isArray(parsed?.fixedEvents) ? parsed.fixedEvents as Array<Record<string, unknown>> : [];
+    const endingRules = typeof parsed?.endingRules === "object" && parsed?.endingRules !== null
+      ? parsed.endingRules as Record<string, unknown>
+      : {};
+    return {
+      phases: phases.map((item, index) => ({
+        id: String(item?.id || `phase_${index + 1}`),
+        label: String(item?.label || `阶段 ${index + 1}`),
+        nextPhaseIds: Array.isArray(item?.nextPhaseIds) ? item.nextPhaseIds.map((entry) => String(entry || "")).filter(Boolean) : [],
+        allowedSpeakers: Array.isArray(item?.allowedSpeakers) ? item.allowedSpeakers.map((entry) => String(entry || "")).filter(Boolean) : [],
+      })),
+      userNodes: userNodes.map((item, index) => ({
+        id: String(item?.id || `user_node_${index + 1}`),
+        goal: String(item?.goal || item?.label || `用户节点 ${index + 1}`),
+        promptRole: String(item?.promptRole || "系统"),
+      })),
+      fixedEvents: fixedEvents.map((item, index) => ({
+        id: String(item?.id || `fixed_event_${index + 1}`),
+        label: String(item?.label || `固定事件 ${index + 1}`),
+      })),
+      endingRules: {
+        success: Array.isArray(endingRules?.success) ? endingRules.success.map((entry) => String(entry || "")).filter(Boolean) : [],
+        failure: Array.isArray(endingRules?.failure) ? endingRules.failure.map((entry) => String(entry || "")).filter(Boolean) : [],
+        nextChapterId: String(endingRules?.nextChapterId || "").trim(),
+      },
+    };
+  } catch {
+    return null;
+  }
+});
 const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
 const currentEditorChapterSort = computed(() => {
   if (store.state.selectedChapterId) {
@@ -863,6 +900,67 @@ function cancelRemoveCurrentNpc() {
             <span>结局条件对用户可见</span>
             <input v-model="store.state.chapterConditionVisible" type="checkbox" />
           </label>
+        </div>
+      </section>
+
+      <section class="create-section">
+        <div class="create-card create-card--compact">
+          <div class="create-card-title">Phase Graph（高级）</div>
+          <div class="create-tip">可直接填写章节运行模板 JSON。为空时由系统根据章节正文和指令自动推断。</div>
+          <div class="field">
+            <textarea
+              v-model="store.state.chapterRuntimeOutlineText"
+              class="textarea create-short-textarea"
+              rows="8"
+              placeholder='例如：{"phases":[{"id":"phase_1_opening","label":"开场","nextPhaseIds":["phase_2_user"]}]}'
+            ></textarea>
+          </div>
+          <div v-if="runtimeOutlinePreview?.phases?.length" class="create-phase-preview">
+            <div
+              v-for="phase in runtimeOutlinePreview.phases"
+              :key="phase.id"
+              class="create-phase-preview__item"
+            >
+              <div class="create-phase-preview__title">{{ phase.label }}</div>
+              <div class="create-phase-preview__meta">ID：{{ phase.id }}</div>
+              <div class="create-phase-preview__meta">允许角色：{{ phase.allowedSpeakers.join(" / ") || "未限制" }}</div>
+              <div class="create-phase-preview__meta">下一阶段：{{ phase.nextPhaseIds.join(" -> ") || "顺序回退" }}</div>
+            </div>
+          </div>
+          <div v-if="runtimeOutlinePreview?.userNodes?.length" class="create-phase-preview">
+            <div class="create-card-title create-card-title--sub">用户节点</div>
+            <div
+              v-for="node in runtimeOutlinePreview.userNodes"
+              :key="node.id"
+              class="create-phase-preview__item"
+            >
+              <div class="create-phase-preview__title">{{ node.goal }}</div>
+              <div class="create-phase-preview__meta">ID：{{ node.id }}</div>
+              <div class="create-phase-preview__meta">提示角色：{{ node.promptRole || "系统" }}</div>
+            </div>
+          </div>
+          <div v-if="runtimeOutlinePreview?.fixedEvents?.length" class="create-phase-preview">
+            <div class="create-card-title create-card-title--sub">固定事件</div>
+            <div
+              v-for="event in runtimeOutlinePreview.fixedEvents"
+              :key="event.id"
+              class="create-phase-preview__item"
+            >
+              <div class="create-phase-preview__title">{{ event.label }}</div>
+              <div class="create-phase-preview__meta">ID：{{ event.id }}</div>
+            </div>
+          </div>
+          <div
+            v-if="runtimeOutlinePreview?.endingRules?.success?.length || runtimeOutlinePreview?.endingRules?.failure?.length || runtimeOutlinePreview?.endingRules?.nextChapterId"
+            class="create-phase-preview"
+          >
+            <div class="create-card-title create-card-title--sub">章节结算</div>
+            <div class="create-phase-preview__item">
+              <div class="create-phase-preview__meta">成功条件：{{ runtimeOutlinePreview.endingRules.success.join(" / ") || "无" }}</div>
+              <div class="create-phase-preview__meta">失败条件：{{ runtimeOutlinePreview.endingRules.failure.join(" / ") || "无" }}</div>
+              <div class="create-phase-preview__meta">下一章节：{{ runtimeOutlinePreview.endingRules.nextChapterId || "无" }}</div>
+            </div>
+          </div>
         </div>
       </section>
 

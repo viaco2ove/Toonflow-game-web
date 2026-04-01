@@ -453,6 +453,38 @@ function normalizeConditionEditorText(input: unknown): string {
   return JSON.stringify(input, null, 2);
 }
 
+function normalizeRuntimeOutlineEditorText(input: unknown): string {
+  if (input === null || input === undefined || input === "") return "";
+  if (typeof input === "string") {
+    const scalar = normalizeScalarEditorText(input).trim();
+    if (!scalar) return "";
+    try {
+      return JSON.stringify(JSON.parse(scalar), null, 2);
+    } catch {
+      return scalar;
+    }
+  }
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+function parseRuntimeOutlineEditorText(input: string): Record<string, unknown> | null {
+  const text = normalizeScalarEditorText(input).trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("章节 Phase Graph 配置必须是 JSON 对象");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error("章节 Phase Graph 配置不是有效 JSON");
+  }
+}
+
 function extractOpeningContentParts(input: unknown): { role: string; line: string; body: string } | null {
   const text = normalizeScalarEditorText(input);
   if (!text) return null;
@@ -679,6 +711,7 @@ interface StoryEditorSnapshot {
   chapterBackground: string;
   chapterMusic: string;
   chapterConditionVisible: boolean;
+  chapterRuntimeOutlineText: string;
 }
 
 type SaveWorldStatusMode = "preserve" | "draft" | "published";
@@ -770,6 +803,7 @@ function createToonflowStore() {
     chapterBackground: "",
     chapterMusic: "",
     chapterConditionVisible: true,
+    chapterRuntimeOutlineText: "",
     sessions: [] as SessionItem[],
     sessionListError: "",
     currentSessionId: "",
@@ -1606,6 +1640,7 @@ function createToonflowStore() {
       chapterBackground: state.chapterBackground,
       chapterMusic: state.chapterMusic,
       chapterConditionVisible: state.chapterConditionVisible,
+      chapterRuntimeOutlineText: state.chapterRuntimeOutlineText,
     };
   }
 
@@ -1670,6 +1705,7 @@ function createToonflowStore() {
     state.chapterBackground = snapshot.chapterBackground;
     state.chapterMusic = snapshot.chapterMusic;
     state.chapterConditionVisible = snapshot.chapterConditionVisible;
+    state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(snapshot.chapterRuntimeOutlineText);
     window.setTimeout(() => {
       editorPersistMuted = false;
     }, 0);
@@ -1681,6 +1717,7 @@ function createToonflowStore() {
     if (snapshot.worldCoverPath.trim() || snapshot.playerDesc.trim() || snapshot.globalBackground.trim()) return true;
     if (snapshot.chapterTitle.trim() || snapshot.chapterContent.trim() || snapshot.chapterOpeningLine.trim()) return true;
     if (snapshot.chapterEntryCondition.trim() || snapshot.chapterCondition.trim()) return true;
+    if (snapshot.chapterRuntimeOutlineText.trim()) return true;
     if (snapshot.chapterBackground.trim() || snapshot.chapterMusic.trim()) return true;
     return snapshot.npcRoles.some((role) =>
       [
@@ -3423,6 +3460,7 @@ function createToonflowStore() {
     state.chapterBackground = empty.backgroundPath || "";
     state.chapterMusic = empty.bgmPath || "";
     state.chapterConditionVisible = empty.showCompletionCondition ?? true;
+    state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(empty.runtimeOutline);
   }
 
   function beginNewChapterDraft() {
@@ -3437,6 +3475,7 @@ function createToonflowStore() {
     state.chapterBackground = "";
     state.chapterMusic = "";
     state.chapterConditionVisible = true;
+    state.chapterRuntimeOutlineText = "";
     primeStoryEditorPersistState();
   }
 
@@ -3471,6 +3510,7 @@ function createToonflowStore() {
     state.chapterBackground = normalizeScalarEditorText(chapter.backgroundPath);
     state.chapterMusic = normalizeScalarEditorText(chapter.bgmPath);
     state.chapterConditionVisible = chapter.showCompletionCondition ?? true;
+    state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(chapter.runtimeOutline);
     primeStoryEditorPersistState();
   }
 
@@ -3517,6 +3557,7 @@ function createToonflowStore() {
     );
     const entryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
     const completionConditionText = normalizeConditionEditorText(state.chapterCondition);
+    const runtimeOutline = parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
     state.chapterContent = chapterBody;
     state.chapterEntryCondition = entryConditionText;
     state.chapterCondition = completionConditionText;
@@ -3541,6 +3582,7 @@ function createToonflowStore() {
       content: persistedContent,
       entryCondition: safeJsonParse(entryConditionText, entryConditionText || null),
       completionCondition: safeJsonParse(completionConditionText, completionConditionText || null),
+      runtimeOutline: runtimeOutline || undefined,
       sort: chapterSort,
       status: statusOverride || "draft",
     };
