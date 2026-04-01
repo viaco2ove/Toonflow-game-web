@@ -186,6 +186,15 @@ export interface SessionNarrativeResult {
   snapshotReason?: string;
 }
 
+export interface SessionOrchestrationResult {
+  sessionId: string;
+  status: string;
+  chapterId?: number | null;
+  expectedRole?: string;
+  expectedRoleType?: string;
+  plan?: DebugNarrativePlan | null;
+}
+
 export interface DebugStepResult {
   chapterId: number | null;
   chapterTitle?: string;

@@ -20,6 +20,7 @@ import {
   SessionDetail,
   SessionItem,
   SessionNarrativeResult,
+  SessionOrchestrationResult,
   StoryRole,
   VoiceBindingDraft,
   VoiceMixItem,
@@ -800,6 +801,7 @@ function createToonflowStore() {
   let runtimeRetrySeed = 0;
   let runtimeRetrying = false;
   let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
+  let continueSessionNarrativePromise: Promise<void> = Promise.resolve();
   const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
@@ -851,6 +853,16 @@ function createToonflowStore() {
     const sessions = await refreshSessionListPromise;
     state.sessions = dedupeSessionsByWorld(sessions || []);
   }
+
+  function scheduleContinueSessionNarrative() {
+    continueSessionNarrativePromise = continueSessionNarrativePromise
+      .catch(() => undefined)
+      .then(async () => {
+        await continueSessionNarrative();
+      });
+    return continueSessionNarrativePromise;
+  }
+
   let editorAutoPersistTimer: number | null = null;
   let editorPersistMuted = false;
   let lastPersistedEditorSnapshot: StoryEditorSnapshot | null = null;
@@ -1080,7 +1092,7 @@ function createToonflowStore() {
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
     const fallbackNextRole = canPlayerSpeakNow || currentStatus === "waiting_player"
-      ? "玩家"
+      ? "用户"
       : String(turnState["expectedRole"] || "").trim() || "当前角色";
     const fallbackNextRoleType = canPlayerSpeakNow || currentStatus === "waiting_player"
       ? "player"
@@ -1140,7 +1152,7 @@ function createToonflowStore() {
       ...message,
       meta: buildRuntimeStreamMeta(message.meta, {
         status,
-        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "玩家" : String(turnState["expectedRole"] || "").trim() || "当前角色",
+        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "用户" : String(turnState["expectedRole"] || "").trim() || "当前角色",
         nextRoleType: status === "waiting_player" || canPlayerSpeakNow ? "player" : String(turnState["expectedRoleType"] || "").trim() || "npc",
       }),
     }), true);
@@ -1315,7 +1327,7 @@ function createToonflowStore() {
         lineIndex,
         streaming: false,
         status: "generated",
-        nextRole: canPlayerSpeakNow ? "玩家" : scalarText(turnState["expectedRole"]),
+        nextRole: canPlayerSpeakNow ? "用户" : scalarText(turnState["expectedRole"]),
         nextRoleType: canPlayerSpeakNow ? "player" : scalarText(turnState["expectedRoleType"]),
       }),
     };
@@ -1343,7 +1355,7 @@ function createToonflowStore() {
         streaming: false,
         lineIndex: latestIndex + 1,
         status: canPlayerSpeakNow ? "waiting_player" : "waiting_next",
-        nextRole: canPlayerSpeakNow ? "玩家" : (scalarText(turnState["expectedRole"]) || "当前角色"),
+        nextRole: canPlayerSpeakNow ? "用户" : (scalarText(turnState["expectedRole"]) || "当前角色"),
         nextRoleType: canPlayerSpeakNow ? "player" : (scalarText(turnState["expectedRoleType"]) || "npc"),
       }),
     };
@@ -1359,6 +1371,23 @@ function createToonflowStore() {
       messages: normalizedMessages,
     };
     state.messages = normalizedMessages;
+    syncRuntimeChatTrace();
+  }
+
+  function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
+    const existingDetail = state.sessionDetail || null;
+    state.sessionDetail = {
+      ...(existingDetail || {}),
+      sessionId: result.sessionId || existingDetail?.sessionId || state.currentSessionId,
+      status: result.status || existingDetail?.status || "",
+      chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
+      state: (existingDetail?.state || {}) as Record<string, unknown>,
+      chapter: existingDetail?.chapter || null,
+      world: existingDetail?.world || null,
+      latestSnapshot: existingDetail?.latestSnapshot || null,
+      messages: existingDetail?.messages || state.messages,
+    };
+    state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
   }
 
@@ -3710,6 +3739,13 @@ function createToonflowStore() {
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
+      if (!options?.playback) {
+        const loadedMessages = conversationMessages();
+        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+        if (!loadedMessages.length && !canPlayerSpeakNow) {
+          void scheduleContinueSessionNarrative();
+        }
+      }
       void refreshSessionListState();
     } catch (error) {
       const message = asUiErrorMessage(error);
@@ -4121,7 +4157,7 @@ function createToonflowStore() {
 
   async function performSessionPlayerMessage(content: string, optimisticMessageId?: number | null) {
     if (!state.currentSessionId) return;
-    state.sessionRuntimeStage = "提交用户发言并编排后续剧情";
+    state.sessionRuntimeStage = "提交用户发言";
     try {
       const result = await api.addMessage({
         sessionId: state.currentSessionId,
@@ -4129,6 +4165,7 @@ function createToonflowStore() {
         role: state.playerName || "用户",
         content,
         eventType: "on_message",
+        orchestrate: false,
       });
       if (optimisticMessageId) {
         removeLocalPendingPlayerMessage(optimisticMessageId, false);
@@ -4137,10 +4174,99 @@ function createToonflowStore() {
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
       void refreshSessionListState();
+      // 用户发言先落库返回，后续剧情编排改为后台继续，避免发送被整条链路阻塞。
+      void scheduleContinueSessionNarrative();
     } finally {
-      if (state.sessionRuntimeStage === "提交用户发言并编排后续剧情") {
+      if (state.sessionRuntimeStage === "提交用户发言") {
         state.sessionRuntimeStage = "";
       }
+    }
+  }
+
+  async function streamSessionPlan(
+    orchestration: SessionOrchestrationResult,
+    historyMessages: MessageItem[],
+  ) {
+    if (!state.currentSessionId || !orchestration.plan) return;
+    const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
+    let accumulated = "";
+    let finalMessage: Record<string, unknown> | null = null;
+    let done = false;
+    state.messages = [...historyMessages, streamingMessage];
+    syncRuntimeChatTrace();
+    try {
+      await api.streamDebugLines({
+        sessionId: state.currentSessionId,
+        plan: orchestration.plan,
+      }, async (event) => {
+        if (event.type === "delta") {
+          const text = String(event.data?.text || "");
+          if (!text) return;
+          accumulated += text;
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
+          return;
+        }
+        if (event.type === "done") {
+          done = true;
+          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
+          const finalContent = String(finalMessage?.content || accumulated || "");
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            role: String(finalMessage?.role || message.role || ""),
+            roleType: String(finalMessage?.roleType || message.roleType || ""),
+            eventType: String(finalMessage?.eventType || message.eventType || RUNTIME_STREAM_EVENT),
+            content: finalContent,
+            meta: buildRuntimeStreamMeta(message.meta, {
+              streaming: false,
+              status: "generated",
+            }),
+          }), true);
+          return;
+        }
+        if (event.type === "sentence") {
+          const text = String(event.data?.text || "").trim();
+          if (!text) return;
+          updateMessageById(streamingMessage.id, (message) => {
+            const metaRecord = buildRuntimeStreamMeta(message.meta, {
+              streaming: true,
+              status: "streaming",
+            });
+            const rawSentences = Array.isArray(metaRecord.sentences) ? metaRecord.sentences : [];
+            const sentences = rawSentences.map((item) => String(item || "").trim()).filter(Boolean);
+            if (!sentences.includes(text)) {
+              sentences.push(text);
+            }
+            return {
+              ...message,
+              meta: buildRuntimeStreamMeta(metaRecord, { sentences }),
+            };
+          }, true);
+          return;
+        }
+        if (event.type === "error") {
+          throw new Error(String(event.data?.message || "台词流生成失败"));
+        }
+      });
+      if (!done) {
+        throw new Error("台词流未正常结束");
+      }
+      const committedContent = String((finalMessage as Record<string, unknown> | null)?.["content"] || accumulated || "");
+      const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
+      const committed = await api.commitNarrativeTurn({
+        sessionId: state.currentSessionId,
+        content: committedContent,
+        createTime: committedCreateTime,
+        saveSnapshot: true,
+      });
+      state.messages = [...historyMessages];
+      syncRuntimeChatTrace();
+      applySessionNarrativeResult(committed);
+    } catch (error) {
+      updateMessageById(streamingMessage.id, () => null, true);
+      throw error;
     }
   }
 
@@ -4148,18 +4274,29 @@ function createToonflowStore() {
     if (!state.currentSessionId) return;
     state.sessionRuntimeStage = "继续编排下一轮剧情";
     try {
-      const beforeCount = conversationMessages().length;
-      const result = await api.continueSession(state.currentSessionId);
-      clearRuntimeRetryState();
-      applySessionNarrativeResult(result);
-      void refreshSessionListState();
-      const afterCount = conversationMessages().length;
-      const latest = conversationMessages().slice(-1)[0] || null;
-      const latestStatus = runtimeMessageStatus(latest);
-      const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-      if (afterCount <= beforeCount && !canPlayerSpeakNow && latestStatus !== "waiting_player") {
+      let advanced = false;
+      for (let step = 0; step < 3; step += 1) {
+        const beforeCount = conversationMessages().length;
+        const history = conversationMessages();
+        const orchestration = await api.orchestrateSession(state.currentSessionId);
+        clearRuntimeRetryState();
+        applySessionOrchestrationResult(orchestration);
+        if (orchestration.plan) {
+          await streamSessionPlan(orchestration, history);
+        }
+        const afterCount = conversationMessages().length;
+        const latest = conversationMessages().slice(-1)[0] || null;
+        const latestStatus = runtimeMessageStatus(latest);
+        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
+          advanced = true;
+          break;
+        }
+      }
+      if (!advanced) {
         throw new Error("自动推进没有产出新内容");
       }
+      void refreshSessionListState();
     } finally {
       if (state.sessionRuntimeStage === "继续编排下一轮剧情") {
         state.sessionRuntimeStage = "";
@@ -4199,21 +4336,6 @@ function createToonflowStore() {
       state.sendText = "";
       await performSessionPlayerMessage(content, optimistic.id);
     } catch (error) {
-      const rawMessage = asUiErrorMessage(error);
-      if (!state.debugMode && (rawMessage.includes("当前还没轮到用户发言") || rawMessage.includes("409"))) {
-        const pending = state.messages.find((item) => isLocalPendingPlayerMessage(item));
-        if (pending) {
-          removeLocalPendingPlayerMessage(Number(pending.id || 0));
-        }
-        state.sendText = content;
-        state.notice = rawMessage;
-        try {
-          await refreshCurrentSession();
-        } catch {
-          // Ignore follow-up refresh failures after a 409 turn conflict.
-        }
-        return;
-      }
       const message = `发送失败：${asUiErrorMessage(error)}`;
       if (!state.debugMode) {
         const pending = state.messages.find((item) => isLocalPendingPlayerMessage(item));

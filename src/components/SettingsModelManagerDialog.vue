@@ -396,7 +396,7 @@ async function ensureLocalAvatarMattingInstalled(interactive = true): Promise<bo
   const confirmed = window.confirm(`${status.message || "首次使用需要安装本地 BiRefNet。"}\n\n确认后会自动安装 Python 依赖和模型文件。`);
   if (!confirmed) return false;
   localAvatarMattingInstalling.value = true;
-  store.state.notice = "正在安装本地 BiRefNet，请稍候...";
+  store.state.notice = "正在安装本地 BiRefNet，请稍候... pip install torch opencv-python pillow onnxruntime onnx";
   try {
     const installed = await store.installLocalAvatarMattingModel(form.manufacturer, form.model.trim());
     localAvatarMattingStatus.value = installed;

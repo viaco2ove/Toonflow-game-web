@@ -17,6 +17,7 @@ import type {
   SeparatedRoleImageResult,
   SessionDetail,
   SessionNarrativeResult,
+  SessionOrchestrationResult,
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
@@ -194,6 +195,14 @@ export class ToonflowApi {
 
   addMessage(payload: Record<string, unknown>) {
     return this.post<SessionNarrativeResult>("/game/addMessage", payload);
+  }
+
+  orchestrateSession(sessionId: string) {
+    return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
+  }
+
+  commitNarrativeTurn(payload: Record<string, unknown>) {
+    return this.post<SessionNarrativeResult>("/game/commitNarrativeTurn", payload);
   }
 
   continueSession(sessionId: string) {

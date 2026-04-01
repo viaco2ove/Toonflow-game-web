@@ -177,7 +177,7 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          nextRole: waitingPlayer ? "玩家" : rawNextRole,
+          nextRole: waitingPlayer ? "用户" : rawNextRole,
           nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
           updateTime: Number(item.updateTime || 0),
         };
@@ -944,7 +944,7 @@ const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
-  if (status === "waiting_player" || canPlayerSpeak.value) return "玩家";
+  if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
   return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
