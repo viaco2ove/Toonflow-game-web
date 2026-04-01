@@ -1080,7 +1080,7 @@ function createToonflowStore() {
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
     const fallbackNextRole = canPlayerSpeakNow || currentStatus === "waiting_player"
-      ? "用户"
+      ? "玩家"
       : String(turnState["expectedRole"] || "").trim() || "当前角色";
     const fallbackNextRoleType = canPlayerSpeakNow || currentStatus === "waiting_player"
       ? "player"
@@ -1140,7 +1140,7 @@ function createToonflowStore() {
       ...message,
       meta: buildRuntimeStreamMeta(message.meta, {
         status,
-        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "用户" : String(turnState["expectedRole"] || "").trim() || "当前角色",
+        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "玩家" : String(turnState["expectedRole"] || "").trim() || "当前角色",
         nextRoleType: status === "waiting_player" || canPlayerSpeakNow ? "player" : String(turnState["expectedRoleType"] || "").trim() || "npc",
       }),
     }), true);
@@ -1315,7 +1315,7 @@ function createToonflowStore() {
         lineIndex,
         streaming: false,
         status: "generated",
-        nextRole: canPlayerSpeakNow ? "用户" : scalarText(turnState["expectedRole"]),
+        nextRole: canPlayerSpeakNow ? "玩家" : scalarText(turnState["expectedRole"]),
         nextRoleType: canPlayerSpeakNow ? "player" : scalarText(turnState["expectedRoleType"]),
       }),
     };
@@ -1343,7 +1343,7 @@ function createToonflowStore() {
         streaming: false,
         lineIndex: latestIndex + 1,
         status: canPlayerSpeakNow ? "waiting_player" : "waiting_next",
-        nextRole: canPlayerSpeakNow ? "用户" : (scalarText(turnState["expectedRole"]) || "当前角色"),
+        nextRole: canPlayerSpeakNow ? "玩家" : (scalarText(turnState["expectedRole"]) || "当前角色"),
         nextRoleType: canPlayerSpeakNow ? "player" : (scalarText(turnState["expectedRoleType"]) || "npc"),
       }),
     };
@@ -3607,8 +3607,8 @@ function createToonflowStore() {
       state.sessionResumeLatestOnOpen = false;
       state.sessionDetail = null;
       state.messages = [];
-      const existingSession = await fetchLatestSessionForWorld(Number(world.id || 0))
-        || state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
+      const existingSession = state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
+        || await fetchLatestSessionForWorld(Number(world.id || 0))
         || null;
       if (existingSession?.sessionId) {
         await openSession(existingSession.sessionId, { resumeLatest: true });
@@ -3657,8 +3657,8 @@ function createToonflowStore() {
     const targetWorldId = Number(worldId || 0);
     const fallbackId = String(fallbackSessionId || "").trim();
     const existingSession = Number.isFinite(targetWorldId) && targetWorldId > 0
-      ? await fetchLatestSessionForWorld(targetWorldId)
-        || state.sessions.find((item) => Number(item.worldId || 0) === targetWorldId)
+      ? state.sessions.find((item) => Number(item.worldId || 0) === targetWorldId)
+        || await fetchLatestSessionForWorld(targetWorldId)
         || null
       : null;
     const sessionId = String(existingSession?.sessionId || fallbackId).trim();
@@ -4136,7 +4136,7 @@ function createToonflowStore() {
       state.sendText = "";
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
-      await refreshSessionListState();
+      void refreshSessionListState();
     } finally {
       if (state.sessionRuntimeStage === "提交用户发言并编排后续剧情") {
         state.sessionRuntimeStage = "";
@@ -4152,7 +4152,7 @@ function createToonflowStore() {
       const result = await api.continueSession(state.currentSessionId);
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
-      await refreshSessionListState();
+      void refreshSessionListState();
       const afterCount = conversationMessages().length;
       const latest = conversationMessages().slice(-1)[0] || null;
       const latestStatus = runtimeMessageStatus(latest);

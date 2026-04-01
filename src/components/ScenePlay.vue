@@ -177,7 +177,7 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          nextRole: waitingPlayer ? "用户" : rawNextRole,
+          nextRole: waitingPlayer ? "玩家" : rawNextRole,
           nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
           updateTime: Number(item.updateTime || 0),
         };
@@ -581,10 +581,13 @@ const currentRuntimeInputStatus = computed(() => {
   if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
   if (latestStatus === "sending") return "sending";
+  if (latestStatus === "orchestrated") {
+    return canPlayerSpeak.value ? "waiting_player" : "waiting_next";
+  }
   if (
     canPlayerSpeak.value
     && latestStatus
-    && !["streaming", "generated", "revealing", "voicing", "auto_advancing", "sending"].includes(latestStatus)
+    && !["streaming", "generated", "revealing", "voicing", "auto_advancing", "sending", "orchestrated"].includes(latestStatus)
   ) {
     return "waiting_player";
   }
@@ -608,6 +611,12 @@ const playOpenOverlayVisible = computed(() => (
 const playOpenOverlayTitle = computed(() => (store.state.sessionOpening ? "进入故事中" : "打开会话失败"));
 const playOpenOverlaySub = computed(() => (store.state.sessionOpening ? sessionOpeningStageText.value : sessionOpenErrorText.value));
 const sessionRuntimeStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionRuntimeStage) || "");
+const emptySessionHint = computed(() => {
+  if (store.state.sessionOpening) return sessionOpeningStageText.value;
+  if (sessionOpenErrorText.value) return "打开会话失败";
+  if (store.state.currentSessionId) return "正在等待首句内容...";
+  return "当前会话暂无消息";
+});
 const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return "打开会话失败，请重试";
@@ -661,7 +670,7 @@ const playTurnHint = computed(() => {
   if (runtimeStatus === "voicing") {
     return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
   }
-  if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing") {
+  if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing" || runtimeStatus === "orchestrated") {
     return "正在生成下一句内容...";
   }
   return `当前还没轮到用户发言，等待${runtimeDebugNextRoleLabel.value}继续。`;
@@ -821,8 +830,25 @@ const liveMessageProgressFingerprint = computed(() => messages.value.map((messag
   runtimeStreamSentences(message).join("||"),
 ].join("_")).join("|"));
 const playbackMessages = computed(() => messages.value.filter((message) => !isRuntimeRetryMessage(message)));
+const latestPendingPlayerMessage = computed(() => {
+  const list = conversationMessages();
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const message = list[index];
+    if (isLocalPendingPlayerMessage(message)) {
+      return message;
+    }
+  }
+  return null;
+});
 const displayMessages = computed(() => {
-  return playMode.value === "history" ? messages.value : revealedMessages.value.slice(-1);
+  if (playMode.value === "history") {
+    return messages.value;
+  }
+  const pendingPlayerMessage = latestPendingPlayerMessage.value;
+  if (pendingPlayerMessage) {
+    return [pendingPlayerMessage];
+  }
+  return revealedMessages.value.slice(-1);
 });
 const latestRevealedMessage = computed(() => {
   const list = revealedMessages.value;
@@ -918,7 +944,7 @@ const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
-  if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
+  if (status === "waiting_player" || canPlayerSpeak.value) return "玩家";
   return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
@@ -927,6 +953,7 @@ const runtimeDebugStatusLabel = computed(() => {
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "session_error") return "打开失败";
   if (status === "sending") return "发送中";
+  if (status === "orchestrated") return "已编排";
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待用户";
   if (status === "auto_advancing") return "自动推进中";
@@ -1186,7 +1213,7 @@ watch(
     }
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
     let status = runtimeMessageStatus(latest);
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "generated", "revealing", "voicing"].includes(status)) {
+    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
@@ -1241,7 +1268,7 @@ watch(
     }
     const status = runtimeMessageStatus(latest);
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "generated", "revealing", "voicing"].includes(status)) {
+    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
@@ -2638,7 +2665,7 @@ onBeforeUnmount(() => {
         class="play-thread"
         :class="{ 'play-thread--history': playMode === 'history', 'play-thread--single-mode': playMode !== 'history' }"
       >
-        <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">当前会话暂无消息</div>
+        <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">{{ emptySessionHint }}</div>
         <div v-else-if="playMode === 'history'" class="play-thread__history">
           <template v-for="message in displayMessages" :key="message.id">
             <article
