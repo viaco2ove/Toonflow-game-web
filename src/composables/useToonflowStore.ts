@@ -485,6 +485,12 @@ function parseRuntimeOutlineEditorText(input: string): Record<string, unknown> |
   }
 }
 
+function formatRuntimeOutlineEditorText(input: string): string {
+  const parsed = parseRuntimeOutlineEditorText(input);
+  if (!parsed) return "";
+  return `${JSON.stringify(parsed, null, 2)}\n`;
+}
+
 function extractOpeningContentParts(input: unknown): { role: string; line: string; body: string } | null {
   const text = normalizeScalarEditorText(input);
   if (!text) return null;
@@ -3605,6 +3611,31 @@ function createToonflowStore() {
     return saved;
   }
 
+  function formatChapterRuntimeOutlineDraft() {
+    const next = formatRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
+    if (!next) {
+      state.chapterRuntimeOutlineText = "";
+      state.notice = "当前没有可格式化的 Phase Graph";
+      return;
+    }
+    state.chapterRuntimeOutlineText = next;
+    state.notice = "已格式化 Phase Graph";
+  }
+
+  async function generateChapterRuntimeOutlineDraft() {
+    const existingOutline = parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
+    const outline = await api.previewRuntimeOutline({
+      openingRole: state.chapterOpeningRole,
+      openingText: state.chapterOpeningLine,
+      content: state.chapterContent,
+      entryCondition: state.chapterEntryCondition || undefined,
+      completionCondition: state.chapterCondition || undefined,
+      runtimeOutline: existingOutline || undefined,
+    });
+    state.chapterRuntimeOutlineText = `${JSON.stringify(outline || {}, null, 2)}\n`;
+    state.notice = "已生成章节 Phase Graph 草稿";
+  }
+
   async function saveStoryEditor(publish: boolean | null = null, startNextDraft = false, successNotice: string | null = "保存成功") {
     const targetWorldStatusMode: SaveWorldStatusMode = publish === true ? "published" : publish === false ? "draft" : "preserve";
     const targetChapterStatus = targetWorldStatusMode === "published"
@@ -4511,6 +4542,8 @@ function createToonflowStore() {
     saveStoryEditor,
     saveWorldOnly,
     saveChapterDraft,
+    formatChapterRuntimeOutlineDraft,
+    generateChapterRuntimeOutlineDraft,
     saveCurrentChapterAndSelect,
     beginNewChapterDraft,
     scheduleStoryEditorAutoPersist,

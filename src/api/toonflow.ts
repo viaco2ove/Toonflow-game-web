@@ -154,6 +154,10 @@ export class ToonflowApi {
     return this.post<ChapterItem>("/game/saveChapter", payload);
   }
 
+  previewRuntimeOutline(payload: Record<string, unknown>) {
+    return this.post<Record<string, unknown>>("/game/previewRuntimeOutline", payload);
+  }
+
   startSession(payload: Record<string, unknown>) {
     return this.post<{ sessionId: string }>("/game/startSession", payload);
   }

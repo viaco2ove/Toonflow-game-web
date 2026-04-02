@@ -68,8 +68,14 @@ const runtimeOutlinePreview = computed(() => {
       phases: phases.map((item, index) => ({
         id: String(item?.id || `phase_${index + 1}`),
         label: String(item?.label || `阶段 ${index + 1}`),
+        kind: String(item?.kind || "scene"),
         nextPhaseIds: Array.isArray(item?.nextPhaseIds) ? item.nextPhaseIds.map((entry) => String(entry || "")).filter(Boolean) : [],
+        defaultNextPhaseId: String(item?.defaultNextPhaseId || "").trim(),
         allowedSpeakers: Array.isArray(item?.allowedSpeakers) ? item.allowedSpeakers.map((entry) => String(entry || "")).filter(Boolean) : [],
+        requiredEventIds: Array.isArray(item?.requiredEventIds) ? item.requiredEventIds.map((entry) => String(entry || "")).filter(Boolean) : [],
+        completionEventIds: Array.isArray(item?.completionEventIds) ? item.completionEventIds.map((entry) => String(entry || "")).filter(Boolean) : [],
+        advanceSignals: Array.isArray(item?.advanceSignals) ? item.advanceSignals.map((entry) => String(entry || "")).filter(Boolean) : [],
+        relatedFixedEventIds: Array.isArray(item?.relatedFixedEventIds) ? item.relatedFixedEventIds.map((entry) => String(entry || "")).filter(Boolean) : [],
       })),
       userNodes: userNodes.map((item, index) => ({
         id: String(item?.id || `user_node_${index + 1}`),
@@ -89,6 +95,21 @@ const runtimeOutlinePreview = computed(() => {
   } catch {
     return null;
   }
+});
+const runtimePhaseFlowPreview = computed(() => {
+  const phases = runtimeOutlinePreview.value?.phases || [];
+  if (!phases.length) return [];
+  const phaseLabelMap = new Map(phases.map((item) => [item.id, item.label]));
+  return phases.map((phase) => {
+    const nextLabels = phase.nextPhaseIds.map((entry) => phaseLabelMap.get(entry) || entry);
+    const defaultNextLabel = phase.defaultNextPhaseId ? (phaseLabelMap.get(phase.defaultNextPhaseId) || phase.defaultNextPhaseId) : "";
+    return {
+      id: phase.id,
+      label: phase.label,
+      summary: nextLabels.length ? `${phase.label} -> ${nextLabels.join(" / ")}` : `${phase.label} -> 顺序回退`,
+      fallback: defaultNextLabel || "顺序回退",
+    };
+  });
 });
 const canUndoPersist = computed(() => store.canUndoStoryAutoPersist());
 const currentEditorChapterSort = computed(() => {
@@ -904,18 +925,34 @@ function cancelRemoveCurrentNpc() {
       </section>
 
       <section class="create-section">
-        <div class="create-card create-card--compact">
-          <div class="create-card-title">Phase Graph（高级）</div>
-          <div class="create-tip">可直接填写章节运行模板 JSON。为空时由系统根据章节正文和指令自动推断。</div>
-          <div class="field">
-            <textarea
-              v-model="store.state.chapterRuntimeOutlineText"
+          <div class="create-card create-card--compact">
+            <div class="create-card-title">Phase Graph（高级）</div>
+            <div class="create-tip">可直接填写章节运行模板 JSON。为空时由系统根据章节正文和指令自动推断。</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="button small" type="button" @click="store.generateChapterRuntimeOutlineDraft">生成草稿</button>
+              <button class="button small" type="button" @click="store.formatChapterRuntimeOutlineDraft">格式化 JSON</button>
+            </div>
+            <div class="field">
+              <textarea
+                v-model="store.state.chapterRuntimeOutlineText"
               class="textarea create-short-textarea"
               rows="8"
               placeholder='例如：{"phases":[{"id":"phase_1_opening","label":"开场","nextPhaseIds":["phase_2_user"]}]}'
             ></textarea>
           </div>
           <div v-if="runtimeOutlinePreview?.phases?.length" class="create-phase-preview">
+            <div class="create-card-title create-card-title--sub">阶段关系图</div>
+            <div
+              v-for="flow in runtimePhaseFlowPreview"
+              :key="`${flow.id}_flow`"
+              class="create-phase-preview__item"
+            >
+              <div class="create-phase-preview__title">{{ flow.summary }}</div>
+              <div class="create-phase-preview__meta">默认流向：{{ flow.fallback }}</div>
+            </div>
+          </div>
+          <div v-if="runtimeOutlinePreview?.phases?.length" class="create-phase-preview">
+            <div class="create-card-title create-card-title--sub">阶段详情</div>
             <div
               v-for="phase in runtimeOutlinePreview.phases"
               :key="phase.id"
@@ -923,8 +960,14 @@ function cancelRemoveCurrentNpc() {
             >
               <div class="create-phase-preview__title">{{ phase.label }}</div>
               <div class="create-phase-preview__meta">ID：{{ phase.id }}</div>
+              <div class="create-phase-preview__meta">阶段类型：{{ phase.kind || "scene" }}</div>
               <div class="create-phase-preview__meta">允许角色：{{ phase.allowedSpeakers.join(" / ") || "未限制" }}</div>
               <div class="create-phase-preview__meta">下一阶段：{{ phase.nextPhaseIds.join(" -> ") || "顺序回退" }}</div>
+              <div class="create-phase-preview__meta">默认下一阶段：{{ phase.defaultNextPhaseId || "顺序回退" }}</div>
+              <div class="create-phase-preview__meta">阶段前置：{{ phase.requiredEventIds.join(" / ") || "无" }}</div>
+              <div class="create-phase-preview__meta">完成事件：{{ phase.completionEventIds.join(" / ") || "无" }}</div>
+              <div class="create-phase-preview__meta">推进信号：{{ phase.advanceSignals.join(" / ") || "无" }}</div>
+              <div class="create-phase-preview__meta">关联结果：{{ phase.relatedFixedEventIds.join(" / ") || "无" }}</div>
             </div>
           </div>
           <div v-if="runtimeOutlinePreview?.userNodes?.length" class="create-phase-preview">

@@ -940,6 +940,29 @@ const latestRuntimeChatTrace = computed(() => {
   const source = scopedRows.length ? scopedRows : rows;
   return source.length ? source[source.length - 1] : null;
 });
+const runtimeStateRoot = computed(() => {
+  if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
+  return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
+});
+const runtimeChapterProgressRecord = computed(() => asMiniRecord(runtimeStateRoot.value.chapterProgress));
+const runtimeChapterProgressDebug = computed(() => {
+  const progress = runtimeChapterProgressRecord.value;
+  const phaseId = scalarText(progress.phaseId);
+  const userNodeId = scalarText(progress.userNodeId);
+  const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
+  const phases = asMiniArray<Record<string, unknown>>(outline.phases);
+  const userNodes = asMiniArray<Record<string, unknown>>(outline.userNodes);
+  const phase = phases.find((item) => scalarText(item.id) === phaseId) || null;
+  const userNode = userNodes.find((item) => scalarText(item.id) === userNodeId) || null;
+  const completedEvents = asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean);
+  return {
+    phaseLabel: scalarText(phase?.label),
+    phaseId,
+    pendingGoal: scalarText(progress.pendingGoal),
+    userNodeLabel: scalarText(userNode?.goal) || scalarText(userNode?.label),
+    completedEvents,
+  };
+});
 const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
   if (sessionOpenErrorText.value) return "--";
@@ -3067,6 +3090,18 @@ onBeforeUnmount(() => {
             <span class="play-debug-badge">{{ latestRuntimeChatTrace.currentRole || "未知角色" }}</span>
             <span class="play-debug-badge">状态 {{ runtimeDebugStatusLabel }}</span>
             <span class="play-debug-badge">下一位 {{ runtimeDebugNextRoleLabel }}</span>
+            <span v-if="runtimeChapterProgressDebug.phaseLabel || runtimeChapterProgressDebug.phaseId" class="play-debug-badge">
+              阶段 {{ runtimeChapterProgressDebug.phaseLabel || runtimeChapterProgressDebug.phaseId }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.userNodeLabel" class="play-debug-badge">
+              用户节点 {{ runtimeChapterProgressDebug.userNodeLabel }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.pendingGoal" class="play-debug-badge">
+              目标 {{ runtimeChapterProgressDebug.pendingGoal }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.completedEvents.length" class="play-debug-badge">
+              已完成 {{ runtimeChapterProgressDebug.completedEvents.join(" / ") }}
+            </span>
           </div>
         </div>
         <div v-if="playMode === 'history' && isSessionPlaybackMode" class="playback-panel">
