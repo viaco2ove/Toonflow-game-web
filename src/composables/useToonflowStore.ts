@@ -731,6 +731,7 @@ let singletonStore: ToonflowStore | null = null;
 
 const GAME_MODEL_SLOTS = [
   { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
+  { key: "storyFastSpeakerModel", label: "快速角色发言", configType: "text" },
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
