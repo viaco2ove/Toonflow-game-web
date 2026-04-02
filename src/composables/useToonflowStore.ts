@@ -3,6 +3,8 @@ import { ToonflowApi } from "../api/toonflow";
 import {
   AiModelListMap,
   AiModelMapItem,
+  AiTokenUsageLogItem,
+  AiTokenUsageStatsItem,
   AppTab,
   ChapterExtra,
   ChapterItem,
@@ -794,6 +796,9 @@ function createToonflowStore() {
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
     settingsTextModelList: {} as AiModelListMap,
+    settingsTokenUsageLogs: [] as AiTokenUsageLogItem[],
+    settingsTokenUsageStats: [] as AiTokenUsageStatsItem[],
+    settingsTokenUsageLoading: false,
     storyPrompts: [] as PromptItem[],
     aiGenerating: false,
     avatarProcessingTarget: "" as "" | "account" | "user" | "npc",
@@ -3027,6 +3032,39 @@ function createToonflowStore() {
     state.notice = "模型配置已删除";
   }
 
+  async function loadAiTokenUsagePanel(filters: {
+    startTime?: string;
+    endTime?: string;
+    type?: string;
+    granularity?: "hour" | "day" | "month";
+  }) {
+    if (!state.token.trim()) return;
+    state.settingsTokenUsageLoading = true;
+    try {
+      const payload = {
+        ...(String(filters.startTime || "").trim() ? { startTime: String(filters.startTime).trim() } : {}),
+        ...(String(filters.endTime || "").trim() ? { endTime: String(filters.endTime).trim() } : {}),
+        ...(String(filters.type || "").trim() ? { type: String(filters.type).trim() } : {}),
+      };
+      const [logs, stats] = await Promise.all([
+        api.getAiTokenUsageLog({
+          ...payload,
+          limit: 200,
+        }),
+        api.getAiTokenUsageStats({
+          ...payload,
+          granularity: filters.granularity || "day",
+        }),
+      ]);
+      state.settingsTokenUsageLogs = logs || [];
+      state.settingsTokenUsageStats = stats || [];
+    } catch (error) {
+      state.notice = `加载 token 消耗失败: ${asUiErrorMessage(error)}`;
+    } finally {
+      state.settingsTokenUsageLoading = false;
+    }
+  }
+
   async function testManagedModelConfig(config: ModelConfigItem): Promise<ModelTestResult> {
     const type = String(config.type || "").trim();
     const modelType = String(config.modelType || "").trim();
@@ -4586,6 +4624,7 @@ function createToonflowStore() {
     fetchLocalAvatarMattingStatus,
     installLocalAvatarMattingModel,
     deleteManagedModelConfig,
+    loadAiTokenUsagePanel,
     testManagedModelConfig,
     saveStoryPrompt,
     resetStoryPrompt,

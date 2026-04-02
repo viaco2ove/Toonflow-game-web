@@ -3,6 +3,8 @@ import type {
   ApiEnvelope,
   AiModelListMap,
   AiModelMapItem,
+  AiTokenUsageLogItem,
+  AiTokenUsageStatsItem,
   ChapterItem,
   DebugOrchestrationResult,
   DebugStepResult,
@@ -359,6 +361,14 @@ export class ToonflowApi {
 
   getAiModelList(type: "text" | "image" | "video" | "voice") {
     return this.post<AiModelListMap>("/setting/getAiModelList", { type });
+  }
+
+  getAiTokenUsageLog(payload: Record<string, unknown>) {
+    return this.post<AiTokenUsageLogItem[]>("/setting/getAiTokenUsageLog", payload);
+  }
+
+  getAiTokenUsageStats(payload: Record<string, unknown>) {
+    return this.post<AiTokenUsageStatsItem[]>("/setting/getAiTokenUsageStats", payload);
   }
 
   bindModelConfig(id: number, configId: number) {

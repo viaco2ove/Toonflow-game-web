@@ -161,6 +161,10 @@ const form = reactive({
   model: defaultSlotModelName(),
   baseUrl: defaultBaseUrlFor(defaultSlotManufacturer(), props.configType, defaultSlotModelType()),
   apiKey: "",
+  inputPricePer1M: 0,
+  outputPricePer1M: 0,
+  cacheReadPricePer1M: 0,
+  currency: "CNY",
 });
 
 const testResult = reactive({
@@ -209,6 +213,7 @@ const modelTypeOptions = computed(() => {
 });
 
 const shouldShowModelType = computed(() => props.configType !== "image" && modelTypeOptions.value.length > 1);
+const shouldShowTokenPricing = computed(() => props.configType === "text");
 const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalBiRefNetManufacturer(form.manufacturer));
 const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
@@ -422,6 +427,18 @@ function applyAutodlModelPreset(value: string) {
   }
 }
 
+function normalizePriceInput(input: unknown): number {
+  const value = Number(input || 0);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function formatPricePer1M(input: unknown, currency = "CNY"): string {
+  const value = normalizePriceInput(input);
+  if (value <= 0) return "-";
+  return `${currency || "CNY"} ${value}/100万`;
+}
+
 function syncAutodlModelPreset(value?: string | null) {
   const model = String(value || form.model || "").trim();
   autodlModelPreset.value = autodlTextModelOptions.value.some((item) => item.value === model) ? model : "__custom__";
@@ -443,6 +460,10 @@ function openCreate() {
   form.model = defaultSlotModelName(form.manufacturer, form.modelType);
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = "";
+  form.inputPricePer1M = 0;
+  form.outputPricePer1M = 0;
+  form.cacheReadPricePer1M = 0;
+  form.currency = "CNY";
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -461,6 +482,10 @@ function openEdit(row: ModelConfigItem) {
     : (row.model || "");
   form.baseUrl = row.baseUrl || defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
   form.apiKey = row.apiKey || "";
+  form.inputPricePer1M = normalizePriceInput(row.inputPricePer1M);
+  form.outputPricePer1M = normalizePriceInput(row.outputPricePer1M);
+  form.cacheReadPricePer1M = normalizePriceInput(row.cacheReadPricePer1M);
+  form.currency = String(row.currency || "CNY").trim().toUpperCase() || "CNY";
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -491,6 +516,10 @@ async function submitEditor() {
         model: form.model.trim(),
         baseUrl: shouldShowRemoteConfigFields.value ? form.baseUrl.trim() : "",
         apiKey: shouldShowRemoteConfigFields.value ? form.apiKey.trim() : "",
+        inputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.inputPricePer1M) : 0,
+        outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
+        cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
+        currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
       });
     } else {
       await store.addManagedModelConfig({
@@ -500,6 +529,10 @@ async function submitEditor() {
         model: form.model.trim(),
         baseUrl: shouldShowRemoteConfigFields.value ? form.baseUrl.trim() : "",
         apiKey: shouldShowRemoteConfigFields.value ? form.apiKey.trim() : "",
+        inputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.inputPricePer1M) : 0,
+        outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
+        cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
+        currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
       });
     }
     showEditor.value = false;
@@ -616,6 +649,7 @@ async function confirmBinding() {
                 <th>模型名称</th>
                 <th>Base URL</th>
                 <th>API Key</th>
+                <th v-if="configType === 'text'">单价</th>
                 <th>创建时间</th>
                 <th>操作</th>
               </tr>
@@ -640,6 +674,11 @@ async function confirmBinding() {
                     {{ visibleKeys[row.id] ? "隐藏" : "显示" }}
                   </button>
                 </td>
+                <td v-if="configType === 'text'" class="settings-manager-url">
+                  <div>输入：{{ formatPricePer1M(row.inputPricePer1M, row.currency || 'CNY') }}</div>
+                  <div>输出：{{ formatPricePer1M(row.outputPricePer1M, row.currency || 'CNY') }}</div>
+                  <div>缓存：{{ formatPricePer1M(row.cacheReadPricePer1M, row.currency || 'CNY') }}</div>
+                </td>
                 <td>{{ row.createTime ? new Date(row.createTime).toLocaleString("zh-CN", { hour12: false }) : "-" }}</td>
                 <td>
                   <div class="settings-manager-actions">
@@ -652,7 +691,7 @@ async function confirmBinding() {
                 </td>
               </tr>
               <tr v-if="!rows.length">
-                <td class="settings-manager-empty" colspan="8">暂无模型配置</td>
+                <td class="settings-manager-empty" :colspan="configType === 'text' ? 9 : 8">暂无模型配置</td>
               </tr>
             </tbody>
           </table>
@@ -757,6 +796,25 @@ async function confirmBinding() {
           />
           <div v-if="apiKeyHint" class="settings-field-hint">{{ apiKeyHint }}</div>
         </div>
+        <template v-if="shouldShowTokenPricing">
+          <div class="field">
+            <label>输入单价</label>
+            <input v-model.number="form.inputPricePer1M" class="input" type="number" min="0" step="0.000001" placeholder="按每100万 token 计价" />
+          </div>
+          <div class="field">
+            <label>输出单价</label>
+            <input v-model.number="form.outputPricePer1M" class="input" type="number" min="0" step="0.000001" placeholder="按每100万 token 计价" />
+          </div>
+          <div class="field">
+            <label>缓存命中单价</label>
+            <input v-model.number="form.cacheReadPricePer1M" class="input" type="number" min="0" step="0.000001" placeholder="按每100万 token 计价，可留0" />
+          </div>
+          <div class="field">
+            <label>货币</label>
+            <input v-model="form.currency" class="input" type="text" placeholder="默认 CNY" />
+            <div class="settings-field-hint">单价单位统一按每 100 万 token 计算，金额日志会按这里的配置实时换算。</div>
+          </div>
+        </template>
       </div>
       <div class="modal-actions">
         <button class="button settings-outline-btn" type="button" @click="showEditor = false">取消</button>

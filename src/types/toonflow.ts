@@ -225,6 +225,43 @@ export interface DebugOrchestrationResult {
   plan?: DebugNarrativePlan | null;
 }
 
+export interface AiTokenUsageLogItem {
+  id: number;
+  createTime: number;
+  type: string;
+  manufacturer?: string;
+  model?: string;
+  channel?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  totalTokens?: number;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  amount?: number;
+  currency?: string;
+  remark?: string;
+}
+
+export interface AiTokenUsageStatsItem {
+  bucketTime: string;
+  type: string;
+  manufacturer?: string;
+  model?: string;
+  channel?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  totalTokens?: number;
+  amount?: number;
+  currency?: string;
+  callCount?: number;
+  remark?: string;
+}
+
 export interface StreamLinesEvent {
   type: "start" | "delta" | "sentence" | "done" | "error";
   data?: Record<string, unknown> | null;
@@ -262,6 +299,10 @@ export interface VoiceModelConfig {
   manufacturer?: string;
   baseUrl?: string;
   apiKey?: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
   modes?: string[];
   createTime?: number;
 }
@@ -287,6 +328,10 @@ export interface ModelConfigItem {
   manufacturer?: string;
   baseUrl?: string;
   apiKey?: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
   createTime?: number;
 }
 
@@ -298,6 +343,10 @@ export interface ModelConfigPayload {
   manufacturer: string;
   baseUrl: string;
   apiKey: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
 }
 
 export interface ModelTestResult {

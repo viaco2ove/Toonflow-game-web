@@ -26,6 +26,11 @@ const confirmNewPassword = ref("");
 const promptDrafts = reactive<Record<string, string>>({});
 const showModelManager = ref(false);
 const activeModelKey = ref<string>("");
+const showTokenUsageDialog = ref(false);
+const tokenUsageStartTime = ref("");
+const tokenUsageEndTime = ref("");
+const tokenUsageType = ref("");
+const tokenUsageGranularity = ref<"hour" | "day" | "month">("day");
 
 const modelRows = computed(() =>
   store.GAME_MODEL_SLOTS.map((slot) => {
@@ -137,6 +142,33 @@ async function resetPrompt(code: string) {
 
 function checkUpdate() {
   store.state.notice = "当前为开发版，暂未接入在线更新";
+}
+
+function formatTokenUsageTime(input: number | string | undefined) {
+  if (typeof input === "number" && Number.isFinite(input) && input > 0) {
+    return new Date(input).toLocaleString();
+  }
+  return String(input || "").trim() || "-";
+}
+
+function formatTokenUsageAmount(amount: number | undefined, currency?: string) {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value) || value <= 0) return `${currency || "CNY"} 0`;
+  return `${currency || "CNY"} ${value.toFixed(6).replace(/\.?0+$/, "")}`;
+}
+
+async function loadTokenUsagePanel() {
+  await store.loadAiTokenUsagePanel({
+    startTime: tokenUsageStartTime.value,
+    endTime: tokenUsageEndTime.value,
+    type: tokenUsageType.value,
+    granularity: tokenUsageGranularity.value,
+  });
+}
+
+async function openTokenUsageDialog() {
+  showTokenUsageDialog.value = true;
+  await loadTokenUsagePanel();
 }
 
 onMounted(async () => {
@@ -261,6 +293,7 @@ watch(
     <section class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">其他</div>
       <div class="settings-action-row">
+        <button v-if="store.state.token" class="button settings-outline-btn" type="button" @click="openTokenUsageDialog">token消耗</button>
         <button class="button settings-outline-btn" type="button" @click="checkUpdate">检查更新</button>
       </div>
     </section>
@@ -357,4 +390,66 @@ watch(
     :selected-id="store.settingsModelBinding(activeModelKey)?.configId || null"
     @confirmed="onModelManagerConfirmed"
   />
+
+  <div v-if="showTokenUsageDialog" class="modal-backdrop" @click.self="showTokenUsageDialog = false">
+    <section class="modal-panel settings-account-modal">
+      <div class="modal-header settings-modal-header">
+        <div class="modal-title">token消耗</div>
+        <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="showTokenUsageDialog = false">×</button>
+      </div>
+      <div class="modal-body settings-account-body">
+        <div class="field">
+          <label>开始时间</label>
+          <input v-model="tokenUsageStartTime" class="input" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label>结束时间</label>
+          <input v-model="tokenUsageEndTime" class="input" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label>业务类型</label>
+          <input v-model="tokenUsageType" class="input" type="text" placeholder="如：编排师 / 角色发言 / 记忆管理" />
+        </div>
+        <div class="field">
+          <label>统计类型</label>
+          <select v-model="tokenUsageGranularity" class="input">
+            <option value="hour">按时</option>
+            <option value="day">按日</option>
+            <option value="month">按月</option>
+          </select>
+        </div>
+        <div class="settings-action-row">
+          <button class="button primary settings-solid-btn" type="button" @click="loadTokenUsagePanel">
+            {{ store.state.settingsTokenUsageLoading ? '加载中...' : '查询' }}
+          </button>
+        </div>
+        <div class="section-title settings-section-title">日志明细</div>
+        <div class="subtle" v-if="!store.state.settingsTokenUsageLogs.length">暂无 token 消耗日志</div>
+        <div v-for="row in store.state.settingsTokenUsageLogs" :key="row.id" class="surface section-block settings-card settings-card--plain">
+          <div><strong>时间：</strong>{{ formatTokenUsageTime(row.createTime) }}</div>
+          <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
+          <div><strong>模型：</strong>{{ row.model || '-' }}</div>
+          <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
+          <div><strong>token量：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
+          <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
+        </div>
+        <div class="section-title settings-section-title">统计</div>
+        <div class="subtle" v-if="!store.state.settingsTokenUsageStats.length">暂无 token 统计数据</div>
+        <div
+          v-for="row in store.state.settingsTokenUsageStats"
+          :key="`${row.bucketTime}-${row.type}-${row.model}-${row.channel}`"
+          class="surface section-block settings-card settings-card--plain"
+        >
+          <div><strong>时间：</strong>{{ formatTokenUsageTime(row.bucketTime) }}</div>
+          <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
+          <div><strong>模型：</strong>{{ row.model || '-' }}</div>
+          <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
+          <div><strong>token量：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
+          <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
+        </div>
+      </div>
+    </section>
+  </div>
 </template>
