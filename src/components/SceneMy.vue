@@ -11,14 +11,9 @@ const store = useToonflowStore();
 
 const drafts = computed(() => store.draftWorldsForSelectedProject());
 const published = computed(() => store.publishedWorldsForSelectedProject());
-const projectNameSet = computed(() => {
-  const names = store.state.projects.map((item) => String(item.name || "").trim()).filter(Boolean);
-  const cached = String(store.state.selectedProjectNameCache || "").trim();
-  if (cached) names.push(cached);
-  return new Set(names);
-});
-const visibleDrafts = computed(() => drafts.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
-const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
+// “我的”页应该展示真实存在的草稿/已发布故事，不能因为名称刚好与项目名重复就被隐藏。
+const visibleDrafts = computed(() => drafts.value);
+const visiblePublished = computed(() => published.value);
 const latestDraft = computed(() => visibleDrafts.value[0] || null);
 const worksCount = computed(() => visiblePublished.value.length);
 const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));

@@ -18,6 +18,7 @@ import {
   ProjectItem,
   PromptItem,
   RoleAvatarTaskResult,
+  RuntimeEventDigestItem,
   RuntimeRetryMessageMeta,
   SessionDetail,
   SessionItem,
@@ -911,9 +912,15 @@ function createToonflowStore() {
 
   let editorAutoPersistTimer: number | null = null;
   let editorPersistMuted = false;
+  let storyEditorContextToken = 0;
   let lastPersistedEditorSnapshot: StoryEditorSnapshot | null = null;
   let lastPersistedEditorSignature = "";
   let undoEditorSnapshot: StoryEditorSnapshot | null = null;
+
+  function bumpStoryEditorContextToken() {
+    storyEditorContextToken += 1;
+    return storyEditorContextToken;
+  }
 
   function runtimeMetaRecord(meta: unknown): Record<string, unknown> | null {
     if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return null;
@@ -1414,6 +1421,9 @@ function createToonflowStore() {
     state.sessionOpenError = "";
     state.sessionDetail = {
       ...detail,
+      currentEventDigest: detail.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(detail.eventDigestWindow) ? detail.eventDigestWindow : [],
+      eventDigestWindowText: String(detail.eventDigestWindowText || ""),
       messages: normalizedMessages,
     };
     state.messages = normalizedMessages;
@@ -1431,6 +1441,9 @@ function createToonflowStore() {
       chapter: existingDetail?.chapter || null,
       world: existingDetail?.world || null,
       latestSnapshot: existingDetail?.latestSnapshot || null,
+      currentEventDigest: result.currentEventDigest || existingDetail?.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : (existingDetail?.eventDigestWindow || []),
+      eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
     };
     state.sessionRuntimeStage = "";
@@ -1506,6 +1519,9 @@ function createToonflowStore() {
         ...(existingDetail?.latestSnapshot || {}),
         state: nextState,
       },
+      currentEventDigest: result.currentEventDigest || existingDetail?.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : (existingDetail?.eventDigestWindow || []),
+      eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: mergedMessages,
     };
     state.messages = mergedMessages;
@@ -1806,7 +1822,7 @@ function createToonflowStore() {
   }
 
   async function autoPersistStoryEditor() {
-    if (editorPersistMuted || state.activeTab !== "create" || state.selectedProjectId <= 0) return;
+    if (editorPersistMuted || state.loading || state.activeTab !== "create" || state.selectedProjectId <= 0) return;
     const current = captureStoryEditorSnapshot();
     if (!hasPersistableStoryEditorContent(current)) return;
     const currentSignature = JSON.stringify(current);
@@ -1824,7 +1840,7 @@ function createToonflowStore() {
   }
 
   function scheduleStoryEditorAutoPersist(delayMs = 900) {
-    if (editorPersistMuted || state.activeTab !== "create") return;
+    if (editorPersistMuted || state.loading || state.activeTab !== "create") return;
     const snapshot = captureStoryEditorSnapshot();
     if (!hasPersistableStoryEditorContent(snapshot)) return;
     if (JSON.stringify(snapshot) === lastPersistedEditorSignature) return;
@@ -3440,21 +3456,38 @@ function createToonflowStore() {
   }
 
   async function startNewStoryDraft() {
-    resetStoryEditor();
-    state.createStep = 0;
-    state.worldPublishStatus = "draft";
-    state.activeTab = "create";
-    if (!state.selectedProjectId && state.projects.length) {
-      state.selectedProjectId = state.projects[0].id;
+    cancelStoryEditorAutoPersist();
+    editorPersistMuted = true;
+    bumpStoryEditorContextToken();
+    try {
+      resetStoryEditor();
+      state.createStep = 0;
+      state.worldPublishStatus = "draft";
+      state.activeTab = "create";
+      if (!state.selectedProjectId && state.projects.length) {
+        state.selectedProjectId = state.projects[0].id;
+      }
+      primeStoryEditorPersistState();
+    } finally {
+      editorPersistMuted = false;
     }
-    primeStoryEditorPersistState();
   }
 
   async function loadWorldForEdit(world: WorldItem) {
+    cancelStoryEditorAutoPersist();
+    editorPersistMuted = true;
     state.loading = true;
+    const requestToken = bumpStoryEditorContextToken();
     try {
+      // 切故事时先清空当前编辑指针，避免残留的 worldId/chapterId 被后续自动保存误用。
+      state.worldId = 0;
+      state.selectedChapterId = null;
+      state.chapters = [];
       const worldDetail = await api.getWorldById(world.id);
       const chapters = await api.getChapter(world.id).catch(() => []);
+      if (requestToken !== storyEditorContextToken) {
+        return;
+      }
       if (!worldDetail) {
         throw new Error("未找到世界观");
       }
@@ -3502,6 +3535,7 @@ function createToonflowStore() {
       state.activeTab = "create";
       primeStoryEditorPersistState();
     } finally {
+      editorPersistMuted = false;
       state.loading = false;
     }
   }
@@ -3602,6 +3636,7 @@ function createToonflowStore() {
   }
 
   async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve") {
+    const requestToken = storyEditorContextToken;
     const targetStatus = statusMode === "published"
       ? "published"
       : statusMode === "draft"
@@ -3619,6 +3654,9 @@ function createToonflowStore() {
       narratorRole: currentNarratorRole(),
     };
     const result = await api.saveWorld(payload);
+    if (requestToken !== storyEditorContextToken) {
+      return result;
+    }
     state.worldId = result.id;
     state.worldPublishStatus = result.publishStatus || result.settings?.publishStatus || targetStatus;
     await reloadWorldsAfterSave();
@@ -3631,8 +3669,12 @@ function createToonflowStore() {
     worldStatusMode: SaveWorldStatusMode = "preserve",
     persistWorldAfter = true,
   ) {
+    const requestToken = storyEditorContextToken;
     if (!state.worldId) {
       const world = await saveWorldOnly("draft");
+      if (requestToken !== storyEditorContextToken) {
+        return world as unknown as ChapterItem;
+      }
       state.worldId = world.id;
     }
     const chapterBody = stripLeadingOpeningArtifacts(state.chapterContent, state.chapterOpeningRole, state.chapterOpeningLine);
@@ -3674,6 +3716,9 @@ function createToonflowStore() {
       status: statusOverride || "draft",
     };
     const saved = await api.saveChapter(chapterPayload);
+    if (requestToken !== storyEditorContextToken) {
+      return saved;
+    }
     const index = state.chapters.findIndex((item) => item.id === saved.id);
     if (index >= 0) {
       state.chapters[index] = saved;
@@ -3718,6 +3763,7 @@ function createToonflowStore() {
   }
 
   async function saveStoryEditor(publish: boolean | null = null, startNextDraft = false, successNotice: string | null = "保存成功") {
+    const requestToken = storyEditorContextToken;
     const targetWorldStatusMode: SaveWorldStatusMode = publish === true ? "published" : publish === false ? "draft" : "preserve";
     const targetChapterStatus = targetWorldStatusMode === "published"
       ? "published"
@@ -3731,13 +3777,22 @@ function createToonflowStore() {
     }
     if (!state.worldId) {
       const world = await saveWorldOnly("draft");
+      if (requestToken !== storyEditorContextToken) {
+        return world;
+      }
       state.worldId = world.id;
     }
     try {
       if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
         await saveChapterDraft(false, targetChapterStatus, "preserve", false);
+        if (requestToken !== storyEditorContextToken) {
+          return null;
+        }
       }
       const world = await saveWorldOnly(targetWorldStatusMode);
+      if (requestToken !== storyEditorContextToken) {
+        return world;
+      }
       if (startNextDraft) {
         beginNewChapterDraft();
       }
@@ -3747,7 +3802,7 @@ function createToonflowStore() {
       primeStoryEditorPersistState();
       return world;
     } catch (err) {
-      if (publish === true && state.worldId) {
+      if (requestToken === storyEditorContextToken && publish === true && state.worldId) {
         await Promise.allSettled([
           loadWorldForEdit({ id: state.worldId } as WorldItem),
           reloadWorldsAfterSave(),
@@ -3953,10 +4008,18 @@ function createToonflowStore() {
       chapterId?: number | null;
       chapterTitle?: string | null;
       endDialog?: string | null;
+      currentEventDigest?: RuntimeEventDigestItem | null;
+      eventDigestWindow?: RuntimeEventDigestItem[];
+      eventDigestWindowText?: string;
     },
     fallbackChapter?: ChapterItem | null,
   ) {
-    state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
+    state.debugRuntimeState = {
+      ...((result.state || {}) as Record<string, unknown>),
+      currentEventDigest: result.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
+      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+    };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
       state.debugChapterId = result.chapterId;
@@ -3995,7 +4058,12 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
     fallbackChapter?: ChapterItem | null,
   ) {
-    state.debugRuntimeState = (result.state || {}) as Record<string, unknown>;
+    state.debugRuntimeState = {
+      ...((result.state || {}) as Record<string, unknown>),
+      currentEventDigest: result.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
+      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+    };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
       state.debugChapterId = result.chapterId;
@@ -4127,6 +4195,20 @@ function createToonflowStore() {
     }
   }
 
+  // 章节调试首次进入如果只拿到 opening，不应直接停住；在仍未轮到用户时自动续一轮正文。
+  function shouldAutoContinueDebugAfterStart(result: {
+    plan?: DebugNarrativePlan | null;
+    endDialog?: string | null;
+    state?: Record<string, unknown> | null;
+  }) {
+    if (!result.plan || result.endDialog) return false;
+    if (debugCanPlayerSpeakFromState((result.state || state.debugRuntimeState) as Record<string, unknown>)) {
+      return false;
+    }
+    const eventType = String(result.plan.eventType || "").trim();
+    return eventType === "on_opening" || Boolean(String(result.plan.presetContent || "").trim());
+  }
+
   async function performStartDebugCurrentChapter() {
     if (state.selectedProjectId <= 0) {
       state.notice = "请先选择项目";
@@ -4200,6 +4282,9 @@ function createToonflowStore() {
       state.debugLoadingStage = "";
       if (result.plan) {
         await streamDebugPlan(result.plan, []);
+        if (shouldAutoContinueDebugAfterStart(result)) {
+          await performContinueDebugNarrative();
+        }
       } else {
         state.messages = [];
       }

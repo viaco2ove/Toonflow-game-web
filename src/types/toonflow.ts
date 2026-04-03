@@ -138,6 +138,20 @@ export interface MessageItem {
   meta?: unknown;
 }
 
+export interface RuntimeEventDigestItem {
+  eventIndex?: number;
+  eventKind?: string;
+  eventSummary?: string;
+  eventFacts?: string[];
+  eventStatus?: string;
+  summarySource?: string;
+  memorySummary?: string;
+  memoryFacts?: string[];
+  updateTime?: number;
+  allowedRoles?: string[];
+  userNodeId?: string;
+}
+
 export interface RuntimeRetryMessageMeta {
   kind: "runtime_retry";
   token: string;
@@ -158,6 +172,9 @@ export interface SessionItem {
   status?: string;
   updateTime?: number;
   latestMessage?: MessageItem | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionDetail {
@@ -170,6 +187,9 @@ export interface SessionDetail {
   chapter?: ChapterItem | null;
   messages?: MessageItem[];
   latestSnapshot?: { state?: Record<string, unknown> | null } | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionNarrativeResult {
@@ -185,6 +205,9 @@ export interface SessionNarrativeResult {
   narrativePlan?: DebugNarrativePlan | null;
   snapshotSaved?: boolean;
   snapshotReason?: string;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionOrchestrationResult {
@@ -194,6 +217,9 @@ export interface SessionOrchestrationResult {
   expectedRole?: string;
   expectedRoleType?: string;
   plan?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface DebugStepResult {
@@ -202,6 +228,9 @@ export interface DebugStepResult {
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
   messages?: MessageItem[];
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface DebugNarrativePlan {
@@ -223,6 +252,9 @@ export interface DebugOrchestrationResult {
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
   plan?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface AiTokenUsageLogItem {

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, RoleParameterCard, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 
 const store = useToonflowStore();
@@ -67,6 +67,46 @@ function scalarText(input: unknown): string {
   const text = String(input ?? "").trim();
   if (!text || text === "null" || text === "undefined") return "";
   return text;
+}
+
+function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | null {
+  const raw = asMiniRecord(input);
+  if (!Object.keys(raw).length) return null;
+  const eventFacts = asMiniArray(raw.eventFacts).map((item) => scalarText(item)).filter(Boolean);
+  const memoryFacts = asMiniArray(raw.memoryFacts).map((item) => scalarText(item)).filter(Boolean);
+  const allowedRoles = asMiniArray(raw.allowedRoles).map((item) => scalarText(item)).filter(Boolean);
+  return {
+    eventIndex: Number(raw.eventIndex || 0) || 0,
+    eventKind: scalarText(raw.eventKind),
+    eventSummary: scalarText(raw.eventSummary),
+    eventFacts,
+    eventStatus: scalarText(raw.eventStatus),
+    summarySource: scalarText(raw.summarySource),
+    memorySummary: scalarText(raw.memorySummary),
+    memoryFacts,
+    updateTime: Number(raw.updateTime || 0) || 0,
+    allowedRoles,
+    userNodeId: scalarText(raw.userNodeId),
+  };
+}
+
+function runtimeEventStatusLabel(input: unknown): string {
+  const status = scalarText(input);
+  if (status === "completed") return "已完成";
+  if (status === "waiting_input") return "等待用户";
+  if (status === "active") return "进行中";
+  if (status === "idle") return "未开始";
+  return status || "未开始";
+}
+
+function runtimeEventKindLabel(input: unknown): string {
+  const kind = scalarText(input);
+  if (kind === "opening") return "开场";
+  if (kind === "user") return "用户互动";
+  if (kind === "fixed") return "固定事件";
+  if (kind === "scene") return "场景事件";
+  if (kind === "ending") return "结束事件";
+  return kind || "事件";
 }
 
 function readPlayAutoVoicePreference(): boolean {
@@ -332,8 +372,15 @@ const chapterCompletionText = computed(() => {
   return formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "无";
 });
 const chapterObjectiveText = computed(() => {
-  if (currentChapter.value?.showCompletionCondition === false) return "";
-  return (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim();
+  if (currentChapter.value?.showCompletionCondition !== false) {
+    const chapterObjective = (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim();
+    if (chapterObjective) return chapterObjective;
+  }
+  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
+  if (currentEventSummary) return currentEventSummary;
+  const nextSummary = eventDigestWindowItems.value.map((item) => scalarText(item.eventSummary)).find(Boolean);
+  if (nextSummary) return nextSummary;
+  return scalarText(runtimeEventWindowText.value);
 });
 const chapterObjectivePreview = computed(() => {
   const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
@@ -376,6 +423,70 @@ const chapterContentText = computed(() => {
 const runtimeState = computed<Record<string, unknown>>(() => {
   if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
   return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
+});
+const runtimeEventViewRecord = computed(() =>
+  store.state.debugMode
+    ? asMiniRecord(store.state.debugRuntimeState)
+    : asMiniRecord(session.value),
+);
+const currentEventDigest = computed<RuntimeEventDigestItem | null>(() =>
+  normalizeRuntimeEventDigest(runtimeEventViewRecord.value.currentEventDigest || runtimeState.value.currentEventDigest),
+);
+const eventDigestWindowItems = computed<RuntimeEventDigestItem[]>(() => {
+  const source = asMiniArray(runtimeEventViewRecord.value.eventDigestWindow || runtimeState.value.eventDigestWindow);
+  return source
+    .map((item) => normalizeRuntimeEventDigest(item))
+    .filter((item): item is RuntimeEventDigestItem => Boolean(item));
+});
+const runtimeEventWindowText = computed(() =>
+  scalarText(runtimeEventViewRecord.value.eventDigestWindowText || runtimeState.value.eventDigestWindowText),
+);
+const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
+  const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
+  const phases = asMiniArray<Record<string, unknown>>(outline.phases);
+  if (!phases.length) return [];
+  const progress = runtimeChapterProgressRecord.value;
+  const currentPhaseId = scalarText(progress.phaseId);
+  const currentEventIndex = Number(progress.eventIndex || 0) || 0;
+  const currentEventStatus = scalarText(progress.eventStatus) || "idle";
+  const completedEvents = new Set(
+    asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean),
+  );
+  return phases.map((phase, index) => {
+    const phaseId = scalarText(phase.id);
+    const phaseKind = scalarText(phase.kind) || "scene";
+    const eventIndex = index + 1;
+    const eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+    let eventStatus = "idle";
+    if (phaseId && completedEvents.has(`phase:${phaseId}`)) {
+      eventStatus = "completed";
+    } else if ((phaseId && currentPhaseId && phaseId === currentPhaseId) || (!currentPhaseId && currentEventIndex === eventIndex)) {
+      eventStatus = currentEventStatus || "active";
+    } else if (currentEventIndex > eventIndex) {
+      eventStatus = "completed";
+    }
+    return {
+      eventIndex,
+      eventKind: phaseKind,
+      eventSummary,
+      eventFacts: [],
+      eventStatus,
+      summarySource: "phase",
+      memorySummary: "",
+      memoryFacts: [],
+      updateTime: 0,
+      allowedRoles: asMiniArray(phase.allowedSpeakers).map((item) => scalarText(item)).filter(Boolean),
+      userNodeId: scalarText(phase.userNodeId),
+    };
+  });
+});
+const visibleEventItems = computed<RuntimeEventDigestItem[]>(() => {
+  const runtimeItems = eventDigestWindowItems.value;
+  const runtimeLooksReady = runtimeItems.length > 1
+    || runtimeItems.some((item) => scalarText(item.eventSummary))
+    || runtimeItems.some((item) => (item.eventFacts || []).length > 0);
+  if (runtimeLooksReady) return runtimeItems;
+  return chapterOutlineEventItems.value.length ? chapterOutlineEventItems.value : runtimeItems;
 });
 function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const raw = asMiniRecord(input);
@@ -776,6 +887,7 @@ const voiceHoldStartY = ref(0);
 const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
+const eventProgressOpen = ref(true);
 const roleDetailKey = ref("");
 const roleDetail = computed<StoryRole | null>(() => {
   if (!roleDetailKey.value) return null;
@@ -884,6 +996,18 @@ const statePreviewText = computed(() => {
   } catch {
     return String(state || "{}");
   }
+});
+const currentEventProgressText = computed(() => {
+  const currentEvent = currentEventDigest.value;
+  if (currentEvent) {
+    const summary = scalarText(currentEvent.eventSummary) || "当前事件摘要待生成";
+    return `事件 ${Number(currentEvent.eventIndex || 1)} · ${runtimeEventKindLabel(currentEvent.eventKind)} · ${runtimeEventStatusLabel(currentEvent.eventStatus)}：${summary}`;
+  }
+  const currentOutlineItem = visibleEventItems.value.find((item) => scalarText(item.eventStatus) === "active" || scalarText(item.eventStatus) === "waiting_input")
+    || visibleEventItems.value[0]
+    || null;
+  if (!currentOutlineItem) return "当前章节事件尚未生成";
+  return `事件 ${Number(currentOutlineItem.eventIndex || 1)} · ${runtimeEventKindLabel(currentOutlineItem.eventKind)} · ${runtimeEventStatusLabel(currentOutlineItem.eventStatus)}：${scalarText(currentOutlineItem.eventSummary) || "当前事件摘要待生成"}`;
 });
 const playbackMaxIndex = computed(() => Math.max(0, playbackMessages.value.length - 1));
 const playbackCurrentMessage = computed(() => playbackMessages.value[playbackCursor.value] || null);
@@ -1042,6 +1166,7 @@ watch(
     inputMode.value = "text";
     settingModePickerOpen.value = false;
     chapterDetailOpen.value = true;
+    eventProgressOpen.value = true;
     closeMenu();
     stopVoiceRecognition();
     stopRuntimeVoicePlayback();
@@ -2224,6 +2349,10 @@ function toggleChapterDetail() {
   chapterDetailOpen.value = !chapterDetailOpen.value;
 }
 
+function toggleEventProgress() {
+  eventProgressOpen.value = !eventProgressOpen.value;
+}
+
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
 }
@@ -2259,6 +2388,7 @@ function stopPlaybackSequence() {
 
 function openChapterObjective() {
   chapterDetailOpen.value = true;
+  eventProgressOpen.value = true;
   playMode.value = "setting";
 }
 
@@ -2948,6 +3078,42 @@ onBeforeUnmount(() => {
           <pre class="play-state-pre">{{ statePreviewText }}</pre>
         </div>
 
+        <button type="button" class="play-link-row" @click="toggleEventProgress">
+          <span>当前章节事件</span>
+          <span>{{ eventProgressOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="eventProgressOpen" class="play-inline-card">
+          <div class="play-inline-card__title">当前事件进度</div>
+          <div class="play-inline-card__text">{{ currentEventProgressText }}</div>
+          <div v-if="currentEventDigest?.eventFacts?.length" class="play-inline-card__text">
+            当前事件事实：{{ currentEventDigest.eventFacts.join(" / ") }}
+          </div>
+          <div v-if="currentEventDigest?.memorySummary" class="play-inline-card__text">
+            事件记忆：{{ currentEventDigest.memorySummary }}
+          </div>
+          <div v-if="visibleEventItems.length" class="play-event-list">
+            <div
+              v-for="item in visibleEventItems"
+              :key="`${item.eventIndex || 0}_${item.eventKind || 'scene'}`"
+              class="play-event-item"
+            >
+              <div class="play-event-item__head">
+                <span class="play-event-item__index">事件 {{ item.eventIndex || 1 }}</span>
+                <span class="play-event-item__meta">{{ runtimeEventKindLabel(item.eventKind) }} · {{ runtimeEventStatusLabel(item.eventStatus) }}</span>
+              </div>
+              <div class="play-event-item__summary">{{ item.eventSummary || "当前事件摘要待生成" }}</div>
+              <div v-if="item.eventFacts?.length" class="play-event-item__facts">
+                事实：{{ item.eventFacts.join(" / ") }}
+              </div>
+              <div v-if="item.memorySummary" class="play-event-item__memory">
+                记忆：{{ item.memorySummary }}
+              </div>
+            </div>
+          </div>
+          <pre v-else-if="runtimeEventWindowText" class="play-state-pre">{{ runtimeEventWindowText }}</pre>
+          <div v-else class="play-inline-card__text">当前章节事件尚未生成。</div>
+        </div>
+
         <button type="button" class="play-link-row" @click="settingModePickerOpen = !settingModePickerOpen">
           <span>对话模式</span>
           <span>基础模式 &gt;</span>
@@ -3339,3 +3505,48 @@ onBeforeUnmount(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.play-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.play-event-item {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.play-event-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: rgba(223, 233, 255, 0.78);
+}
+
+.play-event-item__index {
+  font-weight: 700;
+  color: #f4f7ff;
+}
+
+.play-event-item__summary {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #f4f7ff;
+}
+
+.play-event-item__facts,
+.play-event-item__memory {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(223, 233, 255, 0.74);
+}
+</style>
