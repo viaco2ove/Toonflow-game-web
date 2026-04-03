@@ -1231,11 +1231,14 @@ watch(
       return;
     }
     const latest = latestRevealedMessage.value;
-    if (!latest || latest.roleType === "player" || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
+    if (!latest || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
       return;
     }
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
     let status = runtimeMessageStatus(latest);
+    if (latest.roleType === "player" && (canPlayerSpeak.value || status !== "waiting_next")) {
+      return;
+    }
     if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);

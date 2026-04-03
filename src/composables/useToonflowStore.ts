@@ -1437,6 +1437,48 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
+  function applyAwaitUserTurnFromPlan(plan?: DebugNarrativePlan | null) {
+    const currentPlan = plan || null;
+    const shouldYieldToUser = Boolean(currentPlan?.awaitUser)
+      || String(currentPlan?.nextRoleType || "").trim().toLowerCase() === "player";
+    if (!shouldYieldToUser) return;
+    const detail = state.sessionDetail || null;
+    const root = asMiniRecord(detail?.state);
+    if (!Object.keys(root).length) return;
+    const turnState = asMiniRecord(root.turnState);
+    const displayName = scalarText(asMiniRecord(root.player).name) || state.playerName || "用户";
+    turnState.canPlayerSpeak = true;
+    turnState.expectedRoleType = "player";
+    turnState.expectedRole = displayName;
+    turnState.lastSpeakerRoleType = scalarText(currentPlan?.roleType) || scalarText(turnState.lastSpeakerRoleType);
+    turnState.lastSpeaker = scalarText(currentPlan?.role) || scalarText(turnState.lastSpeaker);
+    root.turnState = turnState;
+    state.sessionDetail = {
+      ...(detail || {}),
+      state: root,
+      latestSnapshot: {
+        ...(detail?.latestSnapshot || {}),
+        state: root,
+      },
+    };
+    const latest = conversationMessages().slice(-1)[0] || null;
+    if (latest && !isRuntimeRetryMessage(latest) && !isStreamingRuntimeMessage(latest)) {
+      updateMessageById(
+        latest.id,
+        (current) => ({
+          ...current,
+          meta: buildRuntimeStreamMeta(current.meta, {
+            status: "waiting_player",
+            streaming: false,
+            nextRole: displayName,
+            nextRoleType: "player",
+          }),
+        }),
+        true,
+      );
+    }
+  }
+
   function applySessionNarrativeResult(result: SessionNarrativeResult) {
     const existingDetail = state.sessionDetail || null;
     const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
@@ -4393,14 +4435,23 @@ function createToonflowStore() {
         const orchestration = await api.orchestrateSession(state.currentSessionId);
         clearRuntimeRetryState();
         applySessionOrchestrationResult(orchestration);
-        if (orchestration.plan) {
+        applyAwaitUserTurnFromPlan(orchestration.plan);
+        const shouldYieldToUser = orchestration.plan?.awaitUser === true
+          || orchestration.plan?.nextRoleType?.trim()?.toLowerCase() === "player";
+        const shouldStreamPlan = Boolean(
+          orchestration.plan
+          && !shouldYieldToUser
+          && orchestration.plan.role
+          && !String(orchestration.plan.roleType || "").trim().toLowerCase().includes("player"),
+        );
+        if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
         }
         const afterCount = conversationMessages().length;
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
         const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
+        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan || shouldYieldToUser) {
           advanced = true;
           break;
         }
