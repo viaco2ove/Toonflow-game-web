@@ -15,6 +15,16 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     agentLabel: "story_orchestrator",
     tsLabel: "src/agents/story/orchestrator/index.ts",
   },
+  "story-orchestrator-compact": {
+    code: "story-orchestrator-compact",
+    agentLabel: "story_orchestrator_compact",
+    tsLabel: "src/agents/story/orchestrator/index.ts",
+  },
+  "story-orchestrator-advanced": {
+    code: "story-orchestrator-advanced",
+    agentLabel: "story_orchestrator_advanced",
+    tsLabel: "src/agents/story/orchestrator/index.ts",
+  },
   "story-speaker": {
     code: "story-speaker",
     agentLabel: "story_speaker",

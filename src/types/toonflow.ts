@@ -136,11 +136,13 @@ export interface MessageItem {
   content: string;
   createTime?: number;
   meta?: unknown;
+  revisitData?: unknown;
 }
 
 export interface RuntimeEventDigestItem {
   eventIndex?: number;
   eventKind?: string;
+  eventFlowType?: string;
   eventSummary?: string;
   eventFacts?: string[];
   eventStatus?: string;
@@ -227,10 +229,20 @@ export interface DebugStepResult {
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
+  endDialogDetail?: string | null;
   messages?: MessageItem[];
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
+}
+
+export interface OrchestratorRuntimeMeta {
+  modelKey?: string;
+  manufacturer?: string;
+  model?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
+  payloadMode?: "compact" | "advanced";
+  payloadModeSource?: "explicit" | "inferred";
 }
 
 export interface DebugNarrativePlan {
@@ -241,9 +253,11 @@ export interface DebugNarrativePlan {
   nextRole?: string;
   nextRoleType?: string;
   source?: "ai" | "fallback";
+  planSource?: string;
   triggerMemoryAgent?: boolean;
   eventType?: string;
   presetContent?: string | null;
+  orchestratorRuntime?: OrchestratorRuntimeMeta | null;
 }
 
 export interface DebugOrchestrationResult {
@@ -251,6 +265,7 @@ export interface DebugOrchestrationResult {
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
+  endDialogDetail?: string | null;
   plan?: DebugNarrativePlan | null;
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
@@ -275,6 +290,7 @@ export interface AiTokenUsageLogItem {
   amount?: number;
   currency?: string;
   remark?: string;
+  meta?: Record<string, unknown> | null;
 }
 
 export interface AiTokenUsageStatsItem {
@@ -364,6 +380,7 @@ export interface ModelConfigItem {
   outputPricePer1M?: number;
   cacheReadPricePer1M?: number;
   currency?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
   createTime?: number;
 }
 
@@ -379,6 +396,7 @@ export interface ModelConfigPayload {
   outputPricePer1M?: number;
   cacheReadPricePer1M?: number;
   currency?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 
 export interface ModelTestResult {
@@ -402,6 +420,7 @@ export interface AiModelMapItem {
   configId?: number | null;
   model?: string | null;
   manufacturer?: string | null;
+  payloadMode?: "compact" | "advanced" | null;
 }
 
 export interface AiModelOptionItem {
@@ -410,6 +429,10 @@ export interface AiModelOptionItem {
 }
 
 export type AiModelListMap = Record<string, AiModelOptionItem[]>;
+
+export interface StoryRuntimeConfig {
+  storyOrchestratorPayloadMode: "compact" | "advanced";
+}
 
 export interface PromptItem {
   id: number;

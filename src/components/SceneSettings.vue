@@ -42,22 +42,38 @@ const modelRows = computed(() =>
       binding,
       recommendation,
       advisory,
+      payloadMode: slot.key === "storyOrchestratorModel" ? store.storyOrchestratorPayloadMode() : null,
       options: store.settingsConfigOptions(slot.configType),
     };
   }),
 );
 
 const storyPrompts = computed(() => store.state.storyPrompts);
+const activeOrchestratorPromptCode = computed(() => (
+  store.storyOrchestratorPayloadMode() === "advanced"
+    ? "story-orchestrator-advanced"
+    : "story-orchestrator-compact"
+));
 const storyPromptRows = computed(() =>
   store.state.storyPrompts.map((prompt) => {
     const meta = storyPromptMeta(prompt.code);
     const isCustom = String(prompt.customValue || "").trim().length > 0;
+    const isCurrentOrchestratorPrompt = prompt.code === activeOrchestratorPromptCode.value;
+    const inactiveOrchestratorPrompt = (
+      prompt.code === "story-orchestrator-compact" || prompt.code === "story-orchestrator-advanced"
+    ) && !isCurrentOrchestratorPrompt;
     return {
       ...prompt,
       meta,
       isCustom,
+      isCurrentOrchestratorPrompt,
+      inactiveOrchestratorPrompt,
       statusLabel: isCustom ? "自定义" : "默认值",
-      tipText: isCustom ? "*当前使用自定义提示词，点击重置将恢复默认值" : "*当前使用默认提示词，编辑后将保存为自定义值",
+      tipText: inactiveOrchestratorPrompt
+        ? "*当前未生效；切换编排师运行模式后才会使用这条提示词"
+        : isCustom
+          ? "*当前使用自定义提示词，点击重置将恢复默认值"
+          : "*当前使用默认值，编辑后将保存为自定义值",
     };
   }),
 );
@@ -127,6 +143,10 @@ async function applyRecommendedModel(key: string) {
   await store.bindRecommendedGameModel(key);
 }
 
+async function changeStoryOrchestratorPayloadMode(value: string) {
+  await store.saveStoryOrchestratorPayloadMode(value === "advanced" ? "advanced" : "compact");
+}
+
 function onModelManagerConfirmed() {
   activeModelKey.value = "";
 }
@@ -155,6 +175,24 @@ function formatTokenUsageAmount(amount: number | undefined, currency?: string) {
   const value = Number(amount || 0);
   if (!Number.isFinite(value) || value <= 0) return `${currency || "CNY"} 0`;
   return `${currency || "CNY"} ${value.toFixed(6).replace(/\.?0+$/, "")}`;
+}
+
+function stringifyTokenUsageMeta(input: unknown) {
+  if (!input || typeof input !== "object") return "";
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input || "");
+  }
+}
+
+function tokenUsageMetaValue(row: { meta?: Record<string, unknown> | null }, path: string[]) {
+  let current: unknown = row.meta || null;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return "";
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : "";
 }
 
 async function loadTokenUsagePanel() {
@@ -223,6 +261,22 @@ watch(
           <div class="settings-model-copy">
             <div class="settings-model-label">{{ row.label }}</div>
             <div class="settings-model-meta">{{ row.binding?.manufacturer || '未绑定' }} {{ row.binding?.model || '' }}</div>
+            <div v-if="row.key === 'storyOrchestratorModel'" class="settings-model-inline-option">
+              <span class="settings-model-inline-label">运行模式</span>
+              <select
+                class="input settings-model-inline-select"
+                :value="row.payloadMode || 'compact'"
+                @change="changeStoryOrchestratorPayloadMode(String(($event.target as HTMLSelectElement | null)?.value || 'compact'))"
+              >
+                <option
+                  v-for="item in store.STORY_ORCHESTRATOR_PAYLOAD_OPTIONS"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
             <div
               v-if="row.recommendation"
               class="settings-model-recommend"
@@ -262,6 +316,13 @@ watch(
             <div class="settings-prompt-heading">
               <div class="settings-prompt-title">{{ prompt.name || prompt.code }}</div>
               <span class="settings-prompt-status" :class="{ custom: prompt.isCustom }">{{ prompt.statusLabel }}</span>
+              <span
+                v-if="prompt.code === 'story-orchestrator-compact' || prompt.code === 'story-orchestrator-advanced'"
+                class="settings-prompt-status"
+                :class="{ custom: prompt.isCurrentOrchestratorPrompt }"
+              >
+                {{ prompt.isCurrentOrchestratorPrompt ? '当前生效' : '未生效' }}
+              </span>
             </div>
             <div class="settings-prompt-actions">
               <button class="button small settings-prompt-secondary-btn" type="button" @click="resetPrompt(prompt.code)">重置提示词</button>
@@ -430,9 +491,20 @@ watch(
           <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
           <div><strong>模型：</strong>{{ row.model || '-' }}</div>
           <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
-          <div><strong>token量：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>输入 tokens：</strong>{{ row.inputTokens || 0 }}</div>
+          <div><strong>输出 tokens：</strong>{{ row.outputTokens || 0 }}</div>
+          <div><strong>推理 tokens：</strong>{{ row.reasoningTokens || 0 }}</div>
+          <div><strong>缓存读取 tokens：</strong>{{ row.cacheReadTokens || 0 }}</div>
+          <div><strong>总 tokens：</strong>{{ row.totalTokens || 0 }}</div>
           <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
           <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
+          <div><strong>推理强度：</strong>{{ tokenUsageMetaValue(row, ['reasoningEffort']) || '-' }}</div>
+          <div><strong>阶段：</strong>{{ tokenUsageMetaValue(row, ['stage']) || '-' }}</div>
+          <details v-if="row.meta" class="settings-token-meta">
+            <summary>查看调用审计</summary>
+            <div class="subtle">这里包含请求提示词快照、返回内容快照和 usage 拆分。</div>
+            <pre class="settings-token-meta-pre">{{ stringifyTokenUsageMeta(row.meta) }}</pre>
+          </details>
         </div>
         <div class="section-title settings-section-title">统计</div>
         <div class="subtle" v-if="!store.state.settingsTokenUsageStats.length">暂无 token 统计数据</div>
@@ -445,7 +517,12 @@ watch(
           <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
           <div><strong>模型：</strong>{{ row.model || '-' }}</div>
           <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
-          <div><strong>token量：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>输入 tokens：</strong>{{ row.inputTokens || 0 }}</div>
+          <div><strong>输出 tokens：</strong>{{ row.outputTokens || 0 }}</div>
+          <div><strong>推理 tokens：</strong>{{ row.reasoningTokens || 0 }}</div>
+          <div><strong>缓存读取 tokens：</strong>{{ row.cacheReadTokens || 0 }}</div>
+          <div><strong>总 tokens：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>调用次数：</strong>{{ row.callCount || 0 }}</div>
           <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
           <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
         </div>

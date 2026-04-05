@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 
 const store = useToonflowStore();
@@ -78,6 +78,7 @@ function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | n
   return {
     eventIndex: Number(raw.eventIndex || 0) || 0,
     eventKind: scalarText(raw.eventKind),
+    eventFlowType: scalarText(raw.eventFlowType),
     eventSummary: scalarText(raw.eventSummary),
     eventFacts,
     eventStatus: scalarText(raw.eventStatus),
@@ -107,6 +108,44 @@ function runtimeEventKindLabel(input: unknown): string {
   if (kind === "scene") return "场景事件";
   if (kind === "ending") return "结束事件";
   return kind || "事件";
+}
+
+function runtimeEventFlowLabel(item: RuntimeEventDigestItem | null | undefined): string {
+  const flowType = scalarText(item?.eventFlowType).toLowerCase();
+  if (flowType === "introduction") return "开场白";
+  if (flowType === "chapter_ending_check") return "结束条件检查";
+  if (flowType === "free_runtime") return "自由剧情";
+  if (flowType === "chapter_content") return "章节内容";
+  const kind = scalarText(item?.eventKind).toLowerCase();
+  if (kind === "opening") return "开场白";
+  if (kind === "ending") return "结束条件检查";
+  if (kind === "fixed") return "固定条件";
+  if (kind === "scene" || kind === "user") return "章节内容";
+  return "章节事件";
+}
+
+function isChapterEventItem(item: RuntimeEventDigestItem | null | undefined): boolean {
+  const flowType = scalarText(item?.eventFlowType).toLowerCase();
+  const kind = scalarText(item?.eventKind).toLowerCase();
+  return flowType !== "introduction" && kind !== "opening";
+}
+
+function normalizeOrchestratorRuntime(input: unknown): OrchestratorRuntimeMeta | null {
+  const raw = asMiniRecord(input);
+  if (!Object.keys(raw).length) return null;
+  const payloadMode = scalarText(raw.payloadMode).toLowerCase();
+  const payloadModeSource = scalarText(raw.payloadModeSource).toLowerCase();
+  const reasoningEffort = scalarText(raw.reasoningEffort).toLowerCase();
+  return {
+    modelKey: scalarText(raw.modelKey),
+    manufacturer: scalarText(raw.manufacturer),
+    model: scalarText(raw.model),
+    reasoningEffort: reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
+      ? reasoningEffort
+      : "",
+    payloadMode: payloadMode === "advanced" ? "advanced" : "compact",
+    payloadModeSource: payloadModeSource === "explicit" ? "explicit" : "inferred",
+  };
 }
 
 function readPlayAutoVoicePreference(): boolean {
@@ -441,52 +480,125 @@ const eventDigestWindowItems = computed<RuntimeEventDigestItem[]>(() => {
 const runtimeEventWindowText = computed(() =>
   scalarText(runtimeEventViewRecord.value.eventDigestWindowText || runtimeState.value.eventDigestWindowText),
 );
+const debugOrchestratorRuntime = computed<OrchestratorRuntimeMeta | null>(() =>
+  store.state.debugMode ? normalizeOrchestratorRuntime(store.state.debugLatestPlan?.orchestratorRuntime) : null,
+);
+const debugOrchestratorRuntimeText = computed(() => {
+  const runtime = debugOrchestratorRuntime.value;
+  const planSource = scalarText(store.state.debugLatestPlan?.planSource);
+  const planSourceLabel = planSource === "opening_preset"
+    ? "开场白预设"
+    : planSource === "ai_orchestrator"
+      ? "正式编排"
+      : planSource === "rule_orchestrator"
+        ? "规则编排"
+        : planSource === "fallback_orchestrator"
+          ? "兜底编排"
+          : planSource === "preset"
+            ? "预设流程"
+            : "";
+  if (!runtime && !planSourceLabel) return "";
+  const modeLabel = runtime?.payloadMode === "advanced" ? "高级版" : "精简版";
+  const modeSourceLabel = runtime?.payloadModeSource === "explicit" ? "显式" : "推断";
+  const modelLabel = runtime ? [runtime.manufacturer, runtime.model].filter(Boolean).join(" / ") : "";
+  const reasoningLabel = runtime?.reasoningEffort || "未指定";
+  return [
+    planSourceLabel ? `流程：${planSourceLabel}` : "",
+    runtime ? `编排运行：${modeLabel}（${modeSourceLabel}）` : "",
+    runtime ? `推理强度：${reasoningLabel}` : "",
+    modelLabel,
+  ].filter(Boolean).join(" · ");
+});
 const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
   const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
   const phases = asMiniArray<Record<string, unknown>>(outline.phases);
-  if (!phases.length) return [];
+  const fixedEvents = asMiniArray<Record<string, unknown>>(outline.fixedEvents);
+  if (!phases.length && !fixedEvents.length) return [];
   const progress = runtimeChapterProgressRecord.value;
   const currentPhaseId = scalarText(progress.phaseId);
-  const currentEventIndex = Number(progress.eventIndex || 0) || 0;
   const currentEventStatus = scalarText(progress.eventStatus) || "idle";
+  const currentEventKind = scalarText(progress.eventKind) || scalarText(currentEventDigest.value?.eventKind);
+  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
   const completedEvents = new Set(
     asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean),
   );
-  return phases.map((phase, index) => {
+  const items: RuntimeEventDigestItem[] = [];
+
+  phases.forEach((phase) => {
     const phaseId = scalarText(phase.id);
     const phaseKind = scalarText(phase.kind) || "scene";
-    const eventIndex = index + 1;
+    const eventIndex = items.length + 1;
     const eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
     let eventStatus = "idle";
     if (phaseId && completedEvents.has(`phase:${phaseId}`)) {
       eventStatus = "completed";
-    } else if ((phaseId && currentPhaseId && phaseId === currentPhaseId) || (!currentPhaseId && currentEventIndex === eventIndex)) {
+    } else if (phaseId && currentPhaseId && phaseId === currentPhaseId) {
       eventStatus = currentEventStatus || "active";
-    } else if (currentEventIndex > eventIndex) {
+    } else if (currentEventKind && currentEventKind !== "opening" && phaseId && currentPhaseId && phaseId !== currentPhaseId) {
+      const currentPhaseIndex = phases.findIndex((item) => scalarText(item.id) === currentPhaseId);
+      const phaseIndex = phases.findIndex((item) => scalarText(item.id) === phaseId);
+      if (currentPhaseIndex >= 0 && phaseIndex >= 0 && phaseIndex < currentPhaseIndex) {
+        eventStatus = "completed";
+      }
+    } else if (!currentPhaseId && currentEventKind === phaseKind && currentEventSummary && currentEventSummary === eventSummary) {
+      eventStatus = currentEventStatus || "active";
+    } else if (!currentPhaseId && currentEventKind && currentEventKind !== "opening" && items.length > 0) {
       eventStatus = "completed";
     }
-    return {
+    items.push({
       eventIndex,
       eventKind: phaseKind,
+      eventFlowType: "chapter_content",
       eventSummary,
       eventFacts: [],
       eventStatus,
-      summarySource: "phase",
+      summarySource: "outline",
       memorySummary: "",
       memoryFacts: [],
       updateTime: 0,
       allowedRoles: asMiniArray(phase.allowedSpeakers).map((item) => scalarText(item)).filter(Boolean),
       userNodeId: scalarText(phase.userNodeId),
-    };
+    });
   });
+
+  fixedEvents.forEach((event, index) => {
+    const eventId = scalarText(event.id);
+    const eventSummary = scalarText(event.label) || `固定事件 ${index + 1}`;
+    let eventStatus = "idle";
+    if (eventId && completedEvents.has(eventId)) {
+      eventStatus = "completed";
+    } else if ((currentEventKind === "fixed" || currentEventKind === "ending") && index === 0) {
+      eventStatus = currentEventStatus || "waiting_input";
+    } else if (currentEventKind && currentEventKind !== "opening" && currentEventKind !== "scene" && eventId && completedEvents.size > 0) {
+      eventStatus = "completed";
+    }
+    items.push({
+      eventIndex: items.length + 1,
+      eventKind: "fixed",
+      eventFlowType: "chapter_ending_check",
+      eventSummary,
+      eventFacts: [],
+      eventStatus,
+      summarySource: "outline",
+      memorySummary: "",
+      memoryFacts: [],
+      updateTime: 0,
+      allowedRoles: [],
+      userNodeId: "",
+    });
+  });
+
+  return items;
 });
 const visibleEventItems = computed<RuntimeEventDigestItem[]>(() => {
-  const runtimeItems = eventDigestWindowItems.value;
+  const runtimeItems = eventDigestWindowItems.value.filter((item) => isChapterEventItem(item));
+  const outlineItems = chapterOutlineEventItems.value;
   const runtimeLooksReady = runtimeItems.length > 1
     || runtimeItems.some((item) => scalarText(item.eventSummary))
     || runtimeItems.some((item) => (item.eventFacts || []).length > 0);
-  if (runtimeLooksReady) return runtimeItems;
-  return chapterOutlineEventItems.value.length ? chapterOutlineEventItems.value : runtimeItems;
+  if (!outlineItems.length) return runtimeItems;
+  if (outlineItems.length > runtimeItems.length) return outlineItems;
+  return runtimeLooksReady ? runtimeItems : outlineItems;
 });
 function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const raw = asMiniRecord(input);
@@ -692,6 +804,9 @@ const currentRuntimeInputStatus = computed(() => {
   if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
   if (latestStatus === "sending") return "sending";
+  if (canPlayerSpeak.value && latestStatus === "auto_advancing") {
+    return "waiting_player";
+  }
   if (latestStatus === "orchestrated") {
     return canPlayerSpeak.value ? "waiting_player" : "waiting_next";
   }
@@ -999,7 +1114,7 @@ const statePreviewText = computed(() => {
 });
 const currentEventProgressText = computed(() => {
   const currentEvent = currentEventDigest.value;
-  if (currentEvent) {
+  if (currentEvent && isChapterEventItem(currentEvent)) {
     const summary = scalarText(currentEvent.eventSummary) || "当前事件摘要待生成";
     return `事件 ${Number(currentEvent.eventIndex || 1)} · ${runtimeEventKindLabel(currentEvent.eventKind)} · ${runtimeEventStatusLabel(currentEvent.eventStatus)}：${summary}`;
   }
@@ -1447,7 +1562,7 @@ function openMenu(message: MessageItem, event: MouseEvent | PointerEvent) {
   const stage = document.querySelector<HTMLElement>(".play-stage");
   const bounds = stage?.getBoundingClientRect();
   const menuWidth = 248;
-  const menuHeight = 328;
+  const menuHeight = 372;
   const gap = 12;
   const minX = bounds ? bounds.left + gap : 12;
   const maxX = bounds ? Math.max(minX, bounds.right - menuWidth - gap) : Math.max(12, window.innerWidth - menuWidth - gap);
@@ -2224,6 +2339,18 @@ function menuDelete() {
   closeMenu();
 }
 
+function menuRevisit() {
+  const message = menuMessage.value;
+  if (!message) return;
+  const action = store.state.debugMode
+    ? store.revisitDebugMessage(Number(message.id || 0))
+    : store.revisitSessionMessage(Number(message.id || 0));
+  void action.catch((error) => {
+    store.state.notice = `回溯失败：${error instanceof Error ? error.message : "未知错误"}`;
+  });
+  closeMenu();
+}
+
 function roleTypeLabel(role: StoryRole): string {
   if (role.roleType === "player") return "用户";
   if (role.roleType === "narrator") return "旁白";
@@ -2355,11 +2482,13 @@ function toggleEventProgress() {
 
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
+  store.state.debugEndDialogDetail = "";
 }
 
 function exitDebugMode() {
   stopVoiceRecognition();
   store.state.debugEndDialog = null;
+  store.state.debugEndDialogDetail = "";
   store.state.debugMode = false;
   store.setTab("create");
 }
@@ -3085,6 +3214,9 @@ onBeforeUnmount(() => {
         <div v-if="eventProgressOpen" class="play-inline-card">
           <div class="play-inline-card__title">当前事件进度</div>
           <div class="play-inline-card__text">{{ currentEventProgressText }}</div>
+          <div v-if="debugOrchestratorRuntimeText" class="play-inline-card__text">
+            {{ debugOrchestratorRuntimeText }}
+          </div>
           <div v-if="currentEventDigest?.eventFacts?.length" class="play-inline-card__text">
             当前事件事实：{{ currentEventDigest.eventFacts.join(" / ") }}
           </div>
@@ -3099,7 +3231,7 @@ onBeforeUnmount(() => {
             >
               <div class="play-event-item__head">
                 <span class="play-event-item__index">事件 {{ item.eventIndex || 1 }}</span>
-                <span class="play-event-item__meta">{{ runtimeEventKindLabel(item.eventKind) }} · {{ runtimeEventStatusLabel(item.eventStatus) }}</span>
+                <span class="play-event-item__meta">{{ runtimeEventFlowLabel(item) }} · {{ runtimeEventKindLabel(item.eventKind) }} · {{ runtimeEventStatusLabel(item.eventStatus) }}</span>
               </div>
               <div class="play-event-item__summary">{{ item.eventSummary || "当前事件摘要待生成" }}</div>
               <div v-if="item.eventFacts?.length" class="play-event-item__facts">
@@ -3386,6 +3518,14 @@ onBeforeUnmount(() => {
         <div class="tiny" style="margin-bottom:8px; color:#c0cee3;">{{ menuVisibleHint || "请选择操作" }}</div>
         <button class="button block" type="button" @click="menuCopy">复制</button>
         <button class="button block" type="button" @click="menuReplay">重听</button>
+        <button
+          v-if="menuMessage && (store.canRevisitDebugMessage(menuMessage) || store.canRevisitSessionMessage(menuMessage))"
+          class="button block"
+          type="button"
+          @click="menuRevisit"
+        >
+          回溯到这句
+        </button>
         <button class="button block" type="button" @click="menuLike">点赞</button>
         <button class="button block" type="button" @click="menuDislike">点踩</button>
         <button class="button block" type="button" @click="menuReset">取消评价</button>
@@ -3399,13 +3539,13 @@ onBeforeUnmount(() => {
         <div class="modal-header">
           <button class="button small" type="button" @click="closeDebugDialog">继续查看</button>
           <div style="font-weight:900;">章节调试结束</div>
-          <span class="tiny">{{ store.state.debugEndDialog }}</span>
+          <span class="tiny">{{ store.state.debugEndDialog === '已失败' ? '章节失败' : store.state.debugEndDialog }}</span>
         </div>
         <div class="modal-body">
           <div class="surface section-block surface-soft">
-            <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
+            <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog === '已失败' ? '章节失败' : store.state.debugEndDialog }}</div>
             <div class="subtle" style="margin-top:8px;">
-              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : store.state.debugEndDialog === '进入自由剧情' ? '当前章节已完成。继续查看后将进入自由剧情，编排师会继续推进故事。' : '当前调试已结束。' }}
+              {{ store.state.debugEndDialogDetail || (store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : store.state.debugEndDialog === '进入自由剧情' ? '当前章节已完成。继续查看后将进入自由剧情，编排师会继续推进故事。' : '当前调试已结束。') }}
             </div>
           </div>
         </div>

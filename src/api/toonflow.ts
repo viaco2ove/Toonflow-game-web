@@ -20,6 +20,7 @@ import type {
   SessionDetail,
   SessionNarrativeResult,
   SessionOrchestrationResult,
+  StoryRuntimeConfig,
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
@@ -192,6 +193,13 @@ export class ToonflowApi {
     });
   }
 
+  revisitMessage(sessionId: string, messageId: number) {
+    return this.post<boolean>("/game/revisitMessage", {
+      sessionId,
+      messageId,
+    });
+  }
+
   getMessages(sessionId: string) {
     return this.post<MessageItem[]>("/game/getMessage", {
       sessionId,
@@ -217,6 +225,10 @@ export class ToonflowApi {
 
   debugStep(payload: Record<string, unknown>) {
     return this.post<DebugStepResult>("/game/debugStep", payload);
+  }
+
+  introduceDebug(payload: Record<string, unknown>) {
+    return this.post<DebugOrchestrationResult>("/game/introduction", payload);
   }
 
   orchestrateDebug(payload: Record<string, unknown>) {
@@ -375,6 +387,10 @@ export class ToonflowApi {
     return this.post<string>("/setting/configurationModel", { id, configId });
   }
 
+  saveStoryRuntimeConfig(payload: StoryRuntimeConfig) {
+    return this.post<StoryRuntimeConfig>("/setting/saveStoryRuntimeConfig", payload);
+  }
+
   getPrompts() {
     return this.get<PromptItem[]>("/prompt/getPrompts");
   }
@@ -434,7 +450,7 @@ export class ToonflowApi {
     return this.post<{ prompt: string; text: string }>("/assets/polishPrompt", { prompt });
   }
 
-  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" }) {
     return this.post<string>("/other/testAI", payload);
   }
 

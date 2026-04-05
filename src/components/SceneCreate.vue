@@ -20,6 +20,7 @@ type ChapterTabItem = {
 
 const store = useToonflowStore();
 const showAdvanced = ref(false);
+const showPhaseGraph = ref(false);
 const showUserEditor = ref(false);
 const showNpcEditor = ref(false);
 const editingNpcIndex = ref<number | null>(null);
@@ -925,8 +926,12 @@ function cancelRemoveCurrentNpc() {
       </section>
 
       <section class="create-section">
-          <div class="create-card create-card--compact">
-            <div class="create-card-title">Phase Graph（高级）</div>
+        <div class="create-card create-card--compact create-card--toggle">
+          <button class="create-advanced-toggle" type="button" @click="showPhaseGraph = !showPhaseGraph">
+            <span>Phase Graph</span>
+            <strong>{{ showPhaseGraph ? '收起' : '展开' }}</strong>
+          </button>
+          <div v-if="showPhaseGraph" class="create-advanced-body">
             <div class="create-tip">可直接填写章节运行模板 JSON。为空时由系统根据章节正文和指令自动推断。</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button class="button small" type="button" @click="store.generateChapterRuntimeOutlineDraft">生成草稿</button>
@@ -935,73 +940,82 @@ function cancelRemoveCurrentNpc() {
             <div class="field">
               <textarea
                 v-model="store.state.chapterRuntimeOutlineText"
-              class="textarea create-short-textarea"
-              rows="8"
-              placeholder='例如：{"phases":[{"id":"phase_1_opening","label":"开场","nextPhaseIds":["phase_2_user"]}]}'
-            ></textarea>
-          </div>
-          <div v-if="runtimeOutlinePreview?.phases?.length" class="create-phase-preview">
-            <div class="create-card-title create-card-title--sub">阶段关系图</div>
-            <div
-              v-for="flow in runtimePhaseFlowPreview"
-              :key="`${flow.id}_flow`"
-              class="create-phase-preview__item"
-            >
-              <div class="create-phase-preview__title">{{ flow.summary }}</div>
-              <div class="create-phase-preview__meta">默认流向：{{ flow.fallback }}</div>
+                class="textarea create-short-textarea"
+                rows="8"
+                placeholder='例如：{"phases":[{"id":"phase_1_opening","label":"开场","nextPhaseIds":["phase_2_user"]}]}'
+              ></textarea>
             </div>
-          </div>
-          <div v-if="runtimeOutlinePreview?.phases?.length" class="create-phase-preview">
-            <div class="create-card-title create-card-title--sub">阶段详情</div>
             <div
-              v-for="phase in runtimeOutlinePreview.phases"
-              :key="phase.id"
-              class="create-phase-preview__item"
+              v-if="runtimeOutlinePreview?.phases?.length"
+              class="create-phase-preview"
+              style="max-height: 220px; overflow-y: auto;"
             >
-              <div class="create-phase-preview__title">{{ phase.label }}</div>
-              <div class="create-phase-preview__meta">ID：{{ phase.id }}</div>
-              <div class="create-phase-preview__meta">阶段类型：{{ phase.kind || "scene" }}</div>
-              <div class="create-phase-preview__meta">允许角色：{{ phase.allowedSpeakers.join(" / ") || "未限制" }}</div>
-              <div class="create-phase-preview__meta">下一阶段：{{ phase.nextPhaseIds.join(" -> ") || "顺序回退" }}</div>
-              <div class="create-phase-preview__meta">默认下一阶段：{{ phase.defaultNextPhaseId || "顺序回退" }}</div>
-              <div class="create-phase-preview__meta">阶段前置：{{ phase.requiredEventIds.join(" / ") || "无" }}</div>
-              <div class="create-phase-preview__meta">完成事件：{{ phase.completionEventIds.join(" / ") || "无" }}</div>
-              <div class="create-phase-preview__meta">推进信号：{{ phase.advanceSignals.join(" / ") || "无" }}</div>
-              <div class="create-phase-preview__meta">关联结果：{{ phase.relatedFixedEventIds.join(" / ") || "无" }}</div>
+              <div class="create-card-title create-card-title--sub">阶段关系图</div>
+              <div
+                v-for="flow in runtimePhaseFlowPreview"
+                :key="`${flow.id}_flow`"
+                class="create-phase-preview__item"
+              >
+                <div class="create-phase-preview__title">{{ flow.summary }}</div>
+                <div class="create-phase-preview__meta">默认流向：{{ flow.fallback }}</div>
+              </div>
             </div>
-          </div>
-          <div v-if="runtimeOutlinePreview?.userNodes?.length" class="create-phase-preview">
-            <div class="create-card-title create-card-title--sub">用户节点</div>
             <div
-              v-for="node in runtimeOutlinePreview.userNodes"
-              :key="node.id"
-              class="create-phase-preview__item"
+              v-if="runtimeOutlinePreview?.phases?.length"
+              class="create-phase-preview"
+              style="max-height: 260px; overflow-y: auto;"
             >
-              <div class="create-phase-preview__title">{{ node.goal }}</div>
-              <div class="create-phase-preview__meta">ID：{{ node.id }}</div>
-              <div class="create-phase-preview__meta">提示角色：{{ node.promptRole || "系统" }}</div>
+              <div class="create-card-title create-card-title--sub">阶段详情</div>
+              <div
+                v-for="phase in runtimeOutlinePreview.phases"
+                :key="phase.id"
+                class="create-phase-preview__item"
+              >
+                <div class="create-phase-preview__title">{{ phase.label }}</div>
+                <div class="create-phase-preview__meta">ID：{{ phase.id }}</div>
+                <div class="create-phase-preview__meta">阶段类型：{{ phase.kind || "scene" }}</div>
+                <div class="create-phase-preview__meta">允许角色：{{ phase.allowedSpeakers.join(" / ") || "未限制" }}</div>
+                <div class="create-phase-preview__meta">下一阶段：{{ phase.nextPhaseIds.join(" -> ") || "顺序回退" }}</div>
+                <div class="create-phase-preview__meta">默认下一阶段：{{ phase.defaultNextPhaseId || "顺序回退" }}</div>
+                <div class="create-phase-preview__meta">阶段前置：{{ phase.requiredEventIds.join(" / ") || "无" }}</div>
+                <div class="create-phase-preview__meta">完成事件：{{ phase.completionEventIds.join(" / ") || "无" }}</div>
+                <div class="create-phase-preview__meta">推进信号：{{ phase.advanceSignals.join(" / ") || "无" }}</div>
+                <div class="create-phase-preview__meta">关联结果：{{ phase.relatedFixedEventIds.join(" / ") || "无" }}</div>
+              </div>
             </div>
-          </div>
-          <div v-if="runtimeOutlinePreview?.fixedEvents?.length" class="create-phase-preview">
-            <div class="create-card-title create-card-title--sub">固定事件</div>
+            <div v-if="runtimeOutlinePreview?.userNodes?.length" class="create-phase-preview">
+              <div class="create-card-title create-card-title--sub">用户节点</div>
+              <div
+                v-for="node in runtimeOutlinePreview.userNodes"
+                :key="node.id"
+                class="create-phase-preview__item"
+              >
+                <div class="create-phase-preview__title">{{ node.goal }}</div>
+                <div class="create-phase-preview__meta">ID：{{ node.id }}</div>
+                <div class="create-phase-preview__meta">提示角色：{{ node.promptRole || "系统" }}</div>
+              </div>
+            </div>
+            <div v-if="runtimeOutlinePreview?.fixedEvents?.length" class="create-phase-preview">
+              <div class="create-card-title create-card-title--sub">固定事件</div>
+              <div
+                v-for="event in runtimeOutlinePreview.fixedEvents"
+                :key="event.id"
+                class="create-phase-preview__item"
+              >
+                <div class="create-phase-preview__title">{{ event.label }}</div>
+                <div class="create-phase-preview__meta">ID：{{ event.id }}</div>
+              </div>
+            </div>
             <div
-              v-for="event in runtimeOutlinePreview.fixedEvents"
-              :key="event.id"
-              class="create-phase-preview__item"
+              v-if="runtimeOutlinePreview?.endingRules?.success?.length || runtimeOutlinePreview?.endingRules?.failure?.length || runtimeOutlinePreview?.endingRules?.nextChapterId"
+              class="create-phase-preview"
             >
-              <div class="create-phase-preview__title">{{ event.label }}</div>
-              <div class="create-phase-preview__meta">ID：{{ event.id }}</div>
-            </div>
-          </div>
-          <div
-            v-if="runtimeOutlinePreview?.endingRules?.success?.length || runtimeOutlinePreview?.endingRules?.failure?.length || runtimeOutlinePreview?.endingRules?.nextChapterId"
-            class="create-phase-preview"
-          >
-            <div class="create-card-title create-card-title--sub">章节结算</div>
-            <div class="create-phase-preview__item">
-              <div class="create-phase-preview__meta">成功条件：{{ runtimeOutlinePreview.endingRules.success.join(" / ") || "无" }}</div>
-              <div class="create-phase-preview__meta">失败条件：{{ runtimeOutlinePreview.endingRules.failure.join(" / ") || "无" }}</div>
-              <div class="create-phase-preview__meta">下一章节：{{ runtimeOutlinePreview.endingRules.nextChapterId || "无" }}</div>
+              <div class="create-card-title create-card-title--sub">章节结算</div>
+              <div class="create-phase-preview__item">
+                <div class="create-phase-preview__meta">成功条件：{{ runtimeOutlinePreview.endingRules.success.join(" / ") || "无" }}</div>
+                <div class="create-phase-preview__meta">失败条件：{{ runtimeOutlinePreview.endingRules.failure.join(" / ") || "无" }}</div>
+                <div class="create-phase-preview__meta">下一章节：{{ runtimeOutlinePreview.endingRules.nextChapterId || "无" }}</div>
+              </div>
             </div>
           </div>
         </div>

@@ -24,6 +24,7 @@ import {
   SessionItem,
   SessionNarrativeResult,
   SessionOrchestrationResult,
+  StoryRuntimeConfig,
   StoryRole,
   VoiceBindingDraft,
   VoiceMixItem,
@@ -83,6 +84,20 @@ type RuntimeChatTraceItem = {
 
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const RUNTIME_CHAT_STORAGE_LIMIT = 24;
+const DEBUG_REVISIT_STORAGE_KEY = "toonflow.debugRevisit";
+const DEBUG_REVISIT_LIMIT = 5;
+
+type DebugRevisitSnapshot = {
+  conversationId: string;
+  messageId: number;
+  chapterId: number | null;
+  chapterTitle: string;
+  endDialog: string | null;
+  endDialogDetail: string;
+  capturedAt: number;
+  state: Record<string, unknown>;
+  messages: MessageItem[];
+};
 
 function storageGet(key: string, fallback = ""): string {
   try {
@@ -325,9 +340,43 @@ function resolveMediaUrl(baseUrl: string, input: string): string {
 function asUiErrorMessage(error: unknown, fallback = "未知错误"): string {
   if (error instanceof Error) {
     const text = String(error.message || "").trim();
-    if (text) return text;
+    if (text) {
+      if (/^(编排师|角色发言|记忆管理)对接的模型异常[:：]/.test(text)) {
+        return text;
+      }
+      const normalized = text.toLowerCase();
+      if (
+        normalized.includes("insufficient account balance")
+        || normalized.includes("insufficient_balance")
+        || normalized.includes("insufficient_user_quota")
+        || normalized.includes("quota exceeded")
+        || normalized.includes("余额不足")
+        || normalized.includes("额度不足")
+        || normalized.includes("配额不足")
+        || normalized.includes("剩余额度")
+      ) {
+        return "当前模型余额不足，请充值或切换模型。";
+      }
+      return text;
+    }
   }
   const text = String(error || "").trim();
+  if (/^(编排师|角色发言|记忆管理)对接的模型异常[:：]/.test(text)) {
+    return text;
+  }
+  const normalized = text.toLowerCase();
+  if (
+    normalized.includes("insufficient account balance")
+    || normalized.includes("insufficient_balance")
+    || normalized.includes("insufficient_user_quota")
+    || normalized.includes("quota exceeded")
+    || normalized.includes("余额不足")
+    || normalized.includes("额度不足")
+    || normalized.includes("配额不足")
+    || normalized.includes("剩余额度")
+  ) {
+    return "当前模型余额不足，请充值或切换模型。";
+  }
   return text || fallback;
 }
 
@@ -361,6 +410,14 @@ function safeJsonParse<T>(text: string, fallback: T): T {
     return JSON.parse(text) as T;
   } catch {
     return fallback;
+  }
+}
+
+function cloneDebugSnapshotState<T>(value: T): T {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null)) as T;
+  } catch {
+    return value;
   }
 }
 
@@ -742,9 +799,15 @@ const GAME_MODEL_SLOTS = [
   { key: "storyAsrModel", label: "语音识别", configType: "voice" },
 ] as const;
 
+const STORY_ORCHESTRATOR_PAYLOAD_OPTIONS = [
+  { label: "精简版", value: "compact" as const },
+  { label: "高级版", value: "advanced" as const },
+] as const;
+
 const STORY_PROMPT_CODES = [
   "story-main",
-  "story-orchestrator",
+  "story-orchestrator-compact",
+  "story-orchestrator-advanced",
   "story-speaker",
   "story-memory",
   "story-chapter",
@@ -838,8 +901,12 @@ function createToonflowStore() {
     debugChapterId: null as number | null,
     debugChapterTitle: "",
     debugRuntimeState: {} as Record<string, unknown>,
+    debugLatestPlan: null as DebugNarrativePlan | null,
     debugStatePreview: "{}",
     debugEndDialog: null as string | null,
+    debugEndDialogDetail: "",
+    debugRevisitConversationId: "",
+    debugRevisitSnapshots: [] as DebugRevisitSnapshot[],
     debugLoading: false,
     debugLoadingStage: "",
     messageReactions: safeJsonParse(storageGet("toonflow.messageReactions", "{}"), {} as Record<string, string>),
@@ -849,9 +916,195 @@ function createToonflowStore() {
   let runtimeRetrying = false;
   let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
   let continueSessionNarrativePromise: Promise<void> = Promise.resolve();
+  let continueDebugNarrativePromise: Promise<boolean> | null = null;
   const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
+  let debugMessageSeed = Date.now();
+
+  function nextDebugMessageId() {
+    debugMessageSeed += 1;
+    return debugMessageSeed;
+  }
+
+  function loadAllDebugRevisitStorage() {
+    return safeJsonParse<Record<string, DebugRevisitSnapshot[]>>(
+      storageGet(DEBUG_REVISIT_STORAGE_KEY, "{}"),
+      {},
+    );
+  }
+
+  function persistAllDebugRevisitStorage(input: Record<string, DebugRevisitSnapshot[]>) {
+    storageSet(DEBUG_REVISIT_STORAGE_KEY, JSON.stringify(input));
+  }
+
+  function loadDebugRevisitSnapshots(conversationId: string) {
+    const key = String(conversationId || "").trim();
+    if (!key) return [] as DebugRevisitSnapshot[];
+    const stored = loadAllDebugRevisitStorage()[key];
+    if (!Array.isArray(stored)) return [] as DebugRevisitSnapshot[];
+    return stored
+      .map((item) => ({
+        conversationId: key,
+        messageId: Number(item?.messageId || 0),
+        chapterId: Number.isFinite(Number(item?.chapterId)) ? Number(item?.chapterId) : null,
+        chapterTitle: String(item?.chapterTitle || "").trim(),
+        endDialog: String(item?.endDialog || "").trim() || null,
+        endDialogDetail: String(item?.endDialogDetail || "").trim(),
+        capturedAt: Number(item?.capturedAt || 0),
+        state: cloneDebugSnapshotState(item?.state || {}) as Record<string, unknown>,
+        messages: Array.isArray(item?.messages)
+          ? cloneDebugSnapshotState(item.messages).filter((message): message is MessageItem =>
+            Boolean(message && typeof message === "object" && !Array.isArray(message)))
+          : [],
+      }))
+      .filter((item) => item.messageId > 0 && item.messages.length > 0 && item.conversationId)
+      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0));
+  }
+
+  function persistDebugRevisitSnapshots(conversationId: string, snapshots: DebugRevisitSnapshot[]) {
+    const key = String(conversationId || "").trim();
+    if (!key) return;
+    const next = loadAllDebugRevisitStorage();
+    if (!snapshots.length) {
+      delete next[key];
+    } else {
+      next[key] = snapshots.slice(-DEBUG_REVISIT_LIMIT).map((item) => ({
+        ...item,
+        conversationId: key,
+        state: cloneDebugSnapshotState(item.state || {}) as Record<string, unknown>,
+        messages: cloneDebugSnapshotState(item.messages || []),
+      }));
+    }
+    persistAllDebugRevisitStorage(next);
+  }
+
+  function syncDebugRevisitSnapshotsFromStorage() {
+    if (!state.debugMode) {
+      state.debugRevisitConversationId = "";
+      state.debugRevisitSnapshots = [];
+      return;
+    }
+    const conversationId = runtimeConversationId();
+    state.debugRevisitConversationId = conversationId;
+    state.debugRevisitSnapshots = loadDebugRevisitSnapshots(conversationId);
+  }
+
+  function clearDebugRevisitSnapshots() {
+    if (state.debugRevisitConversationId) {
+      persistDebugRevisitSnapshots(state.debugRevisitConversationId, []);
+    }
+    state.debugRevisitConversationId = "";
+    state.debugRevisitSnapshots = [];
+  }
+
+  function normalizeDebugIncomingMessages(messages: MessageItem[], existingMessages: MessageItem[] = []) {
+    const usedIds = new Set<number>(
+      existingMessages
+        .map((item) => Number(item.id || 0))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    );
+    return messages.map((message) => {
+      const next = cloneDebugSnapshotState(message);
+      let messageId = Number(next?.id || 0);
+      if (!Number.isFinite(messageId) || messageId <= 0 || usedIds.has(messageId)) {
+        messageId = nextDebugMessageId();
+      }
+      usedIds.add(messageId);
+      return {
+        ...next,
+        id: messageId,
+        createTime: Number(next?.createTime || 0) || Date.now(),
+      } as MessageItem;
+    });
+  }
+
+  function recordDebugRevisitSnapshot(message: MessageItem | null | undefined) {
+    if (!state.debugMode || !message) return;
+    const messageId = Number(message.id || 0);
+    if (!Number.isFinite(messageId) || messageId <= 0) return;
+    syncDebugRevisitSnapshotsFromStorage();
+    const conversationId = state.debugRevisitConversationId || runtimeConversationId();
+    if (!conversationId) return;
+    const nextSnapshot: DebugRevisitSnapshot = {
+      conversationId,
+      messageId,
+      chapterId: typeof state.debugChapterId === "number" ? state.debugChapterId : null,
+      chapterTitle: String(state.debugChapterTitle || "").trim(),
+      endDialog: state.debugEndDialog || null,
+      endDialogDetail: String(state.debugEndDialogDetail || "").trim(),
+      capturedAt: Date.now(),
+      state: cloneDebugSnapshotState(state.debugRuntimeState || {}) as Record<string, unknown>,
+      messages: normalizeDebugIncomingMessages(
+        stripRuntimeRetryMessages(state.messages)
+          .filter((item) => !isStreamingRuntimeMessage(item))
+          .map((item) => cloneDebugSnapshotState(item)),
+      ),
+    };
+    const nextSnapshots = [
+      ...state.debugRevisitSnapshots.filter((item) => Number(item.messageId || 0) !== messageId),
+      nextSnapshot,
+    ]
+      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0))
+      .slice(-DEBUG_REVISIT_LIMIT);
+    state.debugRevisitConversationId = conversationId;
+    state.debugRevisitSnapshots = nextSnapshots;
+    persistDebugRevisitSnapshots(conversationId, nextSnapshots);
+  }
+
+  function canRevisitDebugMessage(message: MessageItem | null | undefined) {
+    if (!state.debugMode || !message || isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
+    syncDebugRevisitSnapshotsFromStorage();
+    const messageId = Number(message.id || 0);
+    return Number.isFinite(messageId) && messageId > 0
+      && state.debugRevisitSnapshots.some((item) => Number(item.messageId || 0) === messageId);
+  }
+
+  function canRevisitSessionMessage(message: MessageItem | null | undefined) {
+    if (state.debugMode || state.sessionViewMode === "playback" || !state.currentSessionId || !message) return false;
+    if (isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
+    const messageId = Number(message.id || 0);
+    if (!Number.isFinite(messageId) || messageId <= 0) return false;
+    const revisitData = message.revisitData;
+    return Boolean(revisitData && typeof revisitData === "object");
+  }
+
+  async function revisitDebugMessage(messageId: number) {
+    if (!state.debugMode) {
+      throw new Error("当前不是章节调试模式");
+    }
+    syncDebugRevisitSnapshotsFromStorage();
+    const target = state.debugRevisitSnapshots.find((item) => Number(item.messageId || 0) === Number(messageId || 0));
+    if (!target) {
+      throw new Error("没有找到这句台词的回溯快照");
+    }
+    state.debugRuntimeState = cloneDebugSnapshotState(target.state || {}) as Record<string, unknown>;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    state.debugLatestPlan = null;
+    state.debugChapterId = typeof target.chapterId === "number" && target.chapterId > 0 ? target.chapterId : state.debugChapterId;
+    state.debugChapterTitle = target.chapterTitle || state.debugChapterTitle;
+    state.debugEndDialog = target.endDialog || null;
+    state.debugEndDialogDetail = target.endDialogDetail || "";
+    state.messages = normalizeDebugIncomingMessages(cloneDebugSnapshotState(target.messages || []));
+    const validMessageIds = new Set(state.messages.map((item) => Number(item.id || 0)).filter((id) => Number.isFinite(id) && id > 0));
+    const nextSnapshots = state.debugRevisitSnapshots
+      .filter((item) => validMessageIds.has(Number(item.messageId || 0)))
+      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0));
+    state.debugRevisitSnapshots = nextSnapshots;
+    persistDebugRevisitSnapshots(target.conversationId, nextSnapshots);
+    syncLatestRuntimeTurnStatusWithState();
+    syncRuntimeChatTrace();
+    state.notice = "已回溯到这句台词，可继续调试编排";
+  }
+
+  async function revisitSessionMessage(messageId: number) {
+    if (!state.currentSessionId) {
+      throw new Error("当前没有可回溯的会话");
+    }
+    await api.revisitMessage(state.currentSessionId, messageId);
+    await refreshCurrentSession();
+    state.notice = "已回溯到这句台词，可继续编排";
+  }
 
   async function requestSessionList(worldId?: number): Promise<SessionItem[]> {
     try {
@@ -1211,6 +1464,42 @@ function createToonflowStore() {
     }), true);
   }
 
+  function syncLatestRuntimeTurnStatusWithState() {
+    const latest = conversationMessages().filter((message) => !isRuntimeRetryMessage(message)).slice(-1)[0] || null;
+    if (!latest) return;
+    if (String(latest.roleType || "").trim() === "player") return;
+    if (isStreamingRuntimeMessage(latest)) return;
+    const turnState = runtimeTurnStateRecord();
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    const expectedNextRole = canPlayerSpeakNow
+      ? "用户"
+      : String(turnState["expectedRole"] || "").trim() || "当前角色";
+    const expectedNextRoleType = canPlayerSpeakNow
+      ? "player"
+      : String(turnState["expectedRoleType"] || "").trim() || "npc";
+    const nextStatus: RuntimeLineStatus = canPlayerSpeakNow ? "waiting_player" : "waiting_next";
+    const currentMeta = runtimeMetaRecord(latest.meta);
+    const currentStatus = runtimeMessageStatus(latest);
+    const currentNextRole = String(currentMeta?.["nextRole"] || "").trim();
+    const currentNextRoleType = String(currentMeta?.["nextRoleType"] || "").trim();
+    if (
+      currentStatus === nextStatus
+      && currentNextRole === expectedNextRole
+      && currentNextRoleType === expectedNextRoleType
+    ) {
+      return;
+    }
+    updateMessageById(latest.id, (message) => ({
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        streaming: false,
+        status: nextStatus,
+        nextRole: expectedNextRole,
+        nextRoleType: expectedNextRoleType,
+      }),
+    }), true);
+  }
+
   function createRuntimeRetryToken() {
     runtimeRetrySeed += 1;
     return `runtime_retry_${Date.now()}_${runtimeRetrySeed}`;
@@ -1490,6 +1779,7 @@ function createToonflowStore() {
         true,
       );
     }
+    syncLatestRuntimeTurnStatusWithState();
   }
 
   function applySessionNarrativeResult(result: SessionNarrativeResult) {
@@ -1618,6 +1908,7 @@ function createToonflowStore() {
 
   function clearRuntime() {
     clearRuntimeRetryState();
+    clearDebugRevisitSnapshots();
     state.userName = "";
     state.userId = 0;
     state.projects = [];
@@ -2552,6 +2843,10 @@ function createToonflowStore() {
     return state.settingsAiModelMap.find((item) => item.key === key) || null;
   }
 
+  function storyOrchestratorPayloadMode(): "compact" | "advanced" {
+    return settingsModelBinding("storyOrchestratorModel")?.payloadMode === "advanced" ? "advanced" : "compact";
+  }
+
   function normalizeModelHintText(value: string | null | undefined): string {
     return String(value || "").trim().toLowerCase();
   }
@@ -3057,6 +3352,15 @@ function createToonflowStore() {
     await bindGameModel(key, recommendation.id);
   }
 
+  async function saveStoryOrchestratorPayloadMode(mode: "compact" | "advanced") {
+    const storyOrchestratorPayloadMode = mode === "advanced" ? "advanced" : "compact";
+    await api.saveStoryRuntimeConfig({
+      storyOrchestratorPayloadMode,
+    } satisfies StoryRuntimeConfig);
+    await ensureSettingsPanelData(true);
+    state.notice = `编排师运行模式已切换为${storyOrchestratorPayloadMode === "advanced" ? "高级版" : "精简版"}`;
+  }
+
   async function addManagedModelConfig(payload: ModelConfigPayload) {
     await api.addModelConfig(payload);
     await ensureSettingsPanelData(true);
@@ -3145,6 +3449,7 @@ function createToonflowStore() {
         apiKey: String(config.apiKey || "").trim(),
         baseURL: String(config.baseUrl || "").trim() || undefined,
         manufacturer: String(config.manufacturer || "").trim(),
+        reasoningEffort: (String(config.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high",
       });
       return {
         kind: "text",
@@ -3635,7 +3940,7 @@ function createToonflowStore() {
     primeStoryEditorPersistState();
   }
 
-  async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve") {
+  async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve", reloadAfter = true) {
     const requestToken = storyEditorContextToken;
     const targetStatus = statusMode === "published"
       ? "published"
@@ -3659,7 +3964,9 @@ function createToonflowStore() {
     }
     state.worldId = result.id;
     state.worldPublishStatus = result.publishStatus || result.settings?.publishStatus || targetStatus;
-    await reloadWorldsAfterSave();
+    if (reloadAfter) {
+      await reloadWorldsAfterSave();
+    }
     return result;
   }
 
@@ -3668,6 +3975,7 @@ function createToonflowStore() {
     statusOverride?: "draft" | "published",
     worldStatusMode: SaveWorldStatusMode = "preserve",
     persistWorldAfter = true,
+    reloadAfterPersist = true,
   ) {
     const requestToken = storyEditorContextToken;
     if (!state.worldId) {
@@ -3730,8 +4038,10 @@ function createToonflowStore() {
       state.notice = "章节已保存";
     }
     if (persistWorldAfter) {
-      await saveWorldOnly(worldStatusMode);
-      await reloadWorldsAfterSave();
+      await saveWorldOnly(worldStatusMode, false);
+      if (reloadAfterPersist) {
+        await reloadWorldsAfterSave();
+      }
     }
     primeStoryEditorPersistState();
     return saved;
@@ -3928,6 +4238,7 @@ function createToonflowStore() {
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
     clearRuntimeRetryState();
+    clearDebugRevisitSnapshots();
     state.debugMode = false;
     state.debugLoading = false;
     state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
@@ -4002,25 +4313,72 @@ function createToonflowStore() {
     void refreshSessionListState();
   }
 
+  function isReadyDebugEventDigest(input: unknown) {
+    if (!input || typeof input !== "object") return false;
+    const record = input as Record<string, unknown>;
+    const summary = String(record.eventSummary || "").trim();
+    const facts = Array.isArray(record.eventFacts) ? record.eventFacts.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const memorySummary = String(record.memorySummary || "").trim();
+    const memoryFacts = Array.isArray(record.memoryFacts) ? record.memoryFacts.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    const eventKind = String(record.eventKind || "").trim();
+    const eventStatus = String(record.eventStatus || "").trim();
+    return Boolean(summary || facts.length || memorySummary || memoryFacts.length || (eventKind && eventKind !== "scene") || (eventStatus && eventStatus !== "idle"));
+  }
+
+  function resolveDebugEventView(result: {
+    state?: Record<string, unknown> | null;
+    currentEventDigest?: RuntimeEventDigestItem | null;
+    eventDigestWindow?: RuntimeEventDigestItem[];
+    eventDigestWindowText?: string;
+  }) {
+    const resultState = (result.state && typeof result.state === "object")
+      ? (result.state as Record<string, unknown>)
+      : {};
+    const stateDigest = resultState.currentEventDigest as RuntimeEventDigestItem | null | undefined;
+    const topDigest = result.currentEventDigest || null;
+    const currentEventDigest = isReadyDebugEventDigest(topDigest)
+      ? topDigest
+      : (stateDigest || topDigest || null);
+    const topWindow = Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [];
+    const stateWindow = Array.isArray(resultState.eventDigestWindow) ? resultState.eventDigestWindow as RuntimeEventDigestItem[] : [];
+    const eventDigestWindow = topWindow.some((item) => isReadyDebugEventDigest(item))
+      ? topWindow
+      : (stateWindow.length ? stateWindow : topWindow);
+    const eventDigestWindowText = String(
+      result.eventDigestWindowText
+      || resultState.eventDigestWindowText
+      || "",
+    );
+    return {
+      currentEventDigest,
+      eventDigestWindow,
+      eventDigestWindowText,
+    };
+  }
+
   function applyDebugOrchestrationResult(
     result: {
       state?: Record<string, unknown> | null;
       chapterId?: number | null;
       chapterTitle?: string | null;
       endDialog?: string | null;
+      endDialogDetail?: string | null;
+      plan?: DebugNarrativePlan | null;
       currentEventDigest?: RuntimeEventDigestItem | null;
       eventDigestWindow?: RuntimeEventDigestItem[];
       eventDigestWindowText?: string;
     },
     fallbackChapter?: ChapterItem | null,
   ) {
+    const eventView = resolveDebugEventView(result);
     state.debugRuntimeState = {
       ...((result.state || {}) as Record<string, unknown>),
-      currentEventDigest: result.currentEventDigest || null,
-      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
-      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+      currentEventDigest: eventView.currentEventDigest,
+      eventDigestWindow: eventView.eventDigestWindow,
+      eventDigestWindowText: eventView.eventDigestWindowText,
     };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    state.debugLatestPlan = result.plan || null;
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
       state.debugChapterId = result.chapterId;
     }
@@ -4032,8 +4390,11 @@ function createToonflowStore() {
       activeChapter?.sort,
     ) || "当前章节";
     state.debugEndDialog = result.endDialog || null;
+    state.debugEndDialogDetail = String(result.endDialogDetail || "").trim();
     state.sessionDetail = null;
     state.activeTab = "play";
+    syncDebugRevisitSnapshotsFromStorage();
+    syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
   }
 
@@ -4058,11 +4419,60 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
     fallbackChapter?: ChapterItem | null,
   ) {
+    const eventView = resolveDebugEventView(result);
     state.debugRuntimeState = {
       ...((result.state || {}) as Record<string, unknown>),
-      currentEventDigest: result.currentEventDigest || null,
-      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
-      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+      currentEventDigest: eventView.currentEventDigest,
+      eventDigestWindow: eventView.eventDigestWindow,
+      eventDigestWindowText: eventView.eventDigestWindowText,
+    };
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    state.debugLatestPlan = null;
+    if (typeof result.chapterId === "number" && result.chapterId > 0) {
+      state.debugChapterId = result.chapterId;
+    }
+    const activeChapter = state.chapters.find((item) => item.id === (result.chapterId ?? state.debugChapterId))
+      || fallbackChapter
+      || null;
+    state.debugChapterTitle = normalizeDisplayChapterTitle(
+      result.chapterTitle || activeChapter?.title || state.chapterTitle,
+      activeChapter?.sort,
+    ) || "当前章节";
+    state.debugEndDialog = result.endDialog || null;
+    state.debugEndDialogDetail = String(result.endDialogDetail || "").trim();
+    const appendedMessages = normalizeDebugIncomingMessages(
+      stripKnownDebugHistory(historyMessages, result.messages || []),
+      historyMessages,
+    );
+    state.messages = [...historyMessages, ...appendedMessages];
+    state.sessionDetail = null;
+    state.activeTab = "play";
+    syncDebugRevisitSnapshotsFromStorage();
+    appendedMessages.forEach((message) => recordDebugRevisitSnapshot(message));
+    syncLatestRuntimeTurnStatusWithState();
+    syncRuntimeChatTrace();
+  }
+
+  function applyDebugStreamState(
+    result: {
+      state?: Record<string, unknown> | null;
+      chapterId?: number | null;
+      chapterTitle?: string | null;
+      endDialog?: string | null;
+      endDialogDetail?: string | null;
+      currentEventDigest?: RuntimeEventDigestItem | null;
+      eventDigestWindow?: RuntimeEventDigestItem[];
+      eventDigestWindowText?: string;
+    },
+    fallbackChapter?: ChapterItem | null,
+  ) {
+    if (!result.state || typeof result.state !== "object") return;
+    const eventView = resolveDebugEventView(result);
+    state.debugRuntimeState = {
+      ...((result.state || {}) as Record<string, unknown>),
+      currentEventDigest: eventView.currentEventDigest,
+      eventDigestWindow: eventView.eventDigestWindow,
+      eventDigestWindowText: eventView.eventDigestWindowText,
     };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
@@ -4076,9 +4486,9 @@ function createToonflowStore() {
       activeChapter?.sort,
     ) || "当前章节";
     state.debugEndDialog = result.endDialog || null;
-    state.messages = [...historyMessages, ...stripKnownDebugHistory(historyMessages, result.messages || [])];
-    state.sessionDetail = null;
-    state.activeTab = "play";
+    state.debugEndDialogDetail = String(result.endDialogDetail || "").trim();
+    syncDebugRevisitSnapshotsFromStorage();
+    syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
   }
 
@@ -4087,6 +4497,19 @@ function createToonflowStore() {
       ? (runtimeState as Record<string, any>).turnState
       : null) as Record<string, any> | null;
     return turnState?.canPlayerSpeak !== false;
+  }
+
+  function shouldYieldToUserFromDebugPlan(plan: DebugNarrativePlan | null | undefined) {
+    if (!plan) return false;
+    const nextRoleType = String(plan.nextRoleType || "").trim().toLowerCase();
+    const roleType = String(plan.roleType || "").trim().toLowerCase();
+    return plan.awaitUser === true || nextRoleType === "player";
+  }
+
+  function shouldStreamDebugPlan(plan: DebugNarrativePlan | null | undefined) {
+    if (!plan) return false;
+    const roleType = String(plan.roleType || "").trim().toLowerCase();
+    return Boolean(String(plan.role || "").trim()) && roleType !== "player";
   }
 
   async function streamDebugPlanOrFallback(
@@ -4160,6 +4583,28 @@ function createToonflowStore() {
               status: "generated",
             }),
           }), true);
+          applyDebugStreamState({
+            state: (event.data?.state || null) as Record<string, unknown> | null,
+            chapterId: Number(event.data?.chapterId || 0) || null,
+            chapterTitle: String(event.data?.chapterTitle || ""),
+            endDialog: String(event.data?.endDialog || "").trim() || null,
+            endDialogDetail: String(event.data?.endDialogDetail || "").trim() || null,
+            currentEventDigest: (event.data?.currentEventDigest || null) as RuntimeEventDigestItem | null,
+            eventDigestWindow: Array.isArray(event.data?.eventDigestWindow) ? event.data?.eventDigestWindow as RuntimeEventDigestItem[] : [],
+            eventDigestWindowText: String(event.data?.eventDigestWindowText || ""),
+          }, state.chapters.find((item) => item.id === state.debugChapterId) || null);
+          recordDebugRevisitSnapshot({
+            id: streamingMessage.id,
+            role: String(finalMessage.role || streamingMessage.role || ""),
+            roleType: String(finalMessage.roleType || streamingMessage.roleType || ""),
+            eventType: String(finalMessage.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
+            content: finalContent,
+            createTime: Number(streamingMessage.createTime || Date.now()),
+            meta: buildRuntimeStreamMeta(streamingMessage.meta, {
+              streaming: false,
+              status: debugCanPlayerSpeakFromState() ? "waiting_player" : "waiting_next",
+            }),
+          });
           return;
         }
         if (event.type === "sentence") {
@@ -4202,9 +4647,10 @@ function createToonflowStore() {
     state?: Record<string, unknown> | null;
   }) {
     if (!result.plan || result.endDialog) return false;
-    if (debugCanPlayerSpeakFromState((result.state || state.debugRuntimeState) as Record<string, unknown>)) {
+    if (debugCanPlayerSpeakFromState(state.debugRuntimeState as Record<string, unknown>)) {
       return false;
     }
+    if (shouldYieldToUserFromDebugPlan(result.plan)) return false;
     const eventType = String(result.plan.eventType || "").trim();
     return eventType === "on_opening" || Boolean(String(result.plan.presetContent || "").trim());
   }
@@ -4227,25 +4673,31 @@ function createToonflowStore() {
     state.debugWorldName = state.worldName || "";
     state.debugWorldIntro = state.worldIntro || "";
     state.debugRuntimeState = {};
+    state.debugLatestPlan = null;
+    debugMessageSeed = Date.now();
+    state.debugRevisitConversationId = "";
+    state.debugRevisitSnapshots = [];
     state.messages = [];
+    state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
     state.sessionDetail = null;
-    state.activeTab = "play";
     state.notice = "进入调试中...";
+    let debugOverlayReleased = false;
+    // 先把调试界面骨架放出来，后续首轮编排与台词生成走局部状态。
+    const releaseDebugLoading = () => {
+      if (debugOverlayReleased) return;
+      state.debugLoading = false;
+      state.debugLoadingStage = "";
+      debugOverlayReleased = true;
+    };
     try {
       state.debugLoadingStage = "保存草稿";
-      await saveWorldOnly("preserve");
+      await saveWorldOnly("preserve", false);
       if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
-        await saveChapterDraft(false, state.worldPublishStatus === "published" ? "published" : "draft");
+        await saveChapterDraft(false, state.worldPublishStatus === "published" ? "published" : "draft", "preserve", false, false);
       }
+      primeStoryEditorPersistState();
       state.debugLoadingStage = "创建这次会话环境";
-      if (state.worldId) {
-        state.chapters = await api.getChapter(state.worldId).catch(() => state.chapters);
-        if (state.selectedChapterId) {
-          await selectChapter(state.selectedChapterId, false);
-        }
-      }
-      await reloadWorldsAfterSave();
 
       let preferredDebugChapterId: number | null = state.selectedChapterId;
       const editorChapter = buildEditorChapterSnapshot();
@@ -4268,22 +4720,46 @@ function createToonflowStore() {
         state.activeTab = "play";
         return;
       }
-      state.debugLoadingStage = "读取记忆";
-      const result = await api.orchestrateDebug({
+      state.activeTab = "play";
+      releaseDebugLoading();
+      state.sessionRuntimeStage = "读取记忆";
+      const introResult = await api.introduceDebug({
         worldId: state.worldId,
         chapterId: chapter.id,
         state: state.debugRuntimeState,
         messages: [],
       });
-      state.debugLoadingStage = "准备剧情编排完毕";
+      applyDebugOrchestrationResult(introResult, chapter);
+      if (introResult.plan && shouldStreamDebugPlan(introResult.plan)) {
+        state.sessionRuntimeStage = "生成开场白";
+        await streamDebugPlan(introResult.plan, []);
+        if (state.sessionRuntimeStage === "生成开场白") {
+          state.sessionRuntimeStage = "";
+        }
+      }
+      const result = await api.orchestrateDebug({
+        worldId: state.worldId,
+        chapterId: chapter.id,
+        state: state.debugRuntimeState,
+        messages: conversationMessages(),
+      });
+      state.sessionRuntimeStage = "准备剧情编排";
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, chapter);
-      state.debugLoading = false;
-      state.debugLoadingStage = "";
       if (result.plan) {
-        await streamDebugPlan(result.plan, []);
+        if (shouldStreamDebugPlan(result.plan)) {
+          state.sessionRuntimeStage = "生成首轮内容";
+          await streamDebugPlan(result.plan, []);
+          if (state.sessionRuntimeStage === "生成首轮内容") {
+            state.sessionRuntimeStage = "";
+          }
+        }
         if (shouldAutoContinueDebugAfterStart(result)) {
-          await performContinueDebugNarrative();
+          state.sessionRuntimeStage = "推进到用户回合";
+          await continueDebugNarrative();
+          if (state.sessionRuntimeStage === "推进到用户回合") {
+            state.sessionRuntimeStage = "";
+          }
         }
       } else {
         state.messages = [];
@@ -4291,6 +4767,9 @@ function createToonflowStore() {
     } finally {
       state.debugLoading = false;
       state.debugLoadingStage = "";
+      if (state.sessionRuntimeStage === "生成首轮内容" || state.sessionRuntimeStage === "推进到用户回合") {
+        state.sessionRuntimeStage = "";
+      }
     }
   }
 
@@ -4327,11 +4806,12 @@ function createToonflowStore() {
       });
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
-      if (result.plan) {
+      const shouldYieldToUser = shouldYieldToUserFromDebugPlan(result.plan);
+      if (result.plan && shouldStreamDebugPlan(result.plan)) {
         await streamDebugPlanOrFallback(result.plan, history);
       }
       const canPlayerSpeak = debugCanPlayerSpeakFromState();
-      if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak) {
+      if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak || shouldYieldToUser) {
         advanced = true;
         break;
       }
@@ -4342,22 +4822,30 @@ function createToonflowStore() {
   }
 
   async function continueDebugNarrative() {
-    clearRuntimeRetryState();
-    try {
-      await performContinueDebugNarrative();
-      return true;
-    } catch (error) {
-      if (isBenignRuntimeCancellation(error)) {
+    if (continueDebugNarrativePromise) {
+      return continueDebugNarrativePromise;
+    }
+    continueDebugNarrativePromise = (async () => {
+      clearRuntimeRetryState();
+      try {
+        await performContinueDebugNarrative();
+        return true;
+      } catch (error) {
+        if (isBenignRuntimeCancellation(error)) {
+          return false;
+        }
+        showRuntimeRetryMessage(
+          `继续调试失败：${asUiErrorMessage(error)}`,
+          createRuntimeRetryRunner(performContinueDebugNarrative, {
+            formatErrorMessage: (message) => `继续调试失败：${message}`,
+          }),
+        );
         return false;
       }
-      showRuntimeRetryMessage(
-        `继续调试失败：${asUiErrorMessage(error)}`,
-        createRuntimeRetryRunner(performContinueDebugNarrative, {
-          formatErrorMessage: (message) => `继续调试失败：${message}`,
-        }),
-      );
-      return false;
-    }
+    })().finally(() => {
+      continueDebugNarrativePromise = null;
+    });
+    return continueDebugNarrativePromise;
   }
 
   async function performDebugPlayerMessage(content: string, appendPlayerMessage: boolean) {
@@ -4389,7 +4877,7 @@ function createToonflowStore() {
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
-    if (result.plan) {
+    if (result.plan && shouldStreamDebugPlan(result.plan)) {
       await streamDebugPlanOrFallback(result.plan, conversationMessages(), content);
     }
   }
@@ -4655,6 +5143,13 @@ function createToonflowStore() {
       state.messages = state.messages.filter((item) => Number(item.id || 0) !== messageId);
       delete state.messageReactions[String(messageId)];
       restoreDebugPlayerTurnAfterDeletion();
+      syncDebugRevisitSnapshotsFromStorage();
+      const validMessageIds = new Set(state.messages.map((item) => Number(item.id || 0)).filter((id) => Number.isFinite(id) && id > 0));
+      const nextSnapshots = state.debugRevisitSnapshots.filter((item) => validMessageIds.has(Number(item.messageId || 0)));
+      state.debugRevisitSnapshots = nextSnapshots;
+      if (state.debugRevisitConversationId) {
+        persistDebugRevisitSnapshots(state.debugRevisitConversationId, nextSnapshots);
+      }
       syncRuntimeChatTrace();
       state.notice = "已删除上一句用户台词";
       return;
@@ -4742,6 +5237,10 @@ function createToonflowStore() {
     retryRuntimeFailure,
     retryFailedPlayerMessage,
     restoreFailedPlayerMessageForRewrite,
+    canRevisitDebugMessage,
+    canRevisitSessionMessage,
+    revisitDebugMessage,
+    revisitSessionMessage,
     advanceDebugChapterIfNeeded,
     jumpDebugChapter,
     getDebugChapterIndex,
@@ -4768,6 +5267,8 @@ function createToonflowStore() {
     isAdminAccount,
     settingsConfigOptions,
     settingsModelBinding,
+    storyOrchestratorPayloadMode,
+    saveStoryOrchestratorPayloadMode,
     settingsRecommendedModel,
     settingsModelAdvisory,
     currentStoryPromptValue,
@@ -4809,6 +5310,7 @@ function createToonflowStore() {
     appendChapterMention,
     resolveMediaPath,
     GAME_MODEL_SLOTS,
+    STORY_ORCHESTRATOR_PAYLOAD_OPTIONS,
     STORY_PROMPT_CODES,
   };
 

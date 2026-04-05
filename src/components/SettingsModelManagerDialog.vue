@@ -155,6 +155,12 @@ const visibleKeys = reactive<Record<number, boolean>>({});
 const localAvatarMattingStatus = ref<LocalAvatarMattingStatus | null>(null);
 const autodlModelPreset = ref<string>("__custom__");
 const localAvatarMattingInstalling = ref(false);
+const reasoningEffortOptions = [
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+] as const;
 const form = reactive({
   manufacturer: defaultSlotManufacturer(),
   modelType: defaultSlotModelType(),
@@ -165,6 +171,7 @@ const form = reactive({
   outputPricePer1M: 0,
   cacheReadPricePer1M: 0,
   currency: "CNY",
+  reasoningEffort: "minimal" as "minimal" | "low" | "medium" | "high",
 });
 
 const testResult = reactive({
@@ -464,6 +471,7 @@ function openCreate() {
   form.outputPricePer1M = 0;
   form.cacheReadPricePer1M = 0;
   form.currency = "CNY";
+  form.reasoningEffort = "minimal";
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -486,6 +494,7 @@ function openEdit(row: ModelConfigItem) {
   form.outputPricePer1M = normalizePriceInput(row.outputPricePer1M);
   form.cacheReadPricePer1M = normalizePriceInput(row.cacheReadPricePer1M);
   form.currency = String(row.currency || "CNY").trim().toUpperCase() || "CNY";
+  form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high";
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -520,6 +529,7 @@ async function submitEditor() {
         outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
+        reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
       });
     } else {
       await store.addManagedModelConfig({
@@ -533,6 +543,7 @@ async function submitEditor() {
         outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
+        reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
       });
     }
     showEditor.value = false;
@@ -678,6 +689,7 @@ async function confirmBinding() {
                   <div>输入：{{ formatPricePer1M(row.inputPricePer1M, row.currency || 'CNY') }}</div>
                   <div>输出：{{ formatPricePer1M(row.outputPricePer1M, row.currency || 'CNY') }}</div>
                   <div>缓存：{{ formatPricePer1M(row.cacheReadPricePer1M, row.currency || 'CNY') }}</div>
+                  <div>推理：{{ row.reasoningEffort || 'minimal' }}</div>
                 </td>
                 <td>{{ row.createTime ? new Date(row.createTime).toLocaleString("zh-CN", { hour12: false }) : "-" }}</td>
                 <td>
@@ -813,6 +825,13 @@ async function confirmBinding() {
             <label>货币</label>
             <input v-model="form.currency" class="input" type="text" placeholder="默认 CNY" />
             <div class="settings-field-hint">单价单位统一按每 100 万 token 计算，金额日志会按这里的配置实时换算。</div>
+          </div>
+          <div class="field">
+            <label>推理强度</label>
+            <select v-model="form.reasoningEffort" class="select">
+              <option v-for="item in reasoningEffortOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+            </select>
+            <div class="settings-field-hint">默认 minimal。仅文本模型生效，用于支持 reasoning_effort 的兼容接口。</div>
           </div>
         </template>
       </div>
