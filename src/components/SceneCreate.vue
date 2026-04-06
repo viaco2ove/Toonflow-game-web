@@ -1362,5 +1362,28 @@ function cancelRemoveCurrentNpc() {
       @close="closeVoiceDialog"
       @confirm="handleVoiceConfirm"
     />
+
+    <div
+      v-if="store.state.debugLoading"
+      class="modal-backdrop"
+      style="background: rgba(10, 22, 38, 0.62); z-index: 60;"
+    >
+      <div
+        class="modal-panel"
+        style="width: min(320px, calc(100vw - 40px)); border-radius: 20px; background: rgba(19, 39, 64, 0.96); color: #fff;"
+      >
+        <div
+          style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; padding:22px 20px;"
+        >
+          <div
+            style="width: 28px; height: 28px; border-radius: 999px; border: 3px solid rgba(255, 216, 74, 0.28); border-top-color: #ffd84a;"
+          ></div>
+          <div style="font-weight: 800;">进入调试中</div>
+          <div style="font-size: 13px; color: #d5e3f8; text-align:center;">
+            {{ store.state.debugLoadingStage || "正在初始化调试上下文..." }}
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 </template>

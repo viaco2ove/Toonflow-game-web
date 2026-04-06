@@ -272,6 +272,31 @@ export interface DebugOrchestrationResult {
   eventDigestWindowText?: string;
 }
 
+export interface DebugInitResult {
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface StoryInitResult {
+  sessionId: string;
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  opening?: DebugNarrativePlan | null;
+  firstChapter?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
 export interface AiTokenUsageLogItem {
   id: number;
   createTime: number;

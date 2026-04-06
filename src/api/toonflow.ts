@@ -6,6 +6,8 @@ import type {
   AiTokenUsageLogItem,
   AiTokenUsageStatsItem,
   ChapterItem,
+  DebugInitResult,
+  DebugNarrativePlan,
   DebugOrchestrationResult,
   DebugStepResult,
   GeneratedImageResult,
@@ -21,6 +23,7 @@ import type {
   SessionNarrativeResult,
   SessionOrchestrationResult,
   StoryRuntimeConfig,
+  StoryInitResult,
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
@@ -233,6 +236,18 @@ export class ToonflowApi {
 
   orchestrateDebug(payload: Record<string, unknown>) {
     return this.post<DebugOrchestrationResult>("/game/orchestration", payload);
+  }
+
+  initDebug(payload: Record<string, unknown>) {
+    return this.post<DebugInitResult>("/game/initDebug", payload);
+  }
+
+  /**
+   * 统一的游玩模式初始化接口
+   * 合并了 startSession + orchestration 两个接口，减少前端请求次数
+   */
+  initStory(payload: Record<string, unknown>) {
+    return this.post<StoryInitResult>("/game/initStory", payload);
   }
 
   async streamDebugLines(

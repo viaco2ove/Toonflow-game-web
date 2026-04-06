@@ -8,6 +8,7 @@ import {
   AppTab,
   ChapterExtra,
   ChapterItem,
+  DebugOrchestrationResult,
   DebugNarrativePlan,
   DebugStepResult,
   LocalAvatarMattingStatus,
@@ -24,6 +25,7 @@ import {
   SessionItem,
   SessionNarrativeResult,
   SessionOrchestrationResult,
+  StoryInitResult,
   StoryRuntimeConfig,
   StoryRole,
   VoiceBindingDraft,
@@ -85,7 +87,7 @@ type RuntimeChatTraceItem = {
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const RUNTIME_CHAT_STORAGE_LIMIT = 24;
 const DEBUG_REVISIT_STORAGE_KEY = "toonflow.debugRevisit";
-const DEBUG_REVISIT_LIMIT = 5;
+// 调试回溯快照：纯内存存储，无数量上限；localStorage 仅作页面刷新后的恢复缓存（写入时不截断）
 
 type DebugRevisitSnapshot = {
   conversationId: string;
@@ -969,7 +971,7 @@ function createToonflowStore() {
     if (!snapshots.length) {
       delete next[key];
     } else {
-      next[key] = snapshots.slice(-DEBUG_REVISIT_LIMIT).map((item) => ({
+    next[key] = snapshots.map((item) => ({
         ...item,
         conversationId: key,
         state: cloneDebugSnapshotState(item.state || {}) as Record<string, unknown>,
@@ -1045,8 +1047,7 @@ function createToonflowStore() {
       ...state.debugRevisitSnapshots.filter((item) => Number(item.messageId || 0) !== messageId),
       nextSnapshot,
     ]
-      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0))
-      .slice(-DEBUG_REVISIT_LIMIT);
+      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0));
     state.debugRevisitConversationId = conversationId;
     state.debugRevisitSnapshots = nextSnapshots;
     persistDebugRevisitSnapshots(conversationId, nextSnapshots);
@@ -1054,19 +1055,15 @@ function createToonflowStore() {
 
   function canRevisitDebugMessage(message: MessageItem | null | undefined) {
     if (!state.debugMode || !message || isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
-    syncDebugRevisitSnapshotsFromStorage();
     const messageId = Number(message.id || 0);
-    return Number.isFinite(messageId) && messageId > 0
-      && state.debugRevisitSnapshots.some((item) => Number(item.messageId || 0) === messageId);
+    return Number.isFinite(messageId) && messageId > 0;
   }
 
   function canRevisitSessionMessage(message: MessageItem | null | undefined) {
     if (state.debugMode || state.sessionViewMode === "playback" || !state.currentSessionId || !message) return false;
     if (isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
     const messageId = Number(message.id || 0);
-    if (!Number.isFinite(messageId) || messageId <= 0) return false;
-    const revisitData = message.revisitData;
-    return Boolean(revisitData && typeof revisitData === "object");
+    return Number.isFinite(messageId) && messageId > 0;
   }
 
   async function revisitDebugMessage(messageId: number) {
@@ -1719,6 +1716,56 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
+  function applyInitializedSessionDetail(world: WorldItem, result: StoryInitResult) {
+    const initialState = ((result.state || {}) as Record<string, unknown>) || {};
+    const chapterId = Number(result.chapterId || 0) || null;
+    const chapterTitle = String(result.chapterTitle || "").trim();
+    state.currentSessionId = String(result.sessionId || "").trim();
+    state.sessionDetail = {
+      sessionId: state.currentSessionId,
+      title: world.name || "会话",
+      status: "active",
+      chapterId,
+      state: initialState,
+      latestSnapshot: {
+        state: initialState,
+      },
+      world,
+      chapter: chapterId
+        ? {
+          id: chapterId,
+          worldId: world.id,
+          title: chapterTitle || `第 ${Math.max(1, Number(result.chapterId || 1))} 章`,
+        }
+        : null,
+      messages: [],
+      currentEventDigest: result.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
+      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+    };
+    state.messages = [];
+    state.sessionRuntimeStage = "";
+    state.sessionOpenError = "";
+    syncRuntimeChatTrace();
+  }
+
+  function buildInitializedSessionOrchestrationResult(
+    result: StoryInitResult,
+    plan: DebugNarrativePlan | null | undefined,
+  ): SessionOrchestrationResult {
+    return {
+      sessionId: String(result.sessionId || "").trim(),
+      status: "active",
+      chapterId: Number(result.chapterId || 0) || null,
+      expectedRole: String(plan?.nextRole || "").trim(),
+      expectedRoleType: String(plan?.nextRoleType || "").trim(),
+      plan: plan || null,
+      currentEventDigest: result.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
+      eventDigestWindowText: String(result.eventDigestWindowText || ""),
+    };
+  }
+
   function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
     const existingDetail = state.sessionDetail || null;
     state.sessionDetail = {
@@ -1737,6 +1784,12 @@ function createToonflowStore() {
     };
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
+  }
+
+  function shouldStreamSessionPlanFromPlan(plan: DebugNarrativePlan | null | undefined) {
+    if (!plan) return false;
+    const roleType = String(plan.roleType || "").trim().toLowerCase();
+    return Boolean(String(plan.role || "").trim()) && roleType !== "player";
   }
 
   function applyAwaitUserTurnFromPlan(plan?: DebugNarrativePlan | null) {
@@ -4159,6 +4212,8 @@ function createToonflowStore() {
         || await fetchLatestSessionForWorld(Number(world.id || 0))
         || null;
       if (existingSession?.sessionId) {
+        state.sessionOpeningStage = "正在继续上次故事...";
+        state.notice = "正在继续上次故事...";
         await openSession(existingSession.sessionId, { resumeLatest: true });
         if (quickText.trim()) {
           state.sendText = quickText.trim();
@@ -4166,18 +4221,55 @@ function createToonflowStore() {
         }
         return;
       }
-      const chapters = await api.getChapter(world.id).catch(() => []);
-      const startChapter = chapters[0] || null;
-      state.sessionOpeningStage = "创建会话";
-      state.notice = "正在创建会话...";
-      const session = await api.startSession({
+      state.sessionOpeningStage = "正在初始化故事...";
+      state.notice = "正在初始化故事...";
+      const initResult = await api.initStory({
         worldId: world.id,
         projectId: world.projectId,
-        chapterId: startChapter?.id || undefined,
         title: world.name || "会话",
         initialState: null,
+        skipOpening: false,
       });
-      await openSession(session.sessionId, { resumeLatest: false });
+      applyInitializedSessionDetail(world, initResult);
+      state.sessionOpening = false;
+      state.sessionOpeningStage = "";
+
+      const openingResult = buildInitializedSessionOrchestrationResult(initResult, initResult.opening || null);
+      const firstChapterResult = buildInitializedSessionOrchestrationResult(initResult, initResult.firstChapter || null);
+
+      if (openingResult.plan) {
+        applySessionOrchestrationResult(openingResult);
+        if (shouldStreamSessionPlanFromPlan(openingResult.plan)) {
+          state.sessionRuntimeStage = "播放开场白";
+          await streamSessionPlan(openingResult, []);
+          if (state.sessionRuntimeStage === "播放开场白") {
+            state.sessionRuntimeStage = "";
+          }
+        }
+      }
+
+      if (firstChapterResult.plan) {
+        const history = conversationMessages();
+        const currentSessionDetail = (state.sessionDetail || null) as SessionDetail | null;
+        const currentEventDigest: RuntimeEventDigestItem | null = currentSessionDetail?.currentEventDigest || null;
+        const currentEventWindow: RuntimeEventDigestItem[] = currentSessionDetail?.eventDigestWindow || [];
+        const currentEventWindowText = String(currentSessionDetail?.eventDigestWindowText || "");
+        applySessionOrchestrationResult({
+          ...firstChapterResult,
+          currentEventDigest: currentEventDigest || firstChapterResult.currentEventDigest || null,
+          eventDigestWindow: currentEventWindow.length ? currentEventWindow : (firstChapterResult.eventDigestWindow || []),
+          eventDigestWindowText: currentEventWindowText || firstChapterResult.eventDigestWindowText || "",
+        });
+        if (shouldStreamSessionPlanFromPlan(firstChapterResult.plan)) {
+          state.sessionRuntimeStage = "生成第一章内容";
+          await streamSessionPlan(firstChapterResult, history);
+          if (state.sessionRuntimeStage === "生成第一章内容") {
+            state.sessionRuntimeStage = "";
+          }
+        }
+      }
+
+      void refreshSessionListState();
       if (quickText.trim()) {
         state.sendText = quickText.trim();
         await sendMessage();
@@ -4199,7 +4291,7 @@ function createToonflowStore() {
   ) {
     state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
     state.sessionOpening = true;
-    state.sessionOpeningStage = options?.playback ? "加载回放进度" : "定位会话";
+    state.sessionOpeningStage = options?.playback ? "正在加载回放..." : "正在继续上次故事...";
     state.sessionOpenError = "";
     state.sessionRuntimeStage = "";
     const targetWorldId = Number(worldId || 0);
@@ -4666,7 +4758,7 @@ function createToonflowStore() {
     }
     state.debugMode = true;
     state.debugLoading = true;
-    state.debugLoadingStage = "进入调试界面";
+    state.debugLoadingStage = "正在进入调试界面...";
     state.debugEndDialog = null;
     state.currentSessionId = `debug_${Date.now()}`;
     state.debugSessionTitle = state.worldName || "调试会话";
@@ -4681,9 +4773,11 @@ function createToonflowStore() {
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
     state.sessionDetail = null;
+    state.activeTab = "play";
     state.notice = "进入调试中...";
     let debugOverlayReleased = false;
-    // 先把调试界面骨架放出来，后续首轮编排与台词生成走局部状态。
+    // 只在真正完成调试上下文初始化后再释放整屏蒙层，
+    // 否则 saveWorld/saveChapter/initDebug 仍在 pending 时，界面会像“没反应”。
     const releaseDebugLoading = () => {
       if (debugOverlayReleased) return;
       state.debugLoading = false;
@@ -4691,13 +4785,13 @@ function createToonflowStore() {
       debugOverlayReleased = true;
     };
     try {
-      state.debugLoadingStage = "保存草稿";
+      state.debugLoadingStage = "正在保存草稿...";
       await saveWorldOnly("preserve", false);
       if (state.chapterTitle.trim() || state.chapterContent.trim() || state.chapterOpeningLine.trim()) {
         await saveChapterDraft(false, state.worldPublishStatus === "published" ? "published" : "draft", "preserve", false, false);
       }
       primeStoryEditorPersistState();
-      state.debugLoadingStage = "创建这次会话环境";
+      state.debugLoadingStage = "正在初始化调试环境...";
 
       let preferredDebugChapterId: number | null = state.selectedChapterId;
       const editorChapter = buildEditorChapterSnapshot();
@@ -4720,33 +4814,46 @@ function createToonflowStore() {
         state.activeTab = "play";
         return;
       }
-      state.activeTab = "play";
-      releaseDebugLoading();
-      state.sessionRuntimeStage = "读取记忆";
-      const introResult = await api.introduceDebug({
+      state.sessionRuntimeStage = "初始化章节";
+
+      const initResult = await api.initDebug({
         worldId: state.worldId,
         chapterId: chapter.id,
         state: state.debugRuntimeState,
         messages: [],
       });
+
+      releaseDebugLoading();
+      clearRuntimeRetryState();
+      state.debugRuntimeState = (initResult.state || {}) as Record<string, unknown>;
+      state.debugChapterId = Number(initResult.chapterId || chapter.id || 0) || null;
+      state.debugChapterTitle = String(initResult.chapterTitle || chapter.title || "");
+
+      state.sessionRuntimeStage = "生成开场白";
+      const introResult = await api.introduceDebug({
+        worldId: state.worldId,
+        chapterId: Number(initResult.chapterId || chapter.id || 0) || undefined,
+        state: state.debugRuntimeState,
+        messages: [],
+      });
       applyDebugOrchestrationResult(introResult, chapter);
       if (introResult.plan && shouldStreamDebugPlan(introResult.plan)) {
-        state.sessionRuntimeStage = "生成开场白";
         await streamDebugPlan(introResult.plan, []);
-        if (state.sessionRuntimeStage === "生成开场白") {
-          state.sessionRuntimeStage = "";
-        }
       }
+      if (state.sessionRuntimeStage === "生成开场白") {
+        state.sessionRuntimeStage = "";
+      }
+
+      state.sessionRuntimeStage = "准备剧情编排";
       const result = await api.orchestrateDebug({
         worldId: state.worldId,
-        chapterId: chapter.id,
+        chapterId: Number(initResult.chapterId || chapter.id || 0) || undefined,
         state: state.debugRuntimeState,
         messages: conversationMessages(),
       });
-      state.sessionRuntimeStage = "准备剧情编排";
-      clearRuntimeRetryState();
-      applyDebugOrchestrationResult(result, chapter);
+
       if (result.plan) {
+        applyDebugOrchestrationResult(result, chapter);
         if (shouldStreamDebugPlan(result.plan)) {
           state.sessionRuntimeStage = "生成首轮内容";
           await streamDebugPlan(result.plan, []);
@@ -4767,7 +4874,13 @@ function createToonflowStore() {
     } finally {
       state.debugLoading = false;
       state.debugLoadingStage = "";
-      if (state.sessionRuntimeStage === "生成首轮内容" || state.sessionRuntimeStage === "推进到用户回合") {
+      if (
+        state.sessionRuntimeStage === "初始化章节"
+        || state.sessionRuntimeStage === "生成开场白"
+        || state.sessionRuntimeStage === "准备剧情编排"
+        || state.sessionRuntimeStage === "生成首轮内容"
+        || state.sessionRuntimeStage === "推进到用户回合"
+      ) {
         state.sessionRuntimeStage = "";
       }
     }
@@ -5011,12 +5124,7 @@ function createToonflowStore() {
         applyAwaitUserTurnFromPlan(orchestration.plan);
         const shouldYieldToUser = orchestration.plan?.awaitUser === true
           || orchestration.plan?.nextRoleType?.trim()?.toLowerCase() === "player";
-        const shouldStreamPlan = Boolean(
-          orchestration.plan
-          && !shouldYieldToUser
-          && orchestration.plan.role
-          && !String(orchestration.plan.roleType || "").trim().toLowerCase().includes("player"),
-        );
+        const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
         }

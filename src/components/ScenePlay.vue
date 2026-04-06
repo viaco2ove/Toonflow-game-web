@@ -130,6 +130,23 @@ function isChapterEventItem(item: RuntimeEventDigestItem | null | undefined): bo
   return flowType !== "introduction" && kind !== "opening";
 }
 
+function splitCompletionConditionText(input: unknown): { successText: string; failureText: string } {
+  const rawText = scalarText(input);
+  if (!rawText) {
+    return { successText: "", failureText: "" };
+  }
+  const matched = rawText.match(/^(.*?)[（(]\s*([^()（）]+?)\s*[)）]\s*$/);
+  if (!matched) {
+    return { successText: rawText, failureText: "" };
+  }
+  const successText = scalarText(matched[1]);
+  const failureText = scalarText(matched[2]);
+  if (!successText || !failureText || !/失败|fail|failed|failure/i.test(failureText)) {
+    return { successText: rawText, failureText: "" };
+  }
+  return { successText, failureText };
+}
+
 function normalizeOrchestratorRuntime(input: unknown): OrchestratorRuntimeMeta | null {
   const raw = asMiniRecord(input);
   if (!Object.keys(raw).length) return null;
@@ -513,11 +530,22 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
   const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
   const phases = asMiniArray<Record<string, unknown>>(outline.phases);
   const fixedEvents = asMiniArray<Record<string, unknown>>(outline.fixedEvents);
-  if (!phases.length && !fixedEvents.length) return [];
+  const completionBranches = splitCompletionConditionText(currentChapter.value?.completionCondition);
+  const syntheticFixedEvents = fixedEvents.length
+    ? []
+    : [completionBranches.successText, completionBranches.failureText]
+      .filter(Boolean)
+      .map((label, index) => ({
+        id: `synthetic_fixed_event_${index + 1}`,
+        label,
+      }));
+  const allFixedEvents = fixedEvents.length ? fixedEvents : syntheticFixedEvents;
+  if (!phases.length && !allFixedEvents.length) return [];
   const progress = runtimeChapterProgressRecord.value;
   const currentPhaseId = scalarText(progress.phaseId);
   const currentEventStatus = scalarText(progress.eventStatus) || "idle";
   const currentEventKind = scalarText(progress.eventKind) || scalarText(currentEventDigest.value?.eventKind);
+  const currentEventFlowType = scalarText(currentEventDigest.value?.eventFlowType);
   const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
   const completedEvents = new Set(
     asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean),
@@ -561,13 +589,13 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
     });
   });
 
-  fixedEvents.forEach((event, index) => {
+  allFixedEvents.forEach((event, index) => {
     const eventId = scalarText(event.id);
     const eventSummary = scalarText(event.label) || `固定事件 ${index + 1}`;
     let eventStatus = "idle";
     if (eventId && completedEvents.has(eventId)) {
       eventStatus = "completed";
-    } else if ((currentEventKind === "fixed" || currentEventKind === "ending") && index === 0) {
+    } else if ((currentEventFlowType === "chapter_ending_check" || currentEventKind === "fixed" || currentEventKind === "ending") && index === 0) {
       eventStatus = currentEventStatus || "waiting_input";
     } else if (currentEventKind && currentEventKind !== "opening" && currentEventKind !== "scene" && eventId && completedEvents.size > 0) {
       eventStatus = "completed";
