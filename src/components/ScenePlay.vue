@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
@@ -12,6 +12,7 @@ const RUNTIME_VOICE_CACHE_LIMIT = 60;
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
 const messages = computed(() => store.state.messages);
+const pendingDotTick = ref(0);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
@@ -258,7 +259,7 @@ function isLocalFailedPlayerMessage(message: MessageItem | null | undefined): bo
 
 function playerMessagePendingText(message: MessageItem | null | undefined): string {
   if (!isLocalPendingPlayerMessage(message)) return "";
-  return isLocalFailedPlayerMessage(message) ? "发送失败" : "发送中...";
+  return isLocalFailedPlayerMessage(message) ? "发送失败" : "处理中...";
 }
 
 function runtimeRetryLabel(message: MessageItem | null | undefined): string {
@@ -850,6 +851,7 @@ const latestConversationMessage = computed(() => {
 const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
   if (store.state.sessionOpenError) return "session_error";
+  if (store.state.sendPending || store.state.runtimeProcessingPending) return "sending";
   if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
   if (latestStatus === "sending") return "sending";
@@ -872,10 +874,12 @@ const currentRuntimeInputStatus = computed(() => {
 const canPlayerInput = computed(() => {
   if (store.state.sessionOpening) return false;
   if (store.state.sessionOpenError) return false;
+  if (store.state.sendPending || store.state.runtimeProcessingPending) return false;
   if (sessionRuntimeStageText.value) return false;
   if (activeMiniGame.value?.acceptsTextInput) return true;
   return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
+const processingDots = computed(() => ".".repeat((pendingDotTick.value % 3) + 1));
 const sessionOpeningStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpeningStage) || "正在进入故事...");
 const sessionOpenErrorText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpenError) || "");
 const playOpenOverlayVisible = computed(() => (
@@ -901,9 +905,9 @@ const playInputPlaceholder = computed(() => {
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
   if (runtimeStatus === "sending") {
-    return "发送中...";
+    return `处理中${processingDots.value}`;
   }
-  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
+  if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
   }
@@ -924,12 +928,12 @@ const playTurnHint = computed(() => {
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
   if (runtimeStatus === "sending") {
-    return "正在发送中...";
+    return `正在处理${processingDots.value}`;
   }
   if (runtimeStatus === "error") {
     return "发送失败，可重试或重新输入。";
   }
-  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
+  if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成，可刷新或返回历史继续查看。";
   }
@@ -1263,7 +1267,7 @@ const runtimeDebugStatusLabel = computed(() => {
   if (!status && canPlayerSpeak.value) return "等待用户";
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "session_error") return "打开失败";
-  if (status === "sending") return "发送中";
+  if (status === "sending") return "处理中";
   if (status === "orchestrated") return "已编排";
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待用户";
@@ -1644,6 +1648,13 @@ function handlePressStart(message: MessageItem, event: PointerEvent) {
 function handlePressEnd() {
   clearPressTimer();
 }
+
+let pendingDotsTimer: number | null = null;
+onMounted(() => {
+  pendingDotsTimer = window.setInterval(() => {
+    pendingDotTick.value = (pendingDotTick.value + 1) % 3;
+  }, 420);
+});
 
 async function submit() {
   if (!canPlayerInput.value) {
@@ -2937,6 +2948,10 @@ function pickTip(option: string) {
 }
 
 onBeforeUnmount(() => {
+  if (pendingDotsTimer !== null) {
+    window.clearInterval(pendingDotsTimer);
+    pendingDotsTimer = null;
+  }
   clearPressTimer();
   stopVoiceRecognition();
   stopRuntimeVoicePlayback();
@@ -3525,7 +3540,7 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
             <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">
-              {{ currentRuntimeInputStatus === "sending" ? "发送中..." : sessionRuntimeStageText ? "处理中..." : "发送" }}
+              {{ currentRuntimeInputStatus === "sending" || sessionRuntimeStageText ? `处理中${processingDots}` : "发送" }}
             </button>
           </div>
           <div v-if="voiceRecordingStatusText" class="play-voice-status">{{ voiceRecordingStatusText }}</div>

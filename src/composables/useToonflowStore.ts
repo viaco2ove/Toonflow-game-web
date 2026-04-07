@@ -892,6 +892,8 @@ function createToonflowStore() {
     sessionOpeningStage: "",
     sessionOpenError: "",
     sessionRuntimeStage: "",
+    sendPending: false,
+    runtimeProcessingPending: false,
     sessionDetail: null as Loadable<SessionDetail>,
     messages: [] as MessageItem[],
     quickInput: "",
@@ -1563,6 +1565,16 @@ function createToonflowStore() {
       meta: buildRuntimeStreamMeta(message.meta, {
         streaming: false,
         status: "error",
+      }),
+    }), true);
+  }
+
+  function commitLocalPendingPlayerMessage(messageId: number) {
+    updateMessageById(messageId, (message) => ({
+      ...message,
+      meta: buildRuntimeStreamMeta(message.meta, {
+        streaming: false,
+        status: "generated",
       }),
     }), true);
   }
@@ -4940,6 +4952,7 @@ function createToonflowStore() {
     }
     continueDebugNarrativePromise = (async () => {
       clearRuntimeRetryState();
+      state.runtimeProcessingPending = true;
       try {
         await performContinueDebugNarrative();
         return true;
@@ -4956,12 +4969,13 @@ function createToonflowStore() {
         return false;
       }
     })().finally(() => {
+      state.runtimeProcessingPending = false;
       continueDebugNarrativePromise = null;
     });
     return continueDebugNarrativePromise;
   }
 
-  async function performDebugPlayerMessage(content: string, appendPlayerMessage: boolean) {
+  async function performDebugPlayerMessage(content: string, appendPlayerMessage: boolean, optimisticMessageId?: number | null) {
     if (appendPlayerMessage) {
       const now = Date.now();
       state.messages = [
@@ -4990,8 +5004,15 @@ function createToonflowStore() {
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
+    if (optimisticMessageId) {
+      commitLocalPendingPlayerMessage(optimisticMessageId);
+    }
     if (result.plan && shouldStreamDebugPlan(result.plan)) {
+      state.sessionRuntimeStage = "继续编排下一轮剧情";
       await streamDebugPlanOrFallback(result.plan, conversationMessages(), content);
+      if (state.sessionRuntimeStage === "继续编排下一轮剧情") {
+        state.sessionRuntimeStage = "";
+      }
     }
   }
 
@@ -5014,8 +5035,7 @@ function createToonflowStore() {
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
       void refreshSessionListState();
-      // 用户发言先落库返回，后续剧情编排改为后台继续，避免发送被整条链路阻塞。
-      void scheduleContinueSessionNarrative();
+      await continueSessionNarrative();
     } finally {
       if (state.sessionRuntimeStage === "提交用户发言") {
         state.sessionRuntimeStage = "";
@@ -5150,6 +5170,7 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
+    state.runtimeProcessingPending = true;
     try {
       await performContinueSessionNarrative();
       return true;
@@ -5164,16 +5185,21 @@ function createToonflowStore() {
         }),
       );
       return false;
+    } finally {
+      state.runtimeProcessingPending = false;
     }
   }
 
   async function sendMessage() {
     const content = state.sendText.trim();
-    if (!content) return;
+    if (!content || state.sendPending || state.runtimeProcessingPending) return;
     clearRuntimeRetryState();
+    state.sendPending = true;
     try {
       if (state.debugMode) {
-        await performDebugPlayerMessage(content, true);
+        const optimistic = appendLocalPendingPlayerMessage(content);
+        state.sendText = "";
+        await performDebugPlayerMessage(content, false, optimistic.id);
         return;
       }
       const optimistic = appendLocalPendingPlayerMessage(content);
@@ -5190,10 +5216,14 @@ function createToonflowStore() {
         state.notice = message;
         return;
       }
-      const retryTask = createRuntimeRetryRunner(() => performDebugPlayerMessage(content, false), {
-        formatErrorMessage: (text) => `发送失败：${text}`,
-      });
-      showRuntimeRetryMessage(message, retryTask);
+      const pending = state.messages.find((item) => isLocalPendingPlayerMessage(item));
+      if (pending) {
+        markLocalPendingPlayerMessageFailed(Number(pending.id || 0));
+      }
+      state.sendText = content;
+      state.notice = message;
+    } finally {
+      state.sendPending = false;
     }
   }
 
@@ -5214,14 +5244,24 @@ function createToonflowStore() {
       }),
     }), true);
     state.sendText = "";
+    if (state.sendPending || state.runtimeProcessingPending) {
+      throw new Error("当前正在处理，请稍后再试");
+    }
+    state.sendPending = true;
     try {
-      await performSessionPlayerMessage(content, messageId);
+      if (state.debugMode) {
+        await performDebugPlayerMessage(content, false, messageId);
+      } else {
+        await performSessionPlayerMessage(content, messageId);
+      }
     } catch (error) {
       markLocalPendingPlayerMessageFailed(messageId);
       state.sendText = content;
       const message = asUiErrorMessage(error);
       state.notice = `发送失败：${message}`;
       throw error;
+    } finally {
+      state.sendPending = false;
     }
   }
 
