@@ -4787,6 +4787,7 @@ function createToonflowStore() {
     state.sessionDetail = null;
     state.activeTab = "play";
     state.notice = "进入调试中...";
+    state.runtimeProcessingPending = true;
     let debugOverlayReleased = false;
     // 只在真正完成调试上下文初始化后再释放整屏蒙层，
     // 否则 saveWorld/saveChapter/initDebug 仍在 pending 时，界面会像“没反应”。
@@ -4886,6 +4887,7 @@ function createToonflowStore() {
     } finally {
       state.debugLoading = false;
       state.debugLoadingStage = "";
+      state.runtimeProcessingPending = false;
       if (
         state.sessionRuntimeStage === "初始化章节"
         || state.sessionRuntimeStage === "生成开场白"

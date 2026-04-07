@@ -1519,6 +1519,7 @@ watch(
     if (
       playMode.value !== "live"
       || store.state.debugLoading
+      || store.state.runtimeProcessingPending
       || store.state.debugEndDialog
     ) {
       return;
