@@ -147,6 +147,24 @@ function splitCompletionConditionText(input: unknown): { successText: string; fa
   return { successText, failureText };
 }
 
+function buildEndingOutlineSummary(input: {
+  completionCondition: unknown;
+  fixedEvents: Array<Record<string, unknown>>;
+}): string {
+  const completionText = scalarText(input.completionCondition);
+  if (completionText) {
+    return `结束条件：${completionText}`;
+  }
+  const labels = input.fixedEvents.map((item) => scalarText(item.label)).filter(Boolean);
+  return labels.length ? `结束条件：${labels.join("；")}` : "结束条件检查";
+}
+
+function buildEndingOutlineFacts(fixedEvents: Array<Record<string, unknown>>): string[] {
+  const labels = fixedEvents.map((item) => scalarText(item.label)).filter(Boolean);
+  if (!labels.length) return [];
+  return labels.map((label, index) => `${index === 0 ? "成功条件" : "失败条件"}：${label}`);
+}
+
 function normalizeOrchestratorRuntime(input: unknown): OrchestratorRuntimeMeta | null {
   const raw = asMiniRecord(input);
   if (!Object.keys(raw).length) return null;
@@ -589,23 +607,26 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
     });
   });
 
-  allFixedEvents.forEach((event, index) => {
-    const eventId = scalarText(event.id);
-    const eventSummary = scalarText(event.label) || `固定事件 ${index + 1}`;
+  if (allFixedEvents.length) {
+    const anyCompleted = allFixedEvents.some((event) => {
+      const eventId = scalarText(event.id);
+      return eventId && completedEvents.has(eventId);
+    });
     let eventStatus = "idle";
-    if (eventId && completedEvents.has(eventId)) {
-      eventStatus = "completed";
-    } else if ((currentEventFlowType === "chapter_ending_check" || currentEventKind === "fixed" || currentEventKind === "ending") && index === 0) {
+    if (currentEventFlowType === "chapter_ending_check" || currentEventKind === "fixed" || currentEventKind === "ending") {
       eventStatus = currentEventStatus || "waiting_input";
-    } else if (currentEventKind && currentEventKind !== "opening" && currentEventKind !== "scene" && eventId && completedEvents.size > 0) {
+    } else if (anyCompleted) {
       eventStatus = "completed";
     }
     items.push({
       eventIndex: items.length + 1,
       eventKind: "fixed",
       eventFlowType: "chapter_ending_check",
-      eventSummary,
-      eventFacts: [],
+      eventSummary: buildEndingOutlineSummary({
+        completionCondition: currentChapter.value?.completionCondition,
+        fixedEvents: allFixedEvents,
+      }),
+      eventFacts: buildEndingOutlineFacts(allFixedEvents),
       eventStatus,
       summarySource: "outline",
       memorySummary: "",
@@ -614,7 +635,7 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
       allowedRoles: [],
       userNodeId: "",
     });
-  });
+  }
 
   return items;
 });

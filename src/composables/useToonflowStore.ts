@@ -791,6 +791,7 @@ let singletonStore: ToonflowStore | null = null;
 
 const GAME_MODEL_SLOTS = [
   { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
+  { key: "storyChapterJudgeModel", label: "章节判定", configType: "text" },
   { key: "storyFastSpeakerModel", label: "快速角色发言", configType: "text" },
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
@@ -807,7 +808,6 @@ const STORY_ORCHESTRATOR_PAYLOAD_OPTIONS = [
 ] as const;
 
 const STORY_PROMPT_CODES = [
-  "story-main",
   "story-orchestrator-compact",
   "story-orchestrator-advanced",
   "story-speaker",
