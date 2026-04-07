@@ -2655,6 +2655,14 @@ textarea::-webkit-scrollbar-thumb {
   padding: 0 16px 16px;
 }
 
+.play-debug-end-backdrop {
+  align-items: center;
+}
+
+.play-debug-end-panel {
+  max-height: min(calc(100vh - 48px), 520px);
+}
+
 .image-source-dialog-backdrop {
   align-items: center;
 }

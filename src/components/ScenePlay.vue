@@ -3599,8 +3599,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="store.state.debugEndDialog" class="modal-backdrop" @click.self="closeDebugDialog">
-      <div class="modal-panel" style="width:min(100%,420px);">
+    <div v-if="store.state.debugEndDialog" class="modal-backdrop play-debug-end-backdrop" @click.self="closeDebugDialog">
+      <div class="modal-panel play-debug-end-panel" style="width:min(100%,420px);">
         <div class="modal-header">
           <button class="button small" type="button" @click="closeDebugDialog">继续查看</button>
           <div style="font-weight:900;">章节调试结束</div>
