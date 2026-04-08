@@ -92,6 +92,7 @@ const DEBUG_REVISIT_STORAGE_KEY = "toonflow.debugRevisit";
 type DebugRevisitSnapshot = {
   conversationId: string;
   messageId: number;
+  messageCount: number;
   chapterId: number | null;
   chapterTitle: string;
   endDialog: string | null;
@@ -951,6 +952,7 @@ function createToonflowStore() {
       .map((item) => ({
         conversationId: key,
         messageId: Number(item?.messageId || 0),
+        messageCount: Math.max(0, Number(item?.messageCount || 0)),
         chapterId: Number.isFinite(Number(item?.chapterId)) ? Number(item?.chapterId) : null,
         chapterTitle: String(item?.chapterTitle || "").trim(),
         endDialog: String(item?.endDialog || "").trim() || null,
@@ -1030,20 +1032,22 @@ function createToonflowStore() {
     syncDebugRevisitSnapshotsFromStorage();
     const conversationId = state.debugRevisitConversationId || runtimeConversationId();
     if (!conversationId) return;
+    const snapshotMessages = normalizeDebugIncomingMessages(
+      stripRuntimeRetryMessages(state.messages)
+        .filter((item) => !isStreamingRuntimeMessage(item))
+        .map((item) => cloneDebugSnapshotState(item)),
+    );
     const nextSnapshot: DebugRevisitSnapshot = {
       conversationId,
       messageId,
+      messageCount: snapshotMessages.length,
       chapterId: typeof state.debugChapterId === "number" ? state.debugChapterId : null,
       chapterTitle: String(state.debugChapterTitle || "").trim(),
       endDialog: state.debugEndDialog || null,
       endDialogDetail: String(state.debugEndDialogDetail || "").trim(),
       capturedAt: Date.now(),
       state: cloneDebugSnapshotState(state.debugRuntimeState || {}) as Record<string, unknown>,
-      messages: normalizeDebugIncomingMessages(
-        stripRuntimeRetryMessages(state.messages)
-          .filter((item) => !isStreamingRuntimeMessage(item))
-          .map((item) => cloneDebugSnapshotState(item)),
-      ),
+      messages: snapshotMessages,
     };
     const nextSnapshots = [
       ...state.debugRevisitSnapshots.filter((item) => Number(item.messageId || 0) !== messageId),
@@ -1072,25 +1076,33 @@ function createToonflowStore() {
     if (!state.debugMode) {
       throw new Error("当前不是章节调试模式");
     }
-    syncDebugRevisitSnapshotsFromStorage();
-    const target = state.debugRevisitSnapshots.find((item) => Number(item.messageId || 0) === Number(messageId || 0));
-    if (!target) {
-      throw new Error("没有找到这句台词的回溯快照");
+    const debugRuntimeKey = String(state.debugRuntimeState?.["debugRuntimeKey"] || "").trim();
+    if (!debugRuntimeKey) {
+      throw new Error("当前调试环境缺少回溯标识");
     }
-    state.debugRuntimeState = cloneDebugSnapshotState(target.state || {}) as Record<string, unknown>;
+    const stableMessages = stripRuntimeRetryMessages(state.messages).filter((item) => !isStreamingRuntimeMessage(item));
+    const targetIndex = stableMessages.findIndex((item) => Number(item.id || 0) === Number(messageId || 0));
+    if (targetIndex < 0) {
+      throw new Error("没有找到这句台词的回溯位置");
+    }
+    const messageCount = targetIndex + 1;
+    const revisitResult = await api.debugRevisitMessage(debugRuntimeKey, messageCount);
+    const backendMessages = normalizeDebugIncomingMessages(
+      cloneDebugSnapshotState(Array.isArray(revisitResult?.messages) ? revisitResult.messages : []),
+    );
+    if (!backendMessages.length) {
+      throw new Error("后端未返回可恢复的调试消息");
+    }
+    state.debugRuntimeState = cloneDebugSnapshotState(revisitResult?.state || {}) as Record<string, unknown>;
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     state.debugLatestPlan = null;
-    state.debugChapterId = typeof target.chapterId === "number" && target.chapterId > 0 ? target.chapterId : state.debugChapterId;
-    state.debugChapterTitle = target.chapterTitle || state.debugChapterTitle;
-    state.debugEndDialog = target.endDialog || null;
-    state.debugEndDialogDetail = target.endDialogDetail || "";
-    state.messages = normalizeDebugIncomingMessages(cloneDebugSnapshotState(target.messages || []));
-    const validMessageIds = new Set(state.messages.map((item) => Number(item.id || 0)).filter((id) => Number.isFinite(id) && id > 0));
-    const nextSnapshots = state.debugRevisitSnapshots
-      .filter((item) => validMessageIds.has(Number(item.messageId || 0)))
-      .sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0));
-    state.debugRevisitSnapshots = nextSnapshots;
-    persistDebugRevisitSnapshots(target.conversationId, nextSnapshots);
+    if (typeof revisitResult?.chapterId === "number" && revisitResult.chapterId > 0) {
+      state.debugChapterId = revisitResult.chapterId;
+    }
+    state.debugEndDialog = null;
+    state.debugEndDialogDetail = "";
+    state.messages = backendMessages;
+    syncDebugRevisitSnapshotsFromStorage();
     syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
     state.notice = "已回溯到这句台词，可继续调试编排";

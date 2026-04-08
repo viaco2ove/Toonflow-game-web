@@ -284,6 +284,14 @@ export interface DebugInitResult {
   eventDigestWindowText?: string;
 }
 
+export interface DebugRevisitResult {
+  state?: Record<string, unknown> | null;
+  messages?: MessageItem[];
+  round?: number;
+  chapterId?: number | null;
+  messageCount?: number;
+}
+
 export interface StoryInitResult {
   sessionId: string;
   worldId: number;

@@ -7,6 +7,7 @@ import type {
   AiTokenUsageStatsItem,
   ChapterItem,
   DebugInitResult,
+  DebugRevisitResult,
   DebugNarrativePlan,
   DebugOrchestrationResult,
   DebugStepResult,
@@ -240,6 +241,13 @@ export class ToonflowApi {
 
   initDebug(payload: Record<string, unknown>) {
     return this.post<DebugInitResult>("/game/initDebug", payload);
+  }
+
+  debugRevisitMessage(debugRuntimeKey: string, messageCount: number) {
+    return this.post<DebugRevisitResult>("/game/debugRuntimeShared/revisit", {
+      debugRuntimeKey,
+      messageCount,
+    });
   }
 
   /**
