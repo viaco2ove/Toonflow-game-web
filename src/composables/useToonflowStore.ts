@@ -1122,6 +1122,20 @@ function createToonflowStore() {
     syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
     state.notice = "已回溯到这句台词，可继续调试编排";
+    state.runtimeProcessingPending = false;
+    state.sessionRuntimeStage = "";
+    // 回溯成功后，如果当前并没有轮到用户发言，说明这句台词之后还存在应继续推进的编排。
+    // 这里直接续跑一轮，避免只恢复到开场白后卡住。
+    if (!state.debugEndDialog && !debugCanPlayerSpeakFromState()) {
+      state.sessionRuntimeStage = "回溯后继续编排";
+      try {
+        await continueDebugNarrative();
+      } finally {
+        if (state.sessionRuntimeStage === "回溯后继续编排") {
+          state.sessionRuntimeStage = "";
+        }
+      }
+    }
   }
 
   async function revisitSessionMessage(messageId: number) {
