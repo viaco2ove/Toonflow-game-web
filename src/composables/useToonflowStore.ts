@@ -1010,17 +1010,28 @@ function createToonflowStore() {
         .map((item) => Number(item.id || 0))
         .filter((id) => Number.isFinite(id) && id > 0),
     );
-    return messages.map((message) => {
+    const existingStableCount = existingMessages.length;
+    return messages.map((message, index) => {
       const next = cloneDebugSnapshotState(message);
       let messageId = Number(next?.id || 0);
       if (!Number.isFinite(messageId) || messageId <= 0 || usedIds.has(messageId)) {
         messageId = nextDebugMessageId();
       }
       usedIds.add(messageId);
+      const nextRevisitData = (() => {
+        const raw = next?.revisitData;
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          return raw;
+        }
+        return {
+          messageCount: existingStableCount + index + 1,
+        };
+      })();
       return {
         ...next,
         id: messageId,
         createTime: Number(next?.createTime || 0) || Date.now(),
+        revisitData: nextRevisitData,
       } as MessageItem;
     });
   }
@@ -1081,11 +1092,16 @@ function createToonflowStore() {
       throw new Error("当前调试环境缺少回溯标识");
     }
     const stableMessages = stripRuntimeRetryMessages(state.messages).filter((item) => !isStreamingRuntimeMessage(item));
-    const targetIndex = stableMessages.findIndex((item) => Number(item.id || 0) === Number(messageId || 0));
-    if (targetIndex < 0) {
+    const targetMessage = stableMessages.find((item) => Number(item.id || 0) === Number(messageId || 0));
+    if (!targetMessage) {
       throw new Error("没有找到这句台词的回溯位置");
     }
-    const messageCount = targetIndex + 1;
+    const revisitData = targetMessage.revisitData as Record<string, unknown> | null | undefined;
+    const targetIndex = stableMessages.findIndex((item) => Number(item.id || 0) === Number(messageId || 0));
+    const messageCount = Number(revisitData?.messageCount || 0) || (targetIndex >= 0 ? targetIndex + 1 : 0);
+    if (!Number.isFinite(messageCount) || messageCount <= 0) {
+      throw new Error("当前台词缺少回溯锚点");
+    }
     const revisitResult = await api.debugRevisitMessage(debugRuntimeKey, messageCount);
     const backendMessages = normalizeDebugIncomingMessages(
       cloneDebugSnapshotState(Array.isArray(revisitResult?.messages) ? revisitResult.messages : []),
