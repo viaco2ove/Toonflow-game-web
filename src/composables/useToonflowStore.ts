@@ -4819,6 +4819,11 @@ function createToonflowStore() {
       return;
     }
     state.debugMode = true;
+    // 从正式游玩切回章节调试时，要立即清掉正式会话打开失败态；
+    // 否则上一轮 initStory/openSession 的错误遮罩会残留到调试界面上，造成“刷新后才恢复”的假象。
+    state.sessionOpening = false;
+    state.sessionOpeningStage = "";
+    state.sessionOpenError = "";
     state.debugLoading = true;
     state.debugLoadingStage = "正在进入调试界面...";
     state.debugEndDialog = null;
