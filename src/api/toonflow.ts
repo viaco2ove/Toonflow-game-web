@@ -258,6 +258,13 @@ export class ToonflowApi {
     return this.post<StoryInitResult>("/game/initStory", payload);
   }
 
+  /**
+   * 正式游玩开场白独立请求，避免把开场白计划继续塞回 initStory。
+   */
+  introduceStory(sessionId: string) {
+    return this.post<SessionOrchestrationResult>("/game/introduction", { sessionId });
+  }
+
   async streamDebugLines(
     payload: Record<string, unknown>,
     onEvent: (event: StreamLinesEvent) => void | Promise<void>,

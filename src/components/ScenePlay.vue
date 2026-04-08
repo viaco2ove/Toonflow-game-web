@@ -1524,6 +1524,14 @@ watch(
     ) {
       return;
     }
+    // 正式游玩必须绑定到有效 session；调试模式则必须显式开启 debugMode，防止两条链串线。
+    if (store.state.debugMode) {
+      if (!store.state.debugChapterId) {
+        return;
+      }
+    } else if (!store.state.currentSessionId) {
+      return;
+    }
     const latest = latestRevealedMessage.value;
     if (!latest || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
       return;

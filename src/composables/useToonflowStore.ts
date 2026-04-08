@@ -1803,23 +1803,6 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
-  function buildInitializedSessionOrchestrationResult(
-    result: StoryInitResult,
-    plan: DebugNarrativePlan | null | undefined,
-  ): SessionOrchestrationResult {
-    return {
-      sessionId: String(result.sessionId || "").trim(),
-      status: "active",
-      chapterId: Number(result.chapterId || 0) || null,
-      expectedRole: String(plan?.nextRole || "").trim(),
-      expectedRoleType: String(plan?.nextRoleType || "").trim(),
-      plan: plan || null,
-      currentEventDigest: result.currentEventDigest || null,
-      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : [],
-      eventDigestWindowText: String(result.eventDigestWindowText || ""),
-    };
-  }
-
   function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
     const existingDetail = state.sessionDetail || null;
     state.sessionDetail = {
@@ -2041,6 +2024,30 @@ function createToonflowStore() {
     state.debugLoadingStage = "";
     state.notice = "";
     state.activeTab = "settings";
+  }
+
+  /**
+   * 进入正式会话前统一清理章节调试态，避免播放页 watcher 误把正式会话当成调试链继续推进。
+   */
+  function resetDebugSessionState(options?: { clearRevisitSnapshots?: boolean }) {
+    const shouldClearRevisitSnapshots = options?.clearRevisitSnapshots !== false;
+    if (shouldClearRevisitSnapshots) {
+      clearDebugRevisitSnapshots();
+    }
+    state.debugMode = false;
+    state.debugLoading = false;
+    state.debugLoadingStage = "";
+    state.debugSessionTitle = "";
+    state.debugWorldName = "";
+    state.debugWorldIntro = "";
+    state.debugChapterId = null;
+    state.debugChapterTitle = "";
+    state.debugRuntimeState = {};
+    state.debugLatestPlan = null;
+    state.debugStatePreview = "{}";
+    state.debugEndDialog = null;
+    state.debugEndDialogDetail = "";
+    state.debugRevisitConversationId = "";
   }
 
   function resetStoryEditor() {
@@ -4251,6 +4258,9 @@ function createToonflowStore() {
 
   async function startFromWorld(world: WorldItem, quickText = "") {
     try {
+      // 正式游玩入口必须先清空上一轮章节调试态，避免误触发调试 streamlines。
+      resetDebugSessionState();
+      clearRuntimeRetryState();
       state.notice = "正在进入故事...";
       state.activeTab = "play";
       state.sessionViewMode = "live";
@@ -4288,31 +4298,30 @@ function createToonflowStore() {
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
 
-      const openingResult = buildInitializedSessionOrchestrationResult(initResult, initResult.opening || null);
-      const firstChapterResult = buildInitializedSessionOrchestrationResult(initResult, initResult.firstChapter || null);
-
-      if (openingResult.plan) {
-        applySessionOrchestrationResult(openingResult);
-        if (shouldStreamSessionPlanFromPlan(openingResult.plan)) {
+      // 正式游玩和章节调试保持一致：先独立拿开场白，再独立拉第一章编排。
+      const introduction = await api.introduceStory(state.currentSessionId);
+      if (introduction.plan) {
+        applySessionOrchestrationResult(introduction);
+        if (shouldStreamSessionPlanFromPlan(introduction.plan)) {
           state.sessionRuntimeStage = "播放开场白";
-          await streamSessionPlan(openingResult, []);
+          await streamSessionPlan(introduction, []);
           if (state.sessionRuntimeStage === "播放开场白") {
             state.sessionRuntimeStage = "";
           }
         }
       }
 
+      const firstChapterResult = await api.orchestrateSession(state.currentSessionId);
       if (firstChapterResult.plan) {
         const history = conversationMessages();
         const currentSessionDetail = (state.sessionDetail || null) as SessionDetail | null;
-        const currentEventDigest: RuntimeEventDigestItem | null = currentSessionDetail?.currentEventDigest || null;
-        const currentEventWindow: RuntimeEventDigestItem[] = currentSessionDetail?.eventDigestWindow || [];
-        const currentEventWindowText = String(currentSessionDetail?.eventDigestWindowText || "");
         applySessionOrchestrationResult({
           ...firstChapterResult,
-          currentEventDigest: currentEventDigest || firstChapterResult.currentEventDigest || null,
-          eventDigestWindow: currentEventWindow.length ? currentEventWindow : (firstChapterResult.eventDigestWindow || []),
-          eventDigestWindowText: currentEventWindowText || firstChapterResult.eventDigestWindowText || "",
+          currentEventDigest: currentSessionDetail?.currentEventDigest || firstChapterResult.currentEventDigest || null,
+          eventDigestWindow: currentSessionDetail?.eventDigestWindow?.length
+            ? currentSessionDetail.eventDigestWindow
+            : (firstChapterResult.eventDigestWindow || []),
+          eventDigestWindowText: String(currentSessionDetail?.eventDigestWindowText || firstChapterResult.eventDigestWindowText || ""),
         });
         if (shouldStreamSessionPlanFromPlan(firstChapterResult.plan)) {
           state.sessionRuntimeStage = "生成第一章内容";
@@ -4384,9 +4393,8 @@ function createToonflowStore() {
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
     clearRuntimeRetryState();
-    clearDebugRevisitSnapshots();
-    state.debugMode = false;
-    state.debugLoading = false;
+    // 打开正式会话时同步清掉章节调试态，确保后续自动推进只走正式链。
+    resetDebugSessionState();
     state.notice = options?.playback ? "正在打开剧情回放..." : "正在进入故事...";
     state.activeTab = "play";
     state.sessionViewMode = options?.playback ? "playback" : "live";
