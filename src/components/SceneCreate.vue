@@ -887,7 +887,7 @@ function cancelRemoveCurrentNpc() {
             <div class="create-card-title">故事内容（章节内容）</div>
             <button class="create-link-btn create-debug-btn" type="button" @click="startDebug">调试</button>
           </div>
-          <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼</div>
+          <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼，help</div>
           <div class="field">
             <textarea
               ref="chapterContentInput"

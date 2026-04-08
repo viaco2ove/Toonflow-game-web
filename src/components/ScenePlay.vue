@@ -11,6 +11,8 @@ const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
 const RUNTIME_VOICE_CACHE_LIMIT = 60;
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
+const statePreviewExpanded = ref(false);
+const runtimeEventWindowExpanded = ref(false);
 const messages = computed(() => store.state.messages);
 const pendingDotTick = ref(0);
 const session = computed(() => store.state.sessionDetail);
@@ -194,6 +196,20 @@ const failedSessionStatuses = new Set(["failed", "dead", "lose", "loss"]);
 
 function sessionStatusKey(input: unknown): string {
   return scalarText(input).toLowerCase();
+}
+
+/**
+ * 切换“故事设定”里的原始状态快照展开状态。
+ */
+function toggleStatePreview(): void {
+  statePreviewExpanded.value = !statePreviewExpanded.value;
+}
+
+/**
+ * 切换“当前章节事件”里兜底原始事件窗口文本的展开状态。
+ */
+function toggleRuntimeEventWindowPreview(): void {
+  runtimeEventWindowExpanded.value = !runtimeEventWindowExpanded.value;
 }
 
 function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
@@ -3277,7 +3293,11 @@ onBeforeUnmount(() => {
           <div class="play-inline-card__text">章节编排：仅供编排师内部使用，游玩时不直接展示。</div>
           <div class="play-inline-card__text">章节进入条件：{{ chapterEntryText || "无" }}</div>
           <div class="play-inline-card__text">章节完成条件：{{ chapterCompletionText }}</div>
-          <pre class="play-state-pre">{{ statePreviewText }}</pre>
+          <button type="button" class="play-inline-toggle" @click="toggleStatePreview">
+            <span>运行状态快照</span>
+            <span>{{ statePreviewExpanded ? "收起 >" : "展开 >" }}</span>
+          </button>
+          <pre v-if="statePreviewExpanded" class="play-state-pre">{{ statePreviewText }}</pre>
         </div>
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
@@ -3315,7 +3335,13 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-          <pre v-else-if="runtimeEventWindowText" class="play-state-pre">{{ runtimeEventWindowText }}</pre>
+          <template v-else-if="runtimeEventWindowText">
+            <button type="button" class="play-inline-toggle" @click="toggleRuntimeEventWindowPreview">
+              <span>原始事件窗口</span>
+              <span>{{ runtimeEventWindowExpanded ? "收起 >" : "展开 >" }}</span>
+            </button>
+            <pre v-if="runtimeEventWindowExpanded" class="play-state-pre">{{ runtimeEventWindowText }}</pre>
+          </template>
           <div v-else class="play-inline-card__text">当前章节事件尚未生成。</div>
         </div>
 

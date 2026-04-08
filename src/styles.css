@@ -1341,7 +1341,9 @@ a {
 
 .create-page .textarea {
   min-height: 104px;
-  resize: none;
+  resize: vertical;
+  scrollbar-width: initial;
+  scrollbar-color: #22222f #eef2f8;
 }
 
 .create-page .field {
@@ -4426,6 +4428,21 @@ textarea::-webkit-scrollbar-thumb {
   padding: 0;
   background: none;
   color: #a9ccff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.play-inline-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(188, 204, 226, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(226, 239, 255, 0.92);
   font-size: 12px;
   font-weight: 700;
 }
