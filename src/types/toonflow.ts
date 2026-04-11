@@ -66,6 +66,26 @@ export interface VoiceBindingDraft {
   mixVoices?: VoiceMixItem[];
 }
 
+export interface ImportableRoleListItem {
+  sourceWorldId: number;
+  sourceWorldName: string;
+  sourceWorldCoverPath?: string;
+  role: StoryRole;
+}
+
+export interface ImportableRoleListResult {
+  items: ImportableRoleListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ImportWorldRoleResult {
+  role: StoryRole;
+  sourceWorldId: number;
+  sourceWorldName: string;
+}
+
 export interface ChapterExtra {
   chapterId?: number | null;
   sort?: number;
@@ -73,6 +93,7 @@ export interface ChapterExtra {
   openingLine?: string;
   background?: string;
   music?: string;
+  musicAutoPlay?: boolean;
   conditionVisible?: boolean;
 }
 
@@ -124,6 +145,7 @@ export interface ChapterItem {
   openingRole?: string;
   openingText?: string;
   bgmPath?: string;
+  bgmAutoPlay?: boolean;
   showCompletionCondition?: boolean;
   runtimeOutline?: unknown;
 }
@@ -572,6 +594,7 @@ export function createEmptyChapter(sort = 1): ChapterItem {
     openingRole: "旁白",
     openingText: "",
     bgmPath: "",
+    bgmAutoPlay: true,
     showCompletionCondition: true,
     runtimeOutline: null,
   };

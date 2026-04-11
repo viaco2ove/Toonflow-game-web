@@ -12,6 +12,8 @@ import type {
   DebugOrchestrationResult,
   DebugStepResult,
   GeneratedImageResult,
+  ImportableRoleListResult,
+  ImportWorldRoleResult,
   LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
@@ -88,6 +90,30 @@ export class ToonflowApi {
     }
   }
 
+  /**
+   * 兼容旧接口直接返回裸对象的 POST 请求。
+   * 当前主要给章节调试回溯使用，避免后端仍返回 `{ state, messages }`
+   * 这种旧格式时，被统一信封校验误判为“请求失败”。
+   */
+  private async postAcceptEnvelopeOrRaw<T>(path: string, body?: unknown): Promise<T> {
+    try {
+      const response = await axios.post<ApiEnvelope<T> | T>(this.url(path), body ?? {}, {
+        headers: this.headers(),
+      });
+      const payload = response.data as ApiEnvelope<T> | T;
+      if (typeof (payload as ApiEnvelope<T>)?.code === "number") {
+        const envelope = payload as ApiEnvelope<T>;
+        if (envelope.code !== 200) {
+          throw new Error(envelope.message || "请求失败");
+        }
+        return envelope.data;
+      }
+      return payload as T;
+    } catch (err) {
+      throw new Error(this.requestErrorMessage(err));
+    }
+  }
+
   private async get<T>(path: string): Promise<T> {
     try {
       const response = await axios.get<ApiEnvelope<T>>(this.url(path), {
@@ -147,6 +173,36 @@ export class ToonflowApi {
 
   saveWorld(payload: Record<string, unknown>) {
     return this.post<WorldItem>("/game/saveWorld", payload);
+  }
+
+  /**
+   * 复制一个现有故事为全新的草稿副本。
+   * 后端会连同封面、章节资源一起复制，返回的新世界与原故事完全独立。
+   */
+  copyWorld(worldId: number) {
+    return this.post<WorldItem>("/game/copyWorld", { worldId });
+  }
+
+  /**
+   * 查询“其他故事角色”分页列表。
+   * 创建页导入角色时只需要服务端过滤和排序好的 NPC 列表。
+   */
+  listImportableRoles(payload: {
+    excludeWorldId?: number;
+    worldName?: string;
+    roleName?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    return this.post<ImportableRoleListResult>("/game/listImportableRoles", payload);
+  }
+
+  /**
+   * 从其他故事导入一个独立角色副本。
+   * 后端会复制角色资源文件并返回新的角色对象。
+   */
+  importWorldRole(sourceWorldId: number, roleId: string) {
+    return this.post<ImportWorldRoleResult>("/game/importWorldRole", { sourceWorldId, roleId });
   }
 
   deleteWorld(worldId: number) {
@@ -244,7 +300,7 @@ export class ToonflowApi {
   }
 
   debugRevisitMessage(debugRuntimeKey: string, messageCount: number) {
-    return this.post<DebugRevisitResult>("/game/debugRuntimeShared/revisit", {
+    return this.postAcceptEnvelopeOrRaw<DebugRevisitResult>("/game/debugRuntimeShared/revisit", {
       debugRuntimeKey,
       messageCount,
     });
@@ -464,6 +520,19 @@ export class ToonflowApi {
     return this.post<{ audioUrl: string; data: unknown }>("/voice/preview", payload);
   }
 
+  generateVoiceBinding(payload: Record<string, unknown>) {
+    return this.post<{
+      audioPath: string;
+      audioName: string;
+      audioUrl: string;
+      referenceText: string;
+      customVoiceId?: string;
+      customVoiceMode?: string;
+      requestModel?: string;
+      targetModel?: string;
+    }>("/voice/generateBindingVoice", payload);
+  }
+
   streamVoice(payload: Record<string, unknown>) {
     return this.post<{ audioUrl: string; data: unknown }>("/game/streamvoice", payload);
   }
@@ -472,8 +541,18 @@ export class ToonflowApi {
     return this.post<{ text: string; segments?: unknown[]; confidence?: number | null }>("/voice/transcribe", payload);
   }
 
-  polishVoicePrompt(text: string, style = "") {
-    return this.post<{ prompt: string }>("/voice/polishPrompt", { text, style });
+  polishVoicePrompt(payload: {
+    text: string;
+    configId?: number | null;
+    mode?: string;
+    provider?: string;
+  }) {
+    return this.post<{ prompt: string }>("/voice/polishPrompt", {
+      text: payload.text,
+      configId: payload.configId || undefined,
+      mode: payload.mode || undefined,
+      provider: payload.provider || undefined,
+    });
   }
 
   polishPrompt(prompt: string) {

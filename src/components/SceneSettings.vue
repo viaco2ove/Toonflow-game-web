@@ -435,7 +435,7 @@ watch(
         </template>
       </div>
       <div class="modal-footer">
-        <button class="button primary settings-solid-btn" type="button" @click="submitAccountDialog">
+        <button class="button primary settings-solid-btn settings-solid-btn-login" type="button" @click="submitAccountDialog">
           {{ accountDialogMode === 'login' ? '登录' : accountDialogMode === 'register' ? '注册' : '确认修改' }}
         </button>
       </div>

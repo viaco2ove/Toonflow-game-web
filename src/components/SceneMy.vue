@@ -118,6 +118,14 @@ async function editDraft(world: WorldItem) {
   await store.openWorldForEdit(world);
 }
 
+/**
+ * 复制发布故事为新的草稿副本，并关闭弹层保持页面聚焦到编辑态。
+ */
+async function copyPublishedWorld(world: WorldItem) {
+  closeDraftMenu();
+  await store.copyWorldAsDraft(world);
+}
+
 function openDraftMenu(world: WorldItem) {
   draftMenuWorld.value = world;
 }
@@ -261,8 +269,9 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
               {{ store.worldPublishStatusLabel(world) }}
             </span>
           </div>
-          <div class="my-work-actions one">
+          <div class="my-work-actions">
             <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(world)">编辑</button>
+            <button class="button small" type="button" @click="copyPublishedWorld(world)">复制</button>
           </div>
         </div>
       </article>

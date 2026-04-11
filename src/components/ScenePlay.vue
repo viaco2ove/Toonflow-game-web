@@ -42,6 +42,12 @@ const currentChapter = computed(() => {
   }
   return sessionChapter;
 });
+// 章节背景音乐独立于角色发言语音，只有作者显式勾选自动播放时才会按当前章节的 bgmPath 循环播放。
+const currentChapterBgmUrl = computed(() => {
+  if (currentChapter.value?.bgmAutoPlay === false) return "";
+  const bgmPath = scalarText(currentChapter.value?.bgmPath || "");
+  return bgmPath ? store.resolveMediaPath(bgmPath) : "";
+});
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
 
 type RuntimeChatTraceRow = {
@@ -1101,6 +1107,8 @@ let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let mediaChunks: Blob[] = [];
 let discardNextRecording = false;
+let chapterBgmPlayer: HTMLAudioElement | null = null;
+let currentChapterBgmObjectUrl = "";
 let runtimeVoicePlayer: HTMLAudioElement | null = null;
 let runtimeVoiceObjectUrl = "";
 let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
@@ -1109,6 +1117,8 @@ const runtimeVoicePreviewCache = new Map<string, string>();
 const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
 const runtimeVoiceBlobCache = new Map<string, Blob>();
 const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
+const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
+const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
 const runtimeVoiceWarmCache = new Set<string>();
 const revealedMessages = ref<MessageItem[]>([]);
 
@@ -1387,6 +1397,28 @@ watch(
   },
 );
 
+/**
+ * 把章节背景音乐的播放状态和当前“有声/静音”开关保持一致。
+ * 关闭时暂停但保留播放进度，恢复时从当前位置继续播放。
+ */
+function syncChapterBgmAudibility() {
+  if (!chapterBgmPlayer) return;
+  if (!autoVoice.value) {
+    chapterBgmPlayer.pause();
+    return;
+  }
+  chapterBgmPlayer.volume = 0.35;
+  void chapterBgmPlayer.play().catch(() => {});
+}
+
+/**
+ * 切换播放页统一声音开关。
+ * 这个开关同时控制运行时台词语音和章节背景音乐。
+ */
+function toggleAutoVoice() {
+  autoVoice.value = !autoVoice.value;
+}
+
 watch(autoVoice, (enabled) => {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(PLAY_AUTO_VOICE_STORAGE_KEY, enabled ? "1" : "0");
@@ -1394,6 +1426,11 @@ watch(autoVoice, (enabled) => {
   if (!enabled) {
     stopRuntimeVoicePlayback();
   }
+  if (enabled && !chapterBgmPlayer && currentChapterBgmUrl.value) {
+    void syncChapterBgmPlayback(currentChapterBgmUrl.value);
+    return;
+  }
+  syncChapterBgmAudibility();
 });
 
 watch(
@@ -1675,11 +1712,60 @@ function handlePressEnd() {
 }
 
 let pendingDotsTimer: number | null = null;
+
+/**
+ * 停止并释放章节背景音乐播放器，避免章节切换后继续串音。
+ */
+function stopChapterBgmPlayback() {
+  if (chapterBgmPlayer) {
+    chapterBgmPlayer.pause();
+    chapterBgmPlayer.src = "";
+    chapterBgmPlayer.load();
+    chapterBgmPlayer = null;
+  }
+  if (currentChapterBgmObjectUrl) {
+    URL.revokeObjectURL(currentChapterBgmObjectUrl);
+    currentChapterBgmObjectUrl = "";
+  }
+}
+
+/**
+ * 按当前章节更新背景音乐；没有配置时立即停止，有配置时尝试循环播放。
+ */
+async function syncChapterBgmPlayback(audioUrl: string) {
+  stopChapterBgmPlayback();
+  if (!audioUrl) return;
+  try {
+    const response = await fetch(audioUrl);
+    if (!response.ok) {
+      throw new Error(`BGM 下载失败：${response.status}`);
+    }
+    const blob = await response.blob();
+    currentChapterBgmObjectUrl = URL.createObjectURL(blob);
+    const player = new Audio(currentChapterBgmObjectUrl);
+    player.loop = true;
+    player.preload = "auto";
+    player.volume = 0.35;
+    chapterBgmPlayer = player;
+    syncChapterBgmAudibility();
+  } catch {
+    stopChapterBgmPlayback();
+  }
+}
+
 onMounted(() => {
   pendingDotsTimer = window.setInterval(() => {
     pendingDotTick.value = (pendingDotTick.value + 1) % 3;
   }, 420);
 });
+
+watch(
+  currentChapterBgmUrl,
+  (audioUrl) => {
+    void syncChapterBgmPlayback(audioUrl);
+  },
+  { immediate: true },
+);
 
 async function submit() {
   if (!canPlayerInput.value) {
@@ -2128,22 +2214,72 @@ function runtimeVoicePreviewKey(binding: VoiceBindingDraft, text: string): strin
   return `${runtimeVoiceBindingKey(binding)}|${text}`;
 }
 
+/**
+ * 调试和正式游玩统一优先使用 clone 通道。
+ * 如果当前绑定还没有参考音频文件，就先按原模式生成一个稳定文件，再切回 clone。
+ */
+async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<VoiceBindingDraft> {
+  if (binding.mode === "clone" && binding.referenceAudioPath) {
+    return binding;
+  }
+  if (binding.referenceAudioPath) {
+    return {
+      ...binding,
+      mode: "clone",
+    };
+  }
+  const cacheKey = runtimeVoiceBindingKey(binding);
+  const cached = runtimeVoiceCloneBindingCache.get(cacheKey);
+  if (cached) return cached;
+  const inflight = runtimeVoiceCloneInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const task = store.generateVoiceBinding(
+    binding.configId,
+    binding.mode,
+    binding.presetId,
+    binding.referenceAudioPath,
+    binding.referenceText,
+    binding.promptText,
+    binding.mixVoices || [],
+  )
+    .then((generated) => {
+      if (!generated.audioPath) {
+        throw new Error("未生成可复用的参考音频");
+      }
+      const cloneBinding: VoiceBindingDraft = {
+        ...binding,
+        mode: "clone",
+        referenceAudioPath: generated.audioPath,
+        referenceAudioName: generated.audioName || binding.referenceAudioName || "",
+        referenceText: generated.referenceText || binding.referenceText || "",
+      };
+      setLimitedCacheValue(runtimeVoiceCloneBindingCache, cacheKey, cloneBinding);
+      return cloneBinding;
+    })
+    .finally(() => {
+      runtimeVoiceCloneInflight.delete(cacheKey);
+    });
+  runtimeVoiceCloneInflight.set(cacheKey, task);
+  return task;
+}
+
 async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string): Promise<string> {
-  const cacheKey = runtimeVoicePreviewKey(binding, text);
+  const playableBinding = await ensureRuntimeCloneBinding(binding);
+  const cacheKey = runtimeVoicePreviewKey(playableBinding, text);
   const cached = runtimeVoicePreviewCache.get(cacheKey);
   if (cached) return cached;
   const inflight = runtimeVoicePreviewInflight.get(cacheKey);
   if (inflight) return inflight;
   const task = withTimeout(
     store.streamVoice(
-      binding.configId,
+      playableBinding.configId,
       text,
-      binding.mode,
-      binding.presetId,
-      binding.referenceAudioPath,
-      binding.referenceText,
-      binding.promptText,
-      binding.mixVoices || [],
+      playableBinding.mode,
+      playableBinding.presetId,
+      playableBinding.referenceAudioPath,
+      playableBinding.referenceText,
+      playableBinding.promptText,
+      playableBinding.mixVoices || [],
       {
         format: RUNTIME_FAST_PREVIEW_FORMAT,
         sampleRate: RUNTIME_FAST_PREVIEW_SAMPLE_RATE,
@@ -2172,7 +2308,7 @@ async function warmVoiceBinding(binding: VoiceBindingDraft) {
   if (runtimeVoiceWarmCache.has(bindingKey)) return;
   runtimeVoiceWarmCache.add(bindingKey);
   try {
-    await resolveRuntimeVoiceUrl(binding, "你好啊，有什么可以帮到你");
+    await resolveRuntimeVoiceUrl(binding, "恭喜，已成功复刻或生成了属于角色的声音！");
   } catch {
     // 保持静默，预热失败不影响正式播放
   }
@@ -2977,6 +3113,7 @@ onBeforeUnmount(() => {
     window.clearInterval(pendingDotsTimer);
     pendingDotsTimer = null;
   }
+  stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
   stopRuntimeVoicePlayback();
@@ -3008,7 +3145,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="play-head__actions">
-          <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="autoVoice = !autoVoice">
+          <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="toggleAutoVoice">
             <svg v-if="autoVoice" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 10v4h4l5 4V6l-5 4H5z"></path>
               <path d="M18 9a4 4 0 010 6"></path>
@@ -3024,7 +3161,6 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="play-ai-mark">内容由 AI 生成</div>
-      <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">{{ isSessionPlaybackMode ? "剧情回放" : "历史模式" }}</div>
       <div
         v-if="playMode !== 'history' && currentLiveFigureFgPath"

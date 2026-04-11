@@ -6,6 +6,7 @@ import type { VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 const props = defineProps<{
   open: boolean;
   title: string;
+  roleId?: string;
   initialLabel: string;
   initialPresetId?: string;
   initialMode?: string;
@@ -28,10 +29,11 @@ const referenceAudioPath = ref("");
 const referenceAudioName = ref("");
 const referenceText = ref("");
 const promptText = ref("");
-const DEFAULT_PREVIEW_TEXT = "你好啊，有什么可以帮到你";
+const DEFAULT_PREVIEW_TEXT = "恭喜，已成功复刻或生成了属于角色的声音！";
 const previewText = ref(DEFAULT_PREVIEW_TEXT);
 const previewStatus = ref("");
 const previewLoading = ref(false);
+const generateLoading = ref(false);
 const polishLoading = ref(false);
 const audioUploading = ref(false);
 const mixVoices = ref<VoiceMixItem[]>([]);
@@ -248,6 +250,21 @@ function validate(): string | null {
   return null;
 }
 
+/**
+ * 生成音色文件不依赖试听文本，但仍需要当前绑定模式本身是可用的。
+ */
+function validateGenerate(): string | null {
+  if (selectedMode.value === "prompt_voice" && !hasVoiceDesignModel.value) return "请先在设置里配置语音设计模型";
+  if (!effectiveConfigId.value) return "请先在设置里配置语音生成模型";
+  const modeReason = unsupportedModeReason(selectedMode.value);
+  if (modeReason) return modeReason;
+  if (selectedMode.value === "text" && !selectedPresetId.value) return "请先选择音色预设";
+  if (selectedMode.value === "clone" && !referenceAudioPath.value) return "克隆模式需要上传参考音频";
+  if (selectedMode.value === "mix" && !mixVoices.value.some((item) => item.voiceId)) return "混合模式至少选择一个音色";
+  if (selectedMode.value === "prompt_voice" && !promptText.value.trim()) return "提示词模式需要填写提示词";
+  return null;
+}
+
 function revokePreviewObjectUrl() {
   if (previewObjectUrl) {
     URL.revokeObjectURL(previewObjectUrl);
@@ -272,6 +289,73 @@ async function chooseAudio(e: Event) {
   }
 }
 
+/**
+ * 把后端返回的试听地址加载到浏览器播放器中。
+ * 这样“直接试听”和“生成音色后再次试听”都复用同一套播放逻辑，避免两边行为漂移。
+ */
+async function loadPreviewAudioUrl(audioUrl: string) {
+  if (!audioUrl) throw new Error("未返回试听音频");
+  const response = await fetch(audioUrl);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const contentType = String(response.headers.get("content-type") || "").trim().toLowerCase();
+  if (contentType && !contentType.startsWith("audio/") && contentType !== "application/octet-stream") {
+    const detail = (await response.text().catch(() => "")).trim();
+    throw new Error(detail || `返回了非音频内容: ${contentType}`);
+  }
+  const blob = await response.blob();
+  if (!blob.size) {
+    throw new Error("返回的音频内容为空");
+  }
+  const playableBlob = blob.type ? blob : new Blob([blob], { type: "audio/wav" });
+  revokePreviewObjectUrl();
+  previewObjectUrl = URL.createObjectURL(playableBlob);
+  previewAudioUrl.value = previewObjectUrl;
+  await nextTick();
+  const audio = previewPlayer.value;
+  if (!audio) throw new Error("播放器初始化失败");
+  audio.pause();
+  audio.currentTime = 0;
+  audio.load();
+  audio.onplay = () => (previewStatus.value = "正在播放试听");
+  audio.onended = () => (previewStatus.value = "试听完成");
+  audio.onerror = () => {
+    previewAudioUrl.value = "";
+    revokePreviewObjectUrl();
+    previewStatus.value = "试听播放失败";
+    previewLoading.value = false;
+  };
+  await audio.play();
+}
+
+/**
+ * 用指定绑定参数向后端请求一段试听音频。
+ * “直接试听”和“生成音色后用 clone 通道验证结果”都会走这里。
+ */
+async function requestPreviewAudio(options?: {
+  mode?: string;
+  presetId?: string;
+  referenceAudioPath?: string;
+  referenceText?: string;
+  promptText?: string;
+  mixVoices?: VoiceMixItem[];
+}) {
+  return store.previewVoice(
+    effectiveConfigId.value,
+    previewText.value.trim(),
+    options?.mode || selectedMode.value,
+    options?.presetId ?? selectedPresetId.value,
+    options?.referenceAudioPath ?? referenceAudioPath.value,
+    options?.referenceText ?? referenceText.value.trim(),
+    options?.promptText ?? promptText.value.trim(),
+    options?.mixVoices ?? mixVoices.value,
+    {
+      roleId: props.roleId || "",
+    },
+  );
+}
+
 async function playPreview() {
   const errorText = validate();
   if (errorText) {
@@ -281,49 +365,8 @@ async function playPreview() {
   previewLoading.value = true;
   previewStatus.value = "";
   try {
-    const audioUrl = await store.previewVoice(
-      effectiveConfigId.value,
-      previewText.value.trim(),
-      selectedMode.value,
-      selectedPresetId.value,
-      referenceAudioPath.value,
-      referenceText.value.trim(),
-      promptText.value.trim(),
-      mixVoices.value,
-    );
-    if (!audioUrl) throw new Error("未返回试听音频");
-    const response = await fetch(audioUrl);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const contentType = String(response.headers.get("content-type") || "").trim().toLowerCase();
-    if (contentType && !contentType.startsWith("audio/") && contentType !== "application/octet-stream") {
-      const detail = (await response.text().catch(() => "")).trim();
-      throw new Error(detail || `返回了非音频内容: ${contentType}`);
-    }
-    const blob = await response.blob();
-    if (!blob.size) {
-      throw new Error("返回的音频内容为空");
-    }
-    const playableBlob = blob.type ? blob : new Blob([blob], { type: "audio/wav" });
-    revokePreviewObjectUrl();
-    previewObjectUrl = URL.createObjectURL(playableBlob);
-    previewAudioUrl.value = previewObjectUrl;
-    await nextTick();
-    const audio = previewPlayer.value;
-    if (!audio) throw new Error("播放器初始化失败");
-    audio.pause();
-    audio.currentTime = 0;
-    audio.load();
-    audio.onplay = () => (previewStatus.value = "正在播放试听");
-    audio.onended = () => (previewStatus.value = "试听完成");
-    audio.onerror = () => {
-      previewAudioUrl.value = "";
-      revokePreviewObjectUrl();
-      previewStatus.value = "试听播放失败";
-      previewLoading.value = false;
-    };
-    await audio.play();
+    const audioUrl = await requestPreviewAudio();
+    await loadPreviewAudioUrl(audioUrl);
   } catch (err) {
     previewStatus.value = `试听失败: ${(err as Error).message}`;
   } finally {
@@ -351,8 +394,11 @@ async function polishPrompt() {
   polishLoading.value = true;
   previewStatus.value = "";
   try {
-    const style = [selectedModel.value?.model, selectedModel.value?.manufacturer, selectedPreset.value?.provider].filter(Boolean).join(" · ");
-    const polished = await store.polishVoicePrompt(source, style);
+    const polished = await store.polishVoicePrompt(source, {
+      configId: effectiveConfigId.value,
+      mode: selectedMode.value,
+      provider: selectedPreset.value?.provider || "",
+    });
     if (!polished) throw new Error("未返回润色结果");
     promptText.value = polished;
     previewStatus.value = "提示词已润色";
@@ -360,6 +406,60 @@ async function polishPrompt() {
     previewStatus.value = `AI润色失败: ${(err as Error).message}`;
   } finally {
     polishLoading.value = false;
+  }
+}
+
+/**
+ * 生成一个可复用的参考音频文件，并把路径写回当前角色绑定。
+ * 后续调试/游玩都将优先把这个文件作为 clone 通道的参考音频。
+ */
+async function generateVoiceFile() {
+  const errorText = validateGenerate();
+  if (errorText) {
+    previewStatus.value = errorText;
+    return;
+  }
+  generateLoading.value = true;
+  previewStatus.value = "";
+  try {
+    const generated = await store.generateVoiceBinding(
+      effectiveConfigId.value,
+      selectedMode.value,
+      selectedPresetId.value,
+      referenceAudioPath.value,
+      referenceText.value.trim(),
+      promptText.value.trim(),
+      mixVoices.value,
+      {
+        roleId: props.roleId || "",
+      },
+    );
+    if (!generated.audioPath) {
+      throw new Error("未返回生成音色文件");
+    }
+    // 生成后的参考文件会被运行时 clone 通道复用，因此这里直接回写到绑定数据中。
+    referenceAudioPath.value = generated.audioPath;
+    referenceAudioName.value = generated.audioName || referenceAudioName.value || "generated_voice.wav";
+    if (generated.referenceText) {
+      referenceText.value = generated.referenceText;
+    }
+    // 生成出的文件只是 clone 参考源，真正给用户听的应该还是“当前试听文本”的成品音频。
+    previewLoading.value = true;
+    const previewUrl = await requestPreviewAudio({
+      mode: "clone",
+      presetId: generated.customVoiceId || "",
+      referenceAudioPath: generated.audioPath,
+      referenceText: generated.referenceText || referenceText.value.trim(),
+      promptText: "",
+      mixVoices: [],
+    });
+    await loadPreviewAudioUrl(previewUrl);
+    previewStatus.value = "音色文件已生成，并已按当前试听文本重新试听";
+  } catch (err) {
+    previewStatus.value = `生成音色失败: ${(err as Error).message}`;
+  } finally {
+    previewLoading.value = false;
+    generateLoading.value = false;
   }
 }
 
@@ -552,6 +652,7 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
+              <button class="voice-dialog-preview-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色' }}</button>
               <button v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>

@@ -5,7 +5,7 @@ import LayeredAvatar from "./LayeredAvatar.vue";
 import StoryCover from "./StoryCover.vue";
 import VoiceBindingDialog from "./VoiceBindingDialog.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { StoryRole, VoiceBindingDraft } from "../types/toonflow";
+import type { ImportableRoleListItem, StoryRole, VoiceBindingDraft } from "../types/toonflow";
 import { imageStyleForKey } from "../utils/imageStyles";
 
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
@@ -21,6 +21,8 @@ type ChapterTabItem = {
 const store = useToonflowStore();
 const showAdvanced = ref(false);
 const showPhaseGraph = ref(false);
+const showChapterWritingHelp = ref(false);
+const showRoleImportDialog = ref(false);
 const showUserEditor = ref(false);
 const showNpcEditor = ref(false);
 const editingNpcIndex = ref<number | null>(null);
@@ -46,6 +48,14 @@ const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
 const showDeleteNpcConfirm = ref(false);
 const publishPending = ref(false);
+const importRoleWorldName = ref("");
+const importRoleName = ref("");
+const importRolePage = ref(1);
+const importRolePageSize = 12;
+const importRoleLoading = ref(false);
+const importRoleSubmittingId = ref("");
+const importRoleTotal = ref(0);
+const importRoleItems = ref<ImportableRoleListItem[]>([]);
 let runtimeAudioUnlockContext: AudioContext | null = null;
 let runtimeAudioUnlockElement: HTMLAudioElement | null = null;
 
@@ -175,6 +185,35 @@ const avatarPreviewState = computed(() => {
 });
 const avatarPreviewHasForeground = computed(() => !!String(avatarPreviewState.value?.foregroundPath || "").trim());
 const avatarPreviewHasBackground = computed(() => !!String(avatarPreviewState.value?.backgroundPath || "").trim());
+const importRoleTotalPages = computed(() => Math.max(1, Math.ceil(importRoleTotal.value / importRolePageSize)));
+
+const chapterWritingGuideSections = [
+  {
+    title: "怎么写章节内容",
+    lines: [
+      "把这一章真正会发生的内容写在这里，例如场景变化、人物行动、冲突推进、用户会被要求做什么。",
+      "对白请直接写成“@角色名：台词”，旁白也一样，例如“@旁白：乌坦城的风沙停了下来”。",
+      "提及用户扮演的角色时，请统一写“用户”，不要混用“你”或别的代称。",
+        "章节内容使用**Markdown格式**，通过二级标题(`##`)来划分不同的阶段",
+    ],
+  },
+  {
+    title: "事件是怎么区分的",
+    lines: [
+      "系统默认会把正文识别成“章节内容”事件，这是这一章真正推进剧情的主体事件。",
+      "成功条件会被单独识别成“结束条件检查”事件，用来判断这一章是继续、成功还是失败。",
+      "如果你没有填写成功条件，这一章默认只有“章节内容”事件，不会触发章节判定。",
+    ],
+  },
+  {
+    title: "推荐写法",
+    lines: [
+      "先写本章开场和场景，再写角色互动，最后写用户需要完成的目标。",
+      "成功条件里只写结局判断，例如“用户输入了姓名、性别、年龄”或“突破到斗者一星”。",
+      "更复杂的阶段切换、固定事件、用户节点，再去用下面的 Phase Graph 高级配置，不要把所有逻辑都硬塞在正文里。",
+    ],
+  },
+];
 
 function resolveInitialAvatarPreviewMode(target: AvatarPreviewTarget, index: number | null): AvatarPreviewMode {
   const foregroundPath = target === "user"
@@ -237,6 +276,7 @@ const voiceDialogState = computed(() => {
     case "player":
       return {
         title: "选择用户音色",
+        roleId: "player",
         initialLabel: store.state.playerVoice,
         initialPresetId: store.state.playerVoicePresetId,
         initialMode: store.state.playerVoiceMode,
@@ -249,6 +289,7 @@ const voiceDialogState = computed(() => {
     case "narrator":
       return {
         title: "选择旁白音色",
+        roleId: "narrator",
         initialLabel: store.state.narratorVoice,
         initialPresetId: store.state.narratorVoicePresetId,
         initialMode: store.state.narratorVoiceMode,
@@ -262,6 +303,7 @@ const voiceDialogState = computed(() => {
       const role = typeof voiceDialogNpcIndex.value === "number" ? store.state.npcRoles[voiceDialogNpcIndex.value] : null;
       return {
         title: "选择角色音色",
+        roleId: role?.id || "",
         initialLabel: role?.voice || "",
         initialPresetId: role?.voicePresetId || "",
         initialMode: role?.voiceMode || "text",
@@ -275,6 +317,7 @@ const voiceDialogState = computed(() => {
     default:
       return {
         title: "选择音色",
+        roleId: "",
         initialLabel: "角色",
         initialPresetId: "",
         initialMode: "text",
@@ -370,6 +413,87 @@ function createNpcAndOpen() {
   store.addNpcRole();
   editingNpcIndex.value = Math.max(0, store.state.npcRoles.length - 1);
   showNpcEditor.value = true;
+}
+
+/**
+ * 打开“从其他故事导入角色”弹窗，并立即加载第一页列表。
+ * 角色导入是跨故事复用素材的入口，默认先按故事名/角色名排序好的第一页展示。
+ */
+async function openRoleImportDialog() {
+  showRoleImportDialog.value = true;
+  importRolePage.value = 1;
+  await fetchImportableRoles(1);
+}
+
+/**
+ * 关闭角色导入弹窗，并清空本轮查询状态，避免下次打开时仍保留旧分页结果。
+ */
+function closeRoleImportDialog() {
+  showRoleImportDialog.value = false;
+  importRoleLoading.value = false;
+  importRoleSubmittingId.value = "";
+  importRoleItems.value = [];
+  importRoleTotal.value = 0;
+  importRolePage.value = 1;
+}
+
+/**
+ * 查询其他故事里的可导入角色分页列表。
+ * 查询条件只保留故事名称和角色名称，实际筛选和排序都交给后端统一处理。
+ */
+async function fetchImportableRoles(page = 1) {
+  importRoleLoading.value = true;
+  try {
+    importRolePage.value = Math.max(1, page);
+    const result = await store.listImportableRoles({
+      worldName: importRoleWorldName.value,
+      roleName: importRoleName.value,
+      page: importRolePage.value,
+      pageSize: importRolePageSize,
+    });
+    importRoleItems.value = result.items || [];
+    importRoleTotal.value = Number(result.total || 0);
+  } catch (err) {
+    store.state.notice = `查询角色失败: ${(err as Error).message}`;
+  } finally {
+    importRoleLoading.value = false;
+  }
+}
+
+/**
+ * 触发一次新的角色查询，并把分页重置回第一页。
+ * 名称查询变化后直接回第一页，避免旧页码超出新的结果集范围。
+ */
+async function searchImportableRoles() {
+  await fetchImportableRoles(1);
+}
+
+/**
+ * 把选中的其他故事角色导入到当前草稿中。
+ * 导入成功后关闭弹窗，并直接打开新导入角色的编辑页方便用户继续修改。
+ */
+async function importSelectedRole(item: ImportableRoleListItem) {
+  const submittingKey = `${item.sourceWorldId}:${item.role.id}`;
+  importRoleSubmittingId.value = submittingKey;
+  try {
+    const imported = await store.importRoleFromWorld(item.sourceWorldId, item.role.id);
+    showRoleImportDialog.value = false;
+    editingNpcIndex.value = Math.max(0, store.state.npcRoles.findIndex((role) => role.id === imported.role.id));
+    showNpcEditor.value = editingNpcIndex.value >= 0;
+    closeRoleImportDialog();
+  } catch (err) {
+    store.state.notice = `导入角色失败: ${(err as Error).message}`;
+  } finally {
+    importRoleSubmittingId.value = "";
+  }
+}
+
+/**
+ * 统一解析导入列表里的角色头像地址。
+ * 角色导入预览直接复用创建页现有的媒体路径解析逻辑。
+ */
+function importRoleAvatar(item: ImportableRoleListItem): string {
+  return store.resolveMediaPath(item.role.avatarPath || item.role.avatarBgPath || "");
 }
 
 function closeNpcEditor() {
@@ -691,6 +815,25 @@ async function selectChapter(targetChapterId: number | null) {
   await store.saveCurrentChapterAndSelect(targetChapterId);
 }
 
+/**
+ * 在插入角色 mention 后恢复输入框和页面滚动，避免点击标签时浏览器把 textarea 滚到别处。
+ * 光标仍然保持在插入内容之后，方便用户连续编辑。
+ */
+function restoreMentionInsertionView(input: HTMLTextAreaElement, caret: number, scrollTop: number, scrollLeft: number, pageX: number, pageY: number) {
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  input.setSelectionRange(caret, caret);
+  input.scrollTop = scrollTop;
+  input.scrollLeft = scrollLeft;
+  window.scrollTo(pageX, pageY);
+}
+
+/**
+ * 在当前光标位置插入角色 mention，同时保留原来的滚动位置和编辑上下文。
+ */
 function insertMentionAtCursor(target: "global" | "chapter", role: string) {
   const trimmed = role.trim();
   if (!trimmed) return;
@@ -707,6 +850,11 @@ function insertMentionAtCursor(target: "global" | "chapter", role: string) {
   }
   const start = input.selectionStart ?? sourceText.length;
   const end = input.selectionEnd ?? sourceText.length;
+  // 记录插入前的 textarea 滚动和页面滚动，避免 v-model 更新后滚动条乱飞。
+  const scrollTop = input.scrollTop;
+  const scrollLeft = input.scrollLeft;
+  const pageX = window.scrollX;
+  const pageY = window.scrollY;
   const nextValue = `${sourceText.slice(0, start)}${mention}${sourceText.slice(end)}`;
   if (target === "global") {
     store.state.globalBackground = nextValue;
@@ -714,9 +862,8 @@ function insertMentionAtCursor(target: "global" | "chapter", role: string) {
     store.state.chapterContent = nextValue;
   }
   requestAnimationFrame(() => {
-    input.focus();
     const caret = start + mention.length;
-    input.setSelectionRange(caret, caret);
+    restoreMentionInsertionView(input, caret, scrollTop, scrollLeft, pageX, pageY);
   });
 }
 
@@ -829,6 +976,12 @@ function cancelRemoveCurrentNpc() {
               </div>
               <span>新增</span>
             </button>
+            <button class="create-avatar-item" type="button" @click="openRoleImportDialog">
+              <div class="avatar create-role-avatar create-role-avatar-import">
+                <div class="placeholder">⇢</div>
+              </div>
+              <span>导入</span>
+            </button>
           </div>
         </div>
       </section>
@@ -887,7 +1040,10 @@ function cancelRemoveCurrentNpc() {
             <div class="create-card-title">故事内容（章节内容）</div>
             <button class="create-link-btn create-debug-btn" type="button" @click="startDebug">调试</button>
           </div>
-          <div class="create-tip">提及用户扮演的角色时，请用“用户”一词称呼，help</div>
+          <div class="create-tip create-tip--with-action">
+            <span>提及用户扮演的角色时，请用“用户”一词称呼。</span>
+            <button class="create-help-btn" type="button" @click="showChapterWritingHelp = true">编写说明</button>
+          </div>
           <div class="field">
             <textarea
               ref="chapterContentInput"
@@ -927,12 +1083,22 @@ function cancelRemoveCurrentNpc() {
 
       <section class="create-section">
         <div class="create-card create-card--compact create-card--toggle">
-          <button class="create-advanced-toggle" type="button" @click="showPhaseGraph = !showPhaseGraph">
-            <span>Phase Graph</span>
-            <strong>{{ showPhaseGraph ? '收起' : '展开' }}</strong>
-          </button>
+          <div class="create-advanced-toggle create-advanced-toggle--phase">
+            <button class="create-advanced-toggle__main" type="button" @click="showPhaseGraph = !showPhaseGraph">
+              <span>Phase Graph</span>
+              <strong>{{ showPhaseGraph ? '收起' : '展开' }}</strong>
+            </button>
+            <label class="create-phase-auto-toggle" @click.stop>
+              <span>自动</span>
+              <input v-model="store.state.chapterRuntimeOutlineAutoGenerate" type="checkbox" />
+            </label>
+          </div>
           <div v-if="showPhaseGraph" class="create-advanced-body">
-            <div class="create-tip">可直接填写章节运行模板 JSON。为空时由系统根据章节正文和指令自动推断。</div>
+            <div class="create-tip">
+              {{ store.state.chapterRuntimeOutlineAutoGenerate
+                ? '已开启自动生成。草稿保存时会根据章节正文重新生成 Phase Graph，并回写最新结果。'
+                : '可直接填写章节运行模板 JSON。关闭自动生成后，保存会使用当前手写 JSON。' }}
+            </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button class="button small" type="button" @click="store.generateChapterRuntimeOutlineDraft">生成草稿</button>
               <button class="button small" type="button" @click="store.formatChapterRuntimeOutlineDraft">格式化 JSON</button>
@@ -1024,6 +1190,10 @@ function cancelRemoveCurrentNpc() {
       <section class="create-section">
         <div class="create-card create-card--compact">
           <div class="create-card-title">背景音乐（可选）</div>
+          <label class="create-switch-row create-switch-row--spaced">
+            <span>章节调试和故事游玩时自动播放</span>
+            <input v-model="store.state.chapterMusicAutoPlay" type="checkbox" />
+          </label>
           <button class="create-picker-btn" type="button" @click="chapterMusicInput?.click()">
             <span>{{ displayMediaName(store.state.chapterMusic, '可选预设音乐（现在无），也可以上传') }}</span>
             <strong>上传 ＞</strong>
@@ -1351,6 +1521,7 @@ function cancelRemoveCurrentNpc() {
       v-if="voiceDialogTarget"
       :open="voiceDialogOpen"
       :title="voiceDialogState.title"
+      :role-id="voiceDialogState.roleId"
       :initial-label="voiceDialogState.initialLabel"
       :initial-preset-id="voiceDialogState.initialPresetId"
       :initial-mode="voiceDialogState.initialMode"
@@ -1381,6 +1552,129 @@ function cancelRemoveCurrentNpc() {
           <div style="font-weight: 800;">进入调试中</div>
           <div style="font-size: 13px; color: #d5e3f8; text-align:center;">
             {{ store.state.debugLoadingStage || "正在初始化调试上下文..." }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showChapterWritingHelp" class="modal-backdrop create-help-backdrop" @click.self="showChapterWritingHelp = false">
+      <div class="modal-panel create-help-panel">
+        <div class="modal-header">
+          <div style="font-weight: 900;">章节编写说明</div>
+          <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="showChapterWritingHelp = false">×</button>
+        </div>
+        <div class="modal-body create-help-body">
+          <div class="create-help-intro">
+            这里写的是“这一章会发生什么”，不是整本故事的大纲。系统会先识别章节内容事件，再根据成功条件生成结束条件检查事件。
+          </div>
+          <div
+            v-for="section in chapterWritingGuideSections"
+            :key="section.title"
+            class="create-help-section"
+          >
+            <div class="create-help-section-title">{{ section.title }}</div>
+            <div
+              v-for="line in section.lines"
+              :key="line"
+              class="create-help-line"
+            >
+              {{ line }}
+            </div>
+          </div>
+          <div class="create-help-example">
+            <div class="create-help-section-title">章节内容使用**Markdown格式**，通过二级标题(`##`)来划分不同的阶段</div>
+            <div class="create-help-section-title">示例</div>
+            <pre class="create-help-pre">
+## 场景
+@旁白：乌坦城的风沙停了下来。
+@萧炎：这不是我熟悉的地方。
+
+## 用户行动
+@旁白：请告知你的姓名、性别与年龄，让众人确认你的身份 。
+
+## 非事件:任务分类（只是提供给旁白用来推荐任务）
+### 生存类
+- 收集止血草与基础药材
+- 寻找临时修炼地点
+- 避开城外魔兽巡游区
+- 修复破损装备
+- 获取基础食物资源
+- 侦测周围危险气息
+- 躲避强者气息压制
+- 建立临时落脚点
+- 处理夜间威胁
+- 维持体力与状态
+            </pre>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button settings-outline-btn" type="button" @click="showChapterWritingHelp = false">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showRoleImportDialog" class="modal-backdrop create-role-import-backdrop" @click.self="closeRoleImportDialog">
+      <div class="modal-panel create-role-import-panel">
+        <div class="modal-header">
+          <div style="font-weight: 900;">导入其他故事角色</div>
+          <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="closeRoleImportDialog">×</button>
+        </div>
+        <div class="modal-body create-role-import-body">
+          <div class="create-role-import-filters">
+            <div class="field">
+              <label>故事名称</label>
+              <input v-model="importRoleWorldName" class="input" type="text" placeholder="按故事名称搜索" />
+            </div>
+            <div class="field">
+              <label>角色名称</label>
+              <input v-model="importRoleName" class="input" type="text" placeholder="按角色名称搜索" />
+            </div>
+            <button class="button create-role-import-search" type="button" :disabled="importRoleLoading" @click="searchImportableRoles">
+              {{ importRoleLoading ? "查询中..." : "查询" }}
+            </button>
+          </div>
+          <div class="create-role-import-summary">
+            <span>共 {{ importRoleTotal }} 个角色</span>
+            <span>默认按故事名、角色名排序</span>
+          </div>
+          <div v-if="importRoleItems.length" class="create-role-import-list">
+            <div
+              v-for="item in importRoleItems"
+              :key="`${item.sourceWorldId}_${item.role.id}`"
+              class="create-role-import-card"
+            >
+              <div class="create-role-import-main">
+                <div class="avatar create-role-import-avatar">
+                  <LayeredAvatar
+                    :foreground-path="importRoleAvatar(item)"
+                    :background-path="store.resolveMediaPath(item.role.avatarBgPath || '')"
+                    :alt="item.role.name || '角色头像'"
+                  >
+                    <div class="placeholder">{{ item.role.name?.slice(0, 1) || "角" }}</div>
+                  </LayeredAvatar>
+                </div>
+                <div class="create-role-import-copy">
+                  <div class="create-role-import-name">{{ item.role.name || "未命名角色" }}</div>
+                  <div class="create-role-import-world">{{ item.sourceWorldName || "未命名故事" }}</div>
+                </div>
+              </div>
+              <button
+                class="button settings-outline-btn create-role-import-action"
+                type="button"
+                :disabled="importRoleSubmittingId === `${item.sourceWorldId}:${item.role.id}`"
+                @click="importSelectedRole(item)"
+              >
+                {{ importRoleSubmittingId === `${item.sourceWorldId}:${item.role.id}` ? "导入中..." : "导入" }}
+              </button>
+            </div>
+          </div>
+          <div v-else class="create-role-import-empty">
+            {{ importRoleLoading ? "正在加载可导入角色..." : "未找到符合条件的角色" }}
+          </div>
+          <div class="create-role-import-pagination">
+            <button class="button settings-outline-btn" type="button" :disabled="importRoleLoading || importRolePage <= 1" @click="fetchImportableRoles(importRolePage - 1)">上一页</button>
+            <span>第 {{ importRolePage }} / {{ importRoleTotalPages }} 页</span>
+            <button class="button settings-outline-btn" type="button" :disabled="importRoleLoading || importRolePage >= importRoleTotalPages" @click="fetchImportableRoles(importRolePage + 1)">下一页</button>
           </div>
         </div>
       </div>

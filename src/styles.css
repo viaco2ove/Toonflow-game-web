@@ -887,6 +887,29 @@ a {
   line-height: 1.6;
 }
 
+.create-tip--with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.create-help-btn {
+  border: 1px solid #d7e2f4;
+  background: #f5f8ff;
+  color: #4768c9;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.create-help-btn:active {
+  transform: translateY(1px);
+}
+
 .create-avatar-row {
   display: flex;
   gap: 12px;
@@ -925,14 +948,158 @@ a {
   background: #fff;
 }
 
+.create-role-avatar-import {
+  border-color: #cfe1ff;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+}
+
 .create-role-avatar-add .placeholder {
   color: #8ea4c9;
   font-size: 26px;
   font-weight: 500;
 }
 
+.create-role-avatar-import .placeholder {
+  color: #5d7fcb;
+  font-size: 22px;
+  font-weight: 700;
+}
+
 .create-user-placeholder {
   background: #eef3fb;
+}
+
+.create-role-import-backdrop {
+  align-items: center;
+}
+
+.create-role-import-panel {
+  width: min(720px, calc(100vw - 28px));
+  max-height: min(88vh, 900px);
+  display: flex;
+  flex-direction: column;
+}
+
+.create-role-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+.create-role-import-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.create-role-import-search {
+  height: 42px;
+  min-width: 88px;
+}
+
+.create-role-import-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #7d8da5;
+  font-size: 12px;
+}
+
+.create-role-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.create-role-import-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid #dfe7f5;
+  background: #f9fbff;
+}
+
+.create-role-import-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.create-role-import-avatar {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 auto;
+}
+
+.create-role-import-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.create-role-import-name {
+  color: #223247;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.create-role-import-world {
+  color: #7d8da5;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.create-role-import-action {
+  min-width: 78px;
+  flex: 0 0 auto;
+}
+
+.create-role-import-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: #8c9bb0;
+  font-size: 13px;
+  border-radius: 16px;
+  border: 1px dashed #d9e5f6;
+  background: #fbfcff;
+}
+
+.create-role-import-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .create-role-import-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .create-role-import-search {
+    width: 100%;
+  }
+
+  .create-role-import-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .create-role-import-action {
+    width: 100%;
+  }
+
+  .create-role-import-pagination {
+    flex-direction: column;
+  }
 }
 
 .create-user-glyph {
@@ -1049,15 +1216,44 @@ a {
 
 .create-advanced-toggle {
   width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: #223247;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.create-advanced-toggle__main {
+  flex: 1;
   border: 0;
   background: transparent;
   padding: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #223247;
-  font-size: 15px;
-  font-weight: 900;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.create-advanced-toggle--phase {
+  justify-content: space-between;
+}
+
+.create-phase-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #40587b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.create-phase-auto-toggle input {
+  width: 18px;
+  height: 18px;
 }
 
 .create-card--toggle {
@@ -1331,6 +1527,8 @@ a {
   padding: 11px 12px;
   box-shadow: inset 0 0 0 1px rgba(201, 213, 229, 0.15);
   background: #fff;
+  caret-color: #1a8f62;
+  caret-shape: block;
 }
 
 .create-page .input::placeholder,
@@ -1344,6 +1542,7 @@ a {
   resize: vertical;
   scrollbar-width: initial;
   scrollbar-color: #22222f #eef2f8;
+  caret-color: #1a8f62;
 }
 
 .create-page .field {
@@ -1360,6 +1559,7 @@ a {
   background: #fff;
   border-color: #c7d2e2;
   border-radius: 8px;
+  caret-color: #1a8f62;
 }
 
 .create-editor-body .textarea {
@@ -1609,6 +1809,10 @@ a {
   border-radius: 12px;
   font-weight: 800;
 }
+.settings-solid-btn-login {
+    margin-left: 42%;
+    margin-bottom: 4px;
+}
 
 .settings-outline-btn {
   min-height: 38px;
@@ -1810,6 +2014,7 @@ a {
 
 .settings-account-modal {
   width: min(92vw, 520px);
+  margin: auto;
 }
 
 .settings-modal-header {
@@ -2431,6 +2636,7 @@ a {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: #b7c3d8 #eef2f8;
+  caret-color: #1a8f62;
 }
 
 .textarea::-webkit-scrollbar,
@@ -2663,6 +2869,63 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-debug-end-panel {
   max-height: min(calc(100vh - 48px), 520px);
+}
+
+.create-help-backdrop {
+  align-items: center;
+}
+
+.create-help-panel {
+  width: min(92vw, 720px);
+  max-height: min(calc(100vh - 40px), 760px);
+}
+
+.create-help-body {
+  display: grid;
+  gap: 14px;
+}
+
+.create-help-intro {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #eef5ff;
+  color: #3f5d91;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.create-help-section,
+.create-help-example {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #e0e8f6;
+  border-radius: 18px;
+  background: #fbfcff;
+}
+
+.create-help-section-title {
+  font-size: 14px;
+  font-weight: 900;
+  color: #203453;
+}
+
+.create-help-line {
+  color: #536780;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.create-help-pre {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #16243a;
+  color: #edf4ff;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .image-source-dialog-backdrop {

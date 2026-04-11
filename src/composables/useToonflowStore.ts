@@ -11,6 +11,8 @@ import {
   DebugOrchestrationResult,
   DebugNarrativePlan,
   DebugStepResult,
+  ImportableRoleListResult,
+  ImportWorldRoleResult,
   LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
@@ -779,7 +781,9 @@ interface StoryEditorSnapshot {
   chapterOpeningLine: string;
   chapterBackground: string;
   chapterMusic: string;
+  chapterMusicAutoPlay: boolean;
   chapterConditionVisible: boolean;
+  chapterRuntimeOutlineAutoGenerate: boolean;
   chapterRuntimeOutlineText: string;
 }
 
@@ -881,7 +885,9 @@ function createToonflowStore() {
     chapterOpeningLine: "",
     chapterBackground: "",
     chapterMusic: "",
+    chapterMusicAutoPlay: true,
     chapterConditionVisible: true,
+    chapterRuntimeOutlineAutoGenerate: true,
     chapterRuntimeOutlineText: "",
     sessions: [] as SessionItem[],
     sessionListError: "",
@@ -2062,7 +2068,9 @@ function createToonflowStore() {
     state.chapterOpeningLine = "";
     state.chapterBackground = "";
     state.chapterMusic = "";
+    state.chapterMusicAutoPlay = true;
     state.chapterConditionVisible = true;
+    state.chapterRuntimeOutlineAutoGenerate = true;
     state.npcRoles = [];
     state.createStep = 0;
     primeStoryEditorPersistState();
@@ -2114,7 +2122,9 @@ function createToonflowStore() {
       chapterOpeningLine: state.chapterOpeningLine,
       chapterBackground: state.chapterBackground,
       chapterMusic: state.chapterMusic,
+      chapterMusicAutoPlay: state.chapterMusicAutoPlay,
       chapterConditionVisible: state.chapterConditionVisible,
+      chapterRuntimeOutlineAutoGenerate: state.chapterRuntimeOutlineAutoGenerate,
       chapterRuntimeOutlineText: state.chapterRuntimeOutlineText,
     };
   }
@@ -2179,7 +2189,9 @@ function createToonflowStore() {
     state.chapterOpeningLine = normalizedChapter.openingLine;
     state.chapterBackground = snapshot.chapterBackground;
     state.chapterMusic = snapshot.chapterMusic;
+    state.chapterMusicAutoPlay = snapshot.chapterMusicAutoPlay ?? true;
     state.chapterConditionVisible = snapshot.chapterConditionVisible;
+    state.chapterRuntimeOutlineAutoGenerate = snapshot.chapterRuntimeOutlineAutoGenerate ?? true;
     state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(snapshot.chapterRuntimeOutlineText);
     window.setTimeout(() => {
       editorPersistMuted = false;
@@ -2192,8 +2204,10 @@ function createToonflowStore() {
     if (snapshot.worldCoverPath.trim() || snapshot.playerDesc.trim() || snapshot.globalBackground.trim()) return true;
     if (snapshot.chapterTitle.trim() || snapshot.chapterContent.trim() || snapshot.chapterOpeningLine.trim()) return true;
     if (snapshot.chapterEntryCondition.trim() || snapshot.chapterCondition.trim()) return true;
+    if (snapshot.chapterRuntimeOutlineAutoGenerate !== true) return true;
     if (snapshot.chapterRuntimeOutlineText.trim()) return true;
     if (snapshot.chapterBackground.trim() || snapshot.chapterMusic.trim()) return true;
+    if (snapshot.chapterMusicAutoPlay !== true) return true;
     return snapshot.npcRoles.some((role) =>
       [
         role.name,
@@ -2325,12 +2339,21 @@ function createToonflowStore() {
     return state.worlds.filter((item) => item.projectId === state.selectedProjectId);
   }
 
+  /**
+   * “我的”页只能展示当前账号真正拥有的故事。
+   * 全局 worlds 里会混入大厅/推荐需要的公开已发布故事，所以这里必须再按可编辑权限过滤一层，
+   * 避免别人的公开作品误出现在“我的作品”里。
+   */
+  function ownedWorldsForSelectedProject(): WorldItem[] {
+    return worldsForSelectedProject().filter((item) => canEditWorld(item));
+  }
+
   function publishedWorldsForSelectedProject(): WorldItem[] {
-    return worldsForSelectedProject().filter((item) => isWorldInPublishedLane(item));
+    return ownedWorldsForSelectedProject().filter((item) => isWorldInPublishedLane(item));
   }
 
   function draftWorldsForSelectedProject(): WorldItem[] {
-    return worldsForSelectedProject().filter((item) => !isWorldInPublishedLane(item));
+    return ownedWorldsForSelectedProject().filter((item) => !isWorldInPublishedLane(item));
   }
 
   function allPublishedWorlds(): WorldItem[] {
@@ -3109,10 +3132,12 @@ function createToonflowStore() {
       speed?: number | null;
       format?: string | null;
       sampleRate?: number | null;
+      roleId?: string | null;
     } = {},
   ): Promise<string> {
     const result = await api.previewVoice({
       configId: configId || undefined,
+      roleId: String(options.roleId || "").trim() || undefined,
       text,
       mode,
       voiceId,
@@ -3125,6 +3150,54 @@ function createToonflowStore() {
       sampleRate: typeof options.sampleRate === "number" ? options.sampleRate : undefined,
     });
     return result.audioUrl || "";
+  }
+
+  /**
+   * 按当前绑定模式生成一个可复用的参考音频文件，供后续统一走 clone 通道。
+   */
+  async function generateVoiceBinding(
+    configId: number | null | undefined,
+    mode: string,
+    voiceId = "",
+    referenceAudioPath = "",
+    referenceText = "",
+    promptText = "",
+    mixVoices: VoiceMixItem[] = [],
+    options: {
+      sampleRate?: number | null;
+      roleId?: string | null;
+    } = {},
+  ): Promise<{
+    audioPath: string;
+    audioName: string;
+    audioUrl: string;
+    referenceText: string;
+    customVoiceId?: string;
+    customVoiceMode?: string;
+    requestModel?: string;
+    targetModel?: string;
+  }> {
+    const result = await api.generateVoiceBinding({
+      configId: configId || undefined,
+      roleId: String(options.roleId || "").trim() || undefined,
+      mode,
+      voiceId,
+      referenceAudioPath,
+      referenceText,
+      promptText,
+      mixVoices,
+      sampleRate: typeof options.sampleRate === "number" ? options.sampleRate : undefined,
+    });
+    return {
+      audioPath: String(result.audioPath || "").trim(),
+      audioName: String(result.audioName || "").trim(),
+      audioUrl: String(result.audioUrl || "").trim(),
+      referenceText: String(result.referenceText || "").trim(),
+      customVoiceId: String(result.customVoiceId || "").trim() || undefined,
+      customVoiceMode: String(result.customVoiceMode || "").trim() || undefined,
+      requestModel: String(result.requestModel || "").trim() || undefined,
+      targetModel: String(result.targetModel || "").trim() || undefined,
+    };
   }
 
   async function streamVoice(
@@ -3158,8 +3231,23 @@ function createToonflowStore() {
     return result.audioUrl || "";
   }
 
-  async function polishVoicePrompt(text: string, style = ""): Promise<string> {
-    const result = await api.polishVoicePrompt(text, style);
+  /**
+   * 让后端根据当前语音模式和真实语音配置选择更合适的提示词润色策略。
+   */
+  async function polishVoicePrompt(
+    text: string,
+    options: {
+      configId?: number | null;
+      mode?: string;
+      provider?: string;
+    } = {},
+  ): Promise<string> {
+    const result = await api.polishVoicePrompt({
+      text,
+      configId: options.configId,
+      mode: options.mode,
+      provider: options.provider,
+    });
     return String(result.prompt || "").trim();
   }
 
@@ -3635,6 +3723,7 @@ function createToonflowStore() {
         openingLine: normalizeScalarEditorText(chapter.openingText).trim(),
         background: normalizeScalarEditorText(chapter.backgroundPath).trim(),
         music: normalizeScalarEditorText(chapter.bgmPath).trim(),
+        musicAutoPlay: chapter.bgmAutoPlay ?? true,
         conditionVisible: chapter.showCompletionCondition ?? true,
       }))
       .filter((item) => item.sort > 0);
@@ -3645,6 +3734,7 @@ function createToonflowStore() {
       normalizeScalarEditorText(state.chapterOpeningLine).trim().length > 0 ||
       normalizeScalarEditorText(state.chapterBackground).trim().length > 0 ||
       normalizeScalarEditorText(state.chapterMusic).trim().length > 0 ||
+      state.chapterMusicAutoPlay !== true ||
       state.chapterConditionVisible !== true;
     if (hasDraftExtra && draftSort > 0) {
       const draftExtra = {
@@ -3654,6 +3744,7 @@ function createToonflowStore() {
         openingLine: normalizeScalarEditorText(state.chapterOpeningLine).trim(),
         background: normalizeScalarEditorText(state.chapterBackground).trim(),
         music: normalizeScalarEditorText(state.chapterMusic).trim(),
+        musicAutoPlay: state.chapterMusicAutoPlay,
         conditionVisible: state.chapterConditionVisible,
       };
       const index = chapterExtras.findIndex((item) => (draftExtra.chapterId ? item.chapterId === draftExtra.chapterId : item.sort === draftExtra.sort));
@@ -3978,6 +4069,65 @@ function createToonflowStore() {
     state.notice = "已转回草稿，可继续编辑";
   }
 
+  /**
+   * 复制一个已发布/发布中的故事为全新的草稿副本，并立即打开副本进入编辑页。
+   * 复制动作必须生成独立世界，避免修改副本时影响原故事资源或发布状态。
+   */
+  async function copyWorldAsDraft(world: WorldItem) {
+    if (!canEditWorld(world)) {
+      state.notice = "只能复制自己的故事";
+      return;
+    }
+    state.loading = true;
+    try {
+      const copiedWorld = await api.copyWorld(Number(world.id));
+      if (Number(copiedWorld.projectId || 0) > 0 && Number(copiedWorld.projectId || 0) !== Number(state.selectedProjectId || 0)) {
+        selectProject(Number(copiedWorld.projectId || 0));
+      }
+      // 先刷新“我的作品”列表，让新副本立刻出现在草稿箱里。
+      await reloadAll();
+      // 再打开副本详情，确保用户直接进入新草稿的编辑页，而不是停留在原故事卡片。
+      await loadWorldForEdit(copiedWorld);
+      state.worldPublishStatus = "draft";
+      state.notice = `已复制为草稿：${copiedWorld.name || "未命名故事"}`;
+    } catch (err) {
+      state.notice = `复制故事失败: ${(err as Error).message}`;
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  /**
+   * 查询其他故事里的可导入角色列表。
+   * 创建页弹窗只需要分页结果，不需要把查询状态长期塞进全局 store。
+   */
+  async function listImportableRoles(input: {
+    worldName?: string;
+    roleName?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<ImportableRoleListResult> {
+    return api.listImportableRoles({
+      excludeWorldId: Number(state.worldId || 0) || undefined,
+      worldName: String(input.worldName || "").trim() || undefined,
+      roleName: String(input.roleName || "").trim() || undefined,
+      page: Number(input.page || 1),
+      pageSize: Number(input.pageSize || 20),
+    });
+  }
+
+  /**
+   * 把其他故事里的角色复制到当前草稿。
+   * 这里追加的是后端已经复制好资源的独立角色副本，因此后续编辑不会影响源故事。
+   */
+  async function importRoleFromWorld(sourceWorldId: number, roleId: string): Promise<ImportWorldRoleResult> {
+    const imported = await api.importWorldRole(sourceWorldId, roleId);
+    state.npcRoles.push(stripRoleVoiceConfig(imported.role));
+    scheduleStoryEditorAutoPersist(120);
+    state.notice = `已导入角色：${imported.role.name || "新角色"}`;
+    return imported;
+  }
+
   async function deleteWorld(world: WorldItem) {
     await api.deleteWorld(Number(world.id));
     if (Number(state.worldId || 0) === Number(world.id || 0)) {
@@ -3999,7 +4149,9 @@ function createToonflowStore() {
     state.chapterOpeningLine = empty.openingText || "";
     state.chapterBackground = empty.backgroundPath || "";
     state.chapterMusic = empty.bgmPath || "";
+    state.chapterMusicAutoPlay = empty.bgmAutoPlay ?? true;
     state.chapterConditionVisible = empty.showCompletionCondition ?? true;
+    state.chapterRuntimeOutlineAutoGenerate = true;
     state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(empty.runtimeOutline);
   }
 
@@ -4014,7 +4166,9 @@ function createToonflowStore() {
     state.chapterOpeningLine = "";
     state.chapterBackground = "";
     state.chapterMusic = "";
+    state.chapterMusicAutoPlay = true;
     state.chapterConditionVisible = true;
+    state.chapterRuntimeOutlineAutoGenerate = true;
     state.chapterRuntimeOutlineText = "";
     primeStoryEditorPersistState();
   }
@@ -4049,7 +4203,9 @@ function createToonflowStore() {
     state.chapterOpeningLine = normalizedChapter.openingLine;
     state.chapterBackground = normalizeScalarEditorText(chapter.backgroundPath);
     state.chapterMusic = normalizeScalarEditorText(chapter.bgmPath);
+    state.chapterMusicAutoPlay = chapter.bgmAutoPlay ?? true;
     state.chapterConditionVisible = chapter.showCompletionCondition ?? true;
+    state.chapterRuntimeOutlineAutoGenerate = true;
     state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(chapter.runtimeOutline);
     primeStoryEditorPersistState();
   }
@@ -4108,7 +4264,10 @@ function createToonflowStore() {
     );
     const entryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
     const completionConditionText = normalizeConditionEditorText(state.chapterCondition);
-    const runtimeOutline = parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
+    // 勾选“自动”时由后端基于正文重建 Phase Graph；关闭时才使用手写 JSON。
+    const runtimeOutline = state.chapterRuntimeOutlineAutoGenerate
+      ? null
+      : parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
     state.chapterContent = chapterBody;
     state.chapterEntryCondition = entryConditionText;
     state.chapterCondition = completionConditionText;
@@ -4128,6 +4287,7 @@ function createToonflowStore() {
       openingRole: state.chapterOpeningRole,
       openingText: state.chapterOpeningLine,
       bgmPath: state.chapterMusic,
+      bgmAutoPlay: state.chapterMusicAutoPlay,
       showCompletionCondition: state.chapterConditionVisible,
       title: chapterTitle,
       content: persistedContent,
@@ -4156,6 +4316,9 @@ function createToonflowStore() {
       if (reloadAfterPersist) {
         await reloadWorldsAfterSave();
       }
+    }
+    if (state.chapterRuntimeOutlineAutoGenerate) {
+      state.chapterRuntimeOutlineText = normalizeRuntimeOutlineEditorText(saved.runtimeOutline);
     }
     primeStoryEditorPersistState();
     return saved;
@@ -4261,6 +4424,10 @@ function createToonflowStore() {
       // 正式游玩入口必须先清空上一轮章节调试态，避免误触发调试 streamlines。
       resetDebugSessionState();
       clearRuntimeRetryState();
+      // 正式游玩首启阶段要独占“开场白 -> 首轮编排”这段启动链。
+      // 否则播放页 watcher 会在开场白播完后把最后一条旁白误判成 waiting_next，
+      // 提前触发 continueSessionNarrative()，和这里手动发起的首轮 /game/orchestration 并发撞车。
+      state.runtimeProcessingPending = true;
       state.notice = "正在进入故事...";
       state.activeTab = "play";
       state.sessionViewMode = "live";
@@ -4279,6 +4446,7 @@ function createToonflowStore() {
         state.sessionOpeningStage = "正在继续上次故事...";
         state.notice = "正在继续上次故事...";
         await openSession(existingSession.sessionId, { resumeLatest: true });
+        state.runtimeProcessingPending = false;
         if (quickText.trim()) {
           state.sendText = quickText.trim();
           await sendMessage();
@@ -4333,6 +4501,7 @@ function createToonflowStore() {
       }
 
       void refreshSessionListState();
+      state.runtimeProcessingPending = false;
       if (quickText.trim()) {
         state.sendText = quickText.trim();
         await sendMessage();
@@ -4342,6 +4511,7 @@ function createToonflowStore() {
       state.sessionOpenError = message;
       state.notice = `进入游玩失败: ${message}`;
     } finally {
+      state.runtimeProcessingPending = false;
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
     }
@@ -5413,6 +5583,9 @@ function createToonflowStore() {
     startNewStoryDraft,
     openWorldForEdit,
     reopenPublishedWorldAsDraft,
+    copyWorldAsDraft,
+    listImportableRoles,
+    importRoleFromWorld,
     deleteWorld,
     saveStoryEditor,
     saveWorldOnly,
@@ -5479,6 +5652,7 @@ function createToonflowStore() {
     currentStoryPromptValue,
     uploadVoiceReferenceAudio,
     previewVoice,
+    generateVoiceBinding,
     streamVoice,
     polishVoicePrompt,
     transcribeRuntimeVoice,
