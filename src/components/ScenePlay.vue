@@ -61,6 +61,20 @@ type RuntimeChatTraceRow = {
   nextRoleType: string;
   updateTime: number;
 };
+
+type RuntimeBattleEnemyView = {
+  enemyId: string;
+  name: string;
+  description: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  avatarPath: string;
+  avatarBgPath: string;
+  isRoleEnemy: boolean;
+};
 function asMiniRecord(input: unknown): Record<string, unknown> {
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
     return input as Record<string, unknown>;
@@ -1013,6 +1027,42 @@ function miniGameStateItems(gameType: string, publicState: Record<string, unknow
     .slice(0, 10);
 }
 
+/**
+ * 将小游戏 public_state 里的敌人列表转换成设置面板可直接展示的结构。
+ * battle 规则本会把临时敌人的头像、数值和简介都落在 enemy_list 中，前端只做轻量归一化。
+ */
+function battleEnemiesFromMiniGame(publicState: Record<string, unknown>): RuntimeBattleEnemyView[] {
+  return asMiniArray<Record<string, unknown>>(publicState.enemy_list)
+    .map((item, index) => {
+      const hp = Number(item.hp || 0) || 0;
+      const maxHp = Math.max(Number(item.maxHp || item.max_hp || hp || 0) || 0, hp);
+      const mp = Number(item.mp || 0) || 0;
+      const maxMp = Math.max(Number(item.maxMp || item.max_mp || mp || 0) || 0, mp);
+      return {
+        enemyId: scalarText(item.enemyId || item.enemy_id) || `enemy_${index}`,
+        name: scalarText(item.name) || `敌人${index + 1}`,
+        description: scalarText(item.description) || "临时敌人",
+        level: Number(item.level || 1) || 1,
+        hp,
+        maxHp,
+        mp,
+        maxMp,
+        avatarPath: scalarText(item.avatarPath || item.avatar_path),
+        avatarBgPath: scalarText(item.avatarBgPath || item.avatar_bg_path),
+        isRoleEnemy: Boolean(item.isRoleEnemy || item.is_role_enemy),
+      };
+    })
+    .filter((item) => item.name);
+}
+
+/**
+ * 计算血量/蓝量进度条百分比，统一限制在 0 到 100 之间，避免异常数值撑坏 UI。
+ */
+function battleGaugePercent(current: number, max: number): number {
+  if (!(max > 0)) return 0;
+  return Math.max(0, Math.min(100, Math.round((current / max) * 100)));
+}
+
 const activeMiniGame = computed(() => {
   const root = asMiniRecord(runtimeState.value.miniGame);
   const sessionState = asMiniRecord(root.session);
@@ -1043,6 +1093,11 @@ const activeMiniGame = computed(() => {
 const miniGameSummaryItems = computed(() => {
   if (!activeMiniGame.value) return [];
   return activeMiniGame.value.stateItems || [];
+});
+const battleEnemies = computed(() => {
+  const game = activeMiniGame.value;
+  if (!game || game.gameType !== "battle") return [];
+  return battleEnemiesFromMiniGame(game.publicState);
 });
 const miniGameControlOptions = computed(() => {
   const game = activeMiniGame.value;
@@ -1085,6 +1140,7 @@ const roleDetail = computed<StoryRole | null>(() => {
 });
 const roleParameterRawOpen = ref(false);
 const chapterDetailOpen = ref(true);
+const enemyStatusOpen = ref(false);
 const roleCopyHint = ref("");
 const menuOpen = ref(false);
 const menuMessage = ref<MessageItem | null>(null);
@@ -3418,6 +3474,49 @@ onBeforeUnmount(() => {
           <button type="button" class="play-link-text" @click="openRoleDetail(settingSelectedRole)">查看角色详情</button>
         </div>
 
+        <button type="button" class="play-link-row" @click="enemyStatusOpen = !enemyStatusOpen">
+          <span>敌人状态{{ battleEnemies.length ? `（${battleEnemies.length}）` : "" }}</span>
+          <span>{{ enemyStatusOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="enemyStatusOpen" class="play-inline-card">
+          <template v-if="battleEnemies.length">
+            <div class="play-enemy-list">
+              <div
+                v-for="enemy in battleEnemies"
+                :key="enemy.enemyId"
+                class="play-enemy-card"
+              >
+                <div class="play-enemy-card__head">
+                  <div class="play-enemy-card__avatar">
+                    <LayeredAvatar
+                      :foreground-path="enemy.avatarPath || null"
+                      :background-path="enemy.avatarBgPath || null"
+                      :alt="enemy.name"
+                    >
+                      <span>{{ enemy.name.slice(0, 1) || "敌" }}</span>
+                    </LayeredAvatar>
+                  </div>
+                  <div class="play-enemy-card__body">
+                    <div class="play-enemy-card__name">
+                      <span>{{ enemy.name }}</span>
+                      <span class="play-enemy-card__tag">{{ enemy.isRoleEnemy ? "角色敌人" : "临时敌人" }}</span>
+                    </div>
+                    <div class="play-inline-card__text">简介：{{ enemy.description || "暂无简介" }}</div>
+                    <div class="play-enemy-card__meta">等级 {{ enemy.level }} · HP {{ enemy.hp }}/{{ enemy.maxHp }} · MP {{ enemy.mp }}/{{ enemy.maxMp }}</div>
+                  </div>
+                </div>
+                <div class="play-enemy-card__bar">
+                  <div class="play-enemy-card__bar-fill" :style="{ width: `${battleGaugePercent(enemy.hp, enemy.maxHp)}%` }"></div>
+                </div>
+                <div class="play-enemy-card__bar play-enemy-card__bar--mana">
+                  <div class="play-enemy-card__bar-fill play-enemy-card__bar-fill--mana" :style="{ width: `${battleGaugePercent(enemy.mp, enemy.maxMp)}%` }"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div v-else class="play-inline-card__text">当前没有敌人。</div>
+        </div>
+
         <button type="button" class="play-link-row" @click="toggleChapterDetail">
           <span>故事设定</span>
           <span>{{ chapterDetailOpen ? "收起 >" : ">" }}</span>
@@ -3882,6 +3981,87 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.play-enemy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.play-enemy-card {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.play-enemy-card__head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.play-enemy-card__avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
+.play-enemy-card__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.play-enemy-card__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #f4f7ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.play-enemy-card__tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(147, 197, 253, 0.18);
+  color: rgba(223, 233, 255, 0.88);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.play-enemy-card__meta {
+  color: rgba(223, 233, 255, 0.74);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.play-enemy-card__bar {
+  margin-top: 8px;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.play-enemy-card__bar--mana {
+  margin-top: 6px;
+}
+
+.play-enemy-card__bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff7f6f, #ffb36f);
+}
+
+.play-enemy-card__bar-fill--mana {
+  background: linear-gradient(90deg, #63b8ff, #7ee0ff);
+}
+
 .play-event-list {
   display: flex;
   flex-direction: column;

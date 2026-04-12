@@ -40,6 +40,11 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     agentLabel: "chapter_judge",
     tsLabel: "src/agents/story/chapter_judge/index.ts",
   },
+  "story-event-progress": {
+    code: "story-event-progress",
+    agentLabel: "event_progress",
+    tsLabel: "src/agents/story/event_progress/index.ts",
+  },
   "story-mini-game": {
     code: "story-mini-game",
     agentLabel: "mini_game_agent",
