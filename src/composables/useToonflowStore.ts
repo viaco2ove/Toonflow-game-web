@@ -28,6 +28,7 @@ import {
   SessionNarrativeResult,
   SessionOrchestrationResult,
   StoryInitResult,
+  StoryInfoResult,
   StoryRuntimeConfig,
   StoryRole,
   VoiceBindingDraft,
@@ -84,6 +85,12 @@ type RuntimeChatTraceItem = {
   nextRole: string;
   nextRoleType: string;
   updateTime: number;
+};
+
+type PendingSessionOrchestrationPrefetch = {
+  sessionId: string;
+  triggerMessageId: number;
+  promise: Promise<SessionOrchestrationResult>;
 };
 
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
@@ -930,6 +937,7 @@ function createToonflowStore() {
   let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
   let continueSessionNarrativePromise: Promise<void> = Promise.resolve();
   let continueDebugNarrativePromise: Promise<boolean> | null = null;
+  let pendingSessionOrchestrationPrefetch: PendingSessionOrchestrationPrefetch | null = null;
   const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
@@ -1126,9 +1134,7 @@ function createToonflowStore() {
     state.debugEndDialog = null;
     state.debugEndDialogDetail = "";
     state.messages = backendMessages;
-    syncDebugRevisitSnapshotsFromStorage();
-    syncLatestRuntimeTurnStatusWithState();
-    syncRuntimeChatTrace();
+    await refreshDebugStoryInfo(state.chapters.find((item) => item.id === state.debugChapterId) || null);
     state.notice = "已回溯到这句台词，可继续调试编排";
     state.runtimeProcessingPending = false;
     state.sessionRuntimeStage = "";
@@ -1210,6 +1216,71 @@ function createToonflowStore() {
         await continueSessionNarrative();
       });
     return continueSessionNarrativePromise;
+  }
+
+  /**
+   * 清理正式游玩链里“上一句台词播报期间预取的下一轮编排”。
+   *
+   * 用途：
+   * - 切换会话、用户发言、重开故事时，旧的预取结果已经不可信；
+   * - 这里统一清空，避免把上一轮的 plan 错喂到当前会话。
+   */
+  function clearPendingSessionOrchestrationPrefetch() {
+    pendingSessionOrchestrationPrefetch = null;
+  }
+
+  /**
+   * 在当前台词已经生成完成后，后台预取下一轮 `/game/orchestration`。
+   *
+   * 用途：
+   * - 恢复“语音播放中就开始准备下一轮编排”的节奏；
+   * - 但只做预取，不在这里直接改 UI 或改回合状态。
+   */
+  function prefetchNextSessionOrchestration(triggerMessageId: number) {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId || !Number.isFinite(Number(triggerMessageId)) || Number(triggerMessageId) <= 0) {
+      return;
+    }
+    const turnState = runtimeTurnStateRecord();
+    if (turnState["canPlayerSpeak"] !== false) {
+      clearPendingSessionOrchestrationPrefetch();
+      return;
+    }
+    if (
+      pendingSessionOrchestrationPrefetch
+      && pendingSessionOrchestrationPrefetch.sessionId === sessionId
+      && pendingSessionOrchestrationPrefetch.triggerMessageId === Number(triggerMessageId)
+    ) {
+      return;
+    }
+    const promise = api.orchestrateSession(sessionId);
+    pendingSessionOrchestrationPrefetch = {
+      sessionId,
+      triggerMessageId: Number(triggerMessageId),
+      promise,
+    };
+  }
+
+  /**
+   * 读取当前会话可用的编排结果；优先消费已预取结果，避免语音播完后再白等一轮。
+   *
+   * 用途：
+   * - 只有当前最新台词对应的预取结果才允许复用；
+   * - 一旦用户中途发言或会话切换，就强制回退到实时请求。
+   */
+  async function resolveSessionOrchestration(triggerMessageId: number): Promise<SessionOrchestrationResult> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    const pending = pendingSessionOrchestrationPrefetch;
+    if (
+      pending
+      && pending.sessionId === sessionId
+      && pending.triggerMessageId === Number(triggerMessageId)
+    ) {
+      clearPendingSessionOrchestrationPrefetch();
+      return await pending.promise;
+    }
+    clearPendingSessionOrchestrationPrefetch();
+    return await api.orchestrateSession(sessionId);
   }
 
   let editorAutoPersistTimer: number | null = null;
@@ -1446,12 +1517,6 @@ function createToonflowStore() {
     const latestLineIndex = Number(latestMeta?.["lineIndex"]);
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
-    const fallbackNextRole = canPlayerSpeakNow || currentStatus === "waiting_player"
-      ? "用户"
-      : String(turnState["expectedRole"] || "").trim() || "当前角色";
-    const fallbackNextRoleType = canPlayerSpeakNow || currentStatus === "waiting_player"
-      ? "player"
-      : String(turnState["expectedRoleType"] || "").trim() || "npc";
     const latestRow: RuntimeChatTraceItem = {
       conversationId,
       messageId: Number(latestMessage.id || 0),
@@ -1459,8 +1524,9 @@ function createToonflowStore() {
       currentRole: String(latestMessage.role || "").trim(),
       currentRoleType: String(latestMessage.roleType || "").trim(),
       currentStatus: currentStatus || (canPlayerSpeakNow ? "waiting_player" : "waiting_next"),
-      nextRole: String(latestMeta?.["nextRole"] || fallbackNextRole || "").trim(),
-      nextRoleType: String(latestMeta?.["nextRoleType"] || fallbackNextRoleType || "").trim(),
+      // 编排结果只负责当前发言角色和动机，不在前端缓存里提前写“下一位是谁”。
+      nextRole: "",
+      nextRoleType: "",
       updateTime: Date.now(),
     };
     storageSet(
@@ -1483,10 +1549,6 @@ function createToonflowStore() {
       if (Number.isFinite(lineIndex) && lineIndex > 0) next.lineIndex = lineIndex;
       const status = String(record["status"] || "").trim() as RuntimeLineStatus | "";
       if (status) next.status = status;
-      const nextRole = String(record["nextRole"] || "").trim();
-      const nextRoleType = String(record["nextRoleType"] || "").trim();
-      if (nextRole) next.nextRole = nextRole;
-      if (nextRoleType) next.nextRoleType = nextRoleType;
       if (typeof record["streaming"] === "boolean") {
         next.streaming = Boolean(record["streaming"]);
       }
@@ -1495,20 +1557,14 @@ function createToonflowStore() {
     if (typeof patch.lineIndex === "number") next.lineIndex = patch.lineIndex;
     if (typeof patch.streaming === "boolean") next.streaming = patch.streaming;
     if (patch.status) next.status = patch.status;
-    if (patch.nextRole !== undefined) next.nextRole = String(patch.nextRole || "").trim();
-    if (patch.nextRoleType !== undefined) next.nextRoleType = String(patch.nextRoleType || "").trim();
     return next;
   }
 
   function setRuntimeMessageStatus(messageId: number, status: RuntimeLineStatus) {
-    const turnState = runtimeTurnStateRecord();
-    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
     updateMessageById(messageId, (message) => ({
       ...message,
       meta: buildRuntimeStreamMeta(message.meta, {
         status,
-        nextRole: status === "waiting_player" || canPlayerSpeakNow ? "用户" : String(turnState["expectedRole"] || "").trim() || "当前角色",
-        nextRoleType: status === "waiting_player" || canPlayerSpeakNow ? "player" : String(turnState["expectedRoleType"] || "").trim() || "npc",
       }),
     }), true);
   }
@@ -1520,21 +1576,11 @@ function createToonflowStore() {
     if (isStreamingRuntimeMessage(latest)) return;
     const turnState = runtimeTurnStateRecord();
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
-    const expectedNextRole = canPlayerSpeakNow
-      ? "用户"
-      : String(turnState["expectedRole"] || "").trim() || "当前角色";
-    const expectedNextRoleType = canPlayerSpeakNow
-      ? "player"
-      : String(turnState["expectedRoleType"] || "").trim() || "npc";
     const nextStatus: RuntimeLineStatus = canPlayerSpeakNow ? "waiting_player" : "waiting_next";
     const currentMeta = runtimeMetaRecord(latest.meta);
     const currentStatus = runtimeMessageStatus(latest);
-    const currentNextRole = String(currentMeta?.["nextRole"] || "").trim();
-    const currentNextRoleType = String(currentMeta?.["nextRoleType"] || "").trim();
     if (
       currentStatus === nextStatus
-      && currentNextRole === expectedNextRole
-      && currentNextRoleType === expectedNextRoleType
     ) {
       return;
     }
@@ -1543,8 +1589,6 @@ function createToonflowStore() {
       meta: buildRuntimeStreamMeta(message.meta, {
         streaming: false,
         status: nextStatus,
-        nextRole: expectedNextRole,
-        nextRoleType: expectedNextRoleType,
       }),
     }), true);
   }
@@ -1684,8 +1728,6 @@ function createToonflowStore() {
         sentences: [],
         lineIndex,
         status: "orchestrated",
-        nextRole: String(plan.nextRole || "").trim(),
-        nextRoleType: String(plan.nextRoleType || "").trim(),
       } satisfies RuntimeStreamMeta,
     };
   }
@@ -1728,8 +1770,6 @@ function createToonflowStore() {
         lineIndex,
         streaming: false,
         status: "generated",
-        nextRole: canPlayerSpeakNow ? "用户" : scalarText(turnState["expectedRole"]),
-        nextRoleType: canPlayerSpeakNow ? "player" : scalarText(turnState["expectedRoleType"]),
       }),
     };
   }
@@ -1756,14 +1796,13 @@ function createToonflowStore() {
         streaming: false,
         lineIndex: latestIndex + 1,
         status: canPlayerSpeakNow ? "waiting_player" : "waiting_next",
-        nextRole: canPlayerSpeakNow ? "用户" : (scalarText(turnState["expectedRole"]) || "当前角色"),
-        nextRoleType: canPlayerSpeakNow ? "player" : (scalarText(turnState["expectedRoleType"]) || "npc"),
       }),
     };
     return normalized;
   }
 
   function applyLoadedSessionDetail(detail: SessionDetail) {
+    clearPendingSessionOrchestrationPrefetch();
     const normalizedMessages = normalizeLoadedSessionMessages(detail);
     state.sessionRuntimeStage = "";
     state.sessionOpenError = "";
@@ -1779,6 +1818,7 @@ function createToonflowStore() {
   }
 
   function applyInitializedSessionDetail(world: WorldItem, result: StoryInitResult) {
+    clearPendingSessionOrchestrationPrefetch();
     const initialState = ((result.state || {}) as Record<string, unknown>) || {};
     const chapterId = Number(result.chapterId || 0) || null;
     const chapterTitle = String(result.chapterTitle || "").trim();
@@ -1811,6 +1851,59 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
+  /**
+   * 把 `/game/storyInfo` 返回的正式会话信息合并进当前会话详情。
+   *
+   * 用途：
+   * - 让“故事设定 / 当前章节事件”统一吃 storyInfo，而不是依赖 orchestration/streamlines 的附带返回；
+   * - 保留当前已显示的消息列表，只覆盖服务端权威运行态和事件摘要。
+   */
+  function applySessionStoryInfoResult(result: StoryInfoResult) {
+    const existingDetail = state.sessionDetail || null;
+    const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    const nextChapter = result.chapter || existingDetail?.chapter || null;
+    const nextWorld = result.world || existingDetail?.world || null;
+    state.sessionDetail = {
+      ...(existingDetail || {}),
+      sessionId: existingDetail?.sessionId || state.currentSessionId,
+      chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
+      state: nextState,
+      world: nextWorld,
+      chapter: nextChapter,
+      latestSnapshot: {
+        ...(existingDetail?.latestSnapshot || {}),
+        state: nextState,
+      },
+      currentEventDigest: result.currentEventDigest || existingDetail?.currentEventDigest || null,
+      eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : (existingDetail?.eventDigestWindow || []),
+      eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
+      messages: existingDetail?.messages || state.messages,
+    };
+    if (nextChapter) {
+      const chapterIndex = state.chapters.findIndex((item) => Number(item.id || 0) === Number(nextChapter.id || 0));
+      if (chapterIndex >= 0) {
+        state.chapters.splice(chapterIndex, 1, nextChapter);
+      } else {
+        state.chapters = [...state.chapters, nextChapter];
+      }
+    }
+  }
+
+  /**
+   * 读取正式会话的统一运行信息。
+   *
+   * 用途：
+   * - 在编排、台词流、回溯等动作后重新同步服务端权威状态；
+   * - 避免前端继续从大杂烩接口结果里拼故事设定和事件面板。
+   */
+  async function refreshSessionStoryInfo() {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) return null;
+    const result = await api.storyInfo({ sessionId });
+    applySessionStoryInfoResult(result);
+    return result;
+  }
+
   function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
     const existingDetail = state.sessionDetail || null;
     state.sessionDetail = {
@@ -1837,11 +1930,18 @@ function createToonflowStore() {
     return Boolean(String(plan.role || "").trim()) && roleType !== "player";
   }
 
+  /**
+   * 对“没有后续台词可播”的 await_user 结果做前端兜底。
+   *
+   * 用途：
+   * - 正式游玩必须先走完“编排 -> 台词流”这一轮，不能在台词还没生成前就把下一位改成用户；
+   * - 因此这里只在 plan 本身不会继续走 streamlines 时，才本地切成用户回合。
+   */
   function applyAwaitUserTurnFromPlan(plan?: DebugNarrativePlan | null) {
     const currentPlan = plan || null;
-    const shouldYieldToUser = Boolean(currentPlan?.awaitUser)
-      || String(currentPlan?.nextRoleType || "").trim().toLowerCase() === "player";
-    if (!shouldYieldToUser) return;
+    // 正式链只接受“是否交还用户输入”的最小信号，不消费“下一位是谁”这种预编排字段。
+    const shouldYieldToUser = Boolean(currentPlan?.awaitUser);
+    if (!shouldYieldToUser || shouldStreamSessionPlanFromPlan(currentPlan)) return;
     const detail = state.sessionDetail || null;
     const root = asMiniRecord(detail?.state);
     if (!Object.keys(root).length) return;
@@ -1870,8 +1970,6 @@ function createToonflowStore() {
           meta: buildRuntimeStreamMeta(current.meta, {
             status: "waiting_player",
             streaming: false,
-            nextRole: displayName,
-            nextRoleType: "player",
           }),
         }),
         true,
@@ -2481,6 +2579,10 @@ function createToonflowStore() {
       openingRole: normalizedOpeningRole,
       openingText: normalizedOpeningLine,
       bgmPath: normalizeScalarEditorText(state.chapterMusic).trim(),
+      // 调试启动前会先把编辑器中的章节草稿重新塞回 state.chapters；
+      // 这里必须带上 bgmAutoPlay，否则未勾选会被覆盖成 undefined，
+      // 播放页再按“未配置=默认开启”处理，导致章节调试里背景音乐被错误自动播放。
+      bgmAutoPlay: state.chapterMusicAutoPlay,
       showCompletionCondition: state.chapterConditionVisible,
     };
   }
@@ -4423,6 +4525,7 @@ function createToonflowStore() {
 
   async function startFromWorld(world: WorldItem, quickText = "") {
     try {
+      clearPendingSessionOrchestrationPrefetch();
       // 正式游玩入口必须先清空上一轮章节调试态，避免误触发调试 streamlines。
       resetDebugSessionState();
       clearRuntimeRetryState();
@@ -4465,6 +4568,7 @@ function createToonflowStore() {
         skipOpening: false,
       });
       applyInitializedSessionDetail(world, initResult);
+      await refreshSessionStoryInfo();
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
 
@@ -4472,6 +4576,7 @@ function createToonflowStore() {
       const introduction = await api.introduceStory(state.currentSessionId);
       if (introduction.plan) {
         applySessionOrchestrationResult(introduction);
+        await refreshSessionStoryInfo();
         if (shouldStreamSessionPlanFromPlan(introduction.plan)) {
           state.sessionRuntimeStage = "播放开场白";
           await streamSessionPlan(introduction, []);
@@ -4484,15 +4589,8 @@ function createToonflowStore() {
       const firstChapterResult = await api.orchestrateSession(state.currentSessionId);
       if (firstChapterResult.plan) {
         const history = conversationMessages();
-        const currentSessionDetail = (state.sessionDetail || null) as SessionDetail | null;
-        applySessionOrchestrationResult({
-          ...firstChapterResult,
-          currentEventDigest: currentSessionDetail?.currentEventDigest || firstChapterResult.currentEventDigest || null,
-          eventDigestWindow: currentSessionDetail?.eventDigestWindow?.length
-            ? currentSessionDetail.eventDigestWindow
-            : (firstChapterResult.eventDigestWindow || []),
-          eventDigestWindowText: String(currentSessionDetail?.eventDigestWindowText || firstChapterResult.eventDigestWindowText || ""),
-        });
+        applySessionOrchestrationResult(firstChapterResult);
+        await refreshSessionStoryInfo();
         if (shouldStreamSessionPlanFromPlan(firstChapterResult.plan)) {
           state.sessionRuntimeStage = "生成第一章内容";
           await streamSessionPlan(firstChapterResult, history);
@@ -4564,6 +4662,7 @@ function createToonflowStore() {
   }
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
+    clearPendingSessionOrchestrationPrefetch();
     clearRuntimeRetryState();
     // 打开正式会话时同步清掉章节调试态，确保后续自动推进只走正式链。
     resetDebugSessionState();
@@ -4619,6 +4718,9 @@ function createToonflowStore() {
   async function deleteSession(sessionId: string) {
     const id = String(sessionId || "").trim();
     if (!id) return;
+    if (state.currentSessionId === id) {
+      clearPendingSessionOrchestrationPrefetch();
+    }
     await api.deleteSession(id);
     state.sessions = state.sessions.filter((item) => item.sessionId !== id);
     if (state.currentSessionId === id) {
@@ -4682,8 +4784,73 @@ function createToonflowStore() {
     };
   }
 
+  /**
+   * 把 `/game/storyInfo` 返回的调试运行信息覆盖到本地调试态。
+   *
+   * 用途：
+   * - 调试链的故事设定、当前章节事件、调试锚点都统一以服务端 storyInfo 为准；
+   * - orchestration/streamlines 只负责最小编排结果和台词流，不再夹带整份运行态。
+   */
+  function applyDebugStoryInfoResult(
+    result: StoryInfoResult,
+    fallbackChapter?: ChapterItem | null,
+  ) {
+    const eventView = resolveDebugEventView(result);
+    const nextState = cloneDebugSnapshotState(result.state || {}) as Record<string, unknown>;
+    state.debugRuntimeState = {
+      ...nextState,
+      currentEventDigest: eventView.currentEventDigest,
+      eventDigestWindow: eventView.eventDigestWindow,
+      eventDigestWindowText: eventView.eventDigestWindowText,
+    };
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    if (typeof result.chapterId === "number" && result.chapterId > 0) {
+      state.debugChapterId = result.chapterId;
+    }
+    const activeChapter = state.chapters.find((item) => item.id === (result.chapterId ?? state.debugChapterId))
+      || fallbackChapter
+      || null;
+    state.debugChapterTitle = normalizeDisplayChapterTitle(
+      result.chapterTitle || activeChapter?.title || state.chapterTitle,
+      activeChapter?.sort,
+    ) || "当前章节";
+    state.debugWorldName = String(result.world?.name || state.debugWorldName || "");
+    state.debugWorldIntro = String(result.world?.intro || state.debugWorldIntro || "");
+    if (result.chapter) {
+      const chapterIndex = state.chapters.findIndex((item) => Number(item.id || 0) === Number(result.chapter?.id || 0));
+      if (chapterIndex >= 0) {
+        state.chapters.splice(chapterIndex, 1, result.chapter);
+      } else {
+        state.chapters = [...state.chapters, result.chapter];
+      }
+    }
+    syncDebugRevisitSnapshotsFromStorage();
+    syncLatestRuntimeTurnStatusWithState();
+    syncRuntimeChatTrace();
+  }
+
+  /**
+   * 拉取当前章节调试的统一运行信息。
+   *
+   * 用途：
+   * - 在调试编排、台词流、回溯成功后刷新服务端权威状态；
+   * - 避免继续依赖调试接口旧式的大杂烩返回。
+   */
+  async function refreshDebugStoryInfo(fallbackChapter?: ChapterItem | null) {
+    if (!state.worldId) return null;
+    const result = await api.storyInfo({
+      worldId: state.worldId,
+      chapterId: state.debugChapterId || fallbackChapter?.id || undefined,
+      state: state.debugRuntimeState,
+    });
+    applyDebugStoryInfoResult(result, fallbackChapter);
+    return result;
+  }
+
   function applyDebugOrchestrationResult(
     result: {
+      role?: string | null;
+      motive?: string | null;
       state?: Record<string, unknown> | null;
       chapterId?: number | null;
       chapterTitle?: string | null;
@@ -4696,15 +4863,29 @@ function createToonflowStore() {
     },
     fallbackChapter?: ChapterItem | null,
   ) {
+    const normalizedPlan = result.plan || (
+      String(result.role || "").trim()
+        ? {
+          role: String(result.role || "").trim(),
+          motive: String(result.motive || "").trim(),
+        } as DebugNarrativePlan
+        : null
+    );
     const eventView = resolveDebugEventView(result);
+    const incomingState = (result.state && typeof result.state === "object")
+      ? (result.state as Record<string, unknown>)
+      : {};
+    // 调试编排接口现在只回最小状态锚点（debugRuntimeKey），不再回整份运行态。
+    // 这里必须保留本地现有 state，再用服务端锚点覆盖，后续 streamlines 再从缓存拿最新态。
     state.debugRuntimeState = {
-      ...((result.state || {}) as Record<string, unknown>),
+      ...(state.debugRuntimeState as Record<string, unknown>),
+      ...incomingState,
       currentEventDigest: eventView.currentEventDigest,
       eventDigestWindow: eventView.eventDigestWindow,
       eventDigestWindowText: eventView.eventDigestWindowText,
     };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
-    state.debugLatestPlan = result.plan || null;
+    state.debugLatestPlan = normalizedPlan;
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
       state.debugChapterId = result.chapterId;
     }
@@ -4827,9 +5008,7 @@ function createToonflowStore() {
 
   function shouldYieldToUserFromDebugPlan(plan: DebugNarrativePlan | null | undefined) {
     if (!plan) return false;
-    const nextRoleType = String(plan.nextRoleType || "").trim().toLowerCase();
-    const roleType = String(plan.roleType || "").trim().toLowerCase();
-    return plan.awaitUser === true || nextRoleType === "player";
+    return plan.awaitUser === true;
   }
 
   function shouldStreamDebugPlan(plan: DebugNarrativePlan | null | undefined) {
@@ -4872,6 +5051,7 @@ function createToonflowStore() {
   ) {
     const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
+    let finalMessage: Record<string, unknown> | null = null;
     state.messages = [...historyMessages, streamingMessage];
     syncRuntimeChatTrace();
     let done = false;
@@ -4896,41 +5076,20 @@ function createToonflowStore() {
         }
         if (event.type === "done") {
           done = true;
-          const finalMessage = (event.data?.message || {}) as Record<string, unknown>;
-          const finalContent = String(finalMessage.content || accumulated || "");
+          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
+          const finalMessageRecord = finalMessage || {};
+          const finalContent = String(finalMessageRecord.content || accumulated || "");
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
-            role: String(finalMessage.role || message.role || ""),
-            roleType: String(finalMessage.roleType || message.roleType || ""),
-            eventType: String(finalMessage.eventType || message.eventType || RUNTIME_STREAM_EVENT),
+            role: String(finalMessageRecord.role || message.role || ""),
+            roleType: String(finalMessageRecord.roleType || message.roleType || ""),
+            eventType: String(finalMessageRecord.eventType || message.eventType || RUNTIME_STREAM_EVENT),
             content: finalContent,
             meta: buildRuntimeStreamMeta(message.meta, {
               streaming: false,
               status: "generated",
             }),
           }), true);
-          applyDebugStreamState({
-            state: (event.data?.state || null) as Record<string, unknown> | null,
-            chapterId: Number(event.data?.chapterId || 0) || null,
-            chapterTitle: String(event.data?.chapterTitle || ""),
-            endDialog: String(event.data?.endDialog || "").trim() || null,
-            endDialogDetail: String(event.data?.endDialogDetail || "").trim() || null,
-            currentEventDigest: (event.data?.currentEventDigest || null) as RuntimeEventDigestItem | null,
-            eventDigestWindow: Array.isArray(event.data?.eventDigestWindow) ? event.data?.eventDigestWindow as RuntimeEventDigestItem[] : [],
-            eventDigestWindowText: String(event.data?.eventDigestWindowText || ""),
-          }, state.chapters.find((item) => item.id === state.debugChapterId) || null);
-          recordDebugRevisitSnapshot({
-            id: streamingMessage.id,
-            role: String(finalMessage.role || streamingMessage.role || ""),
-            roleType: String(finalMessage.roleType || streamingMessage.roleType || ""),
-            eventType: String(finalMessage.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
-            content: finalContent,
-            createTime: Number(streamingMessage.createTime || Date.now()),
-            meta: buildRuntimeStreamMeta(streamingMessage.meta, {
-              streaming: false,
-              status: debugCanPlayerSpeakFromState() ? "waiting_player" : "waiting_next",
-            }),
-          });
           return;
         }
         if (event.type === "sentence") {
@@ -4960,6 +5119,20 @@ function createToonflowStore() {
       if (!done) {
         throw new Error("台词流未正常结束");
       }
+      await refreshDebugStoryInfo(state.chapters.find((item) => item.id === state.debugChapterId) || null);
+      const finalMessageRecord = (finalMessage || {}) as Record<string, unknown>;
+      recordDebugRevisitSnapshot({
+        id: streamingMessage.id,
+        role: String(finalMessageRecord["role"] || streamingMessage.role || ""),
+        roleType: String(finalMessageRecord["roleType"] || streamingMessage.roleType || ""),
+        eventType: String(finalMessageRecord["eventType"] || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
+        content: String(finalMessageRecord["content"] || accumulated || ""),
+        createTime: Number(streamingMessage.createTime || Date.now()),
+        meta: buildRuntimeStreamMeta(streamingMessage.meta, {
+          streaming: false,
+          status: debugCanPlayerSpeakFromState() ? "waiting_player" : "waiting_next",
+        }),
+      });
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;
@@ -5068,6 +5241,7 @@ function createToonflowStore() {
       state.debugRuntimeState = (initResult.state || {}) as Record<string, unknown>;
       state.debugChapterId = Number(initResult.chapterId || chapter.id || 0) || null;
       state.debugChapterTitle = String(initResult.chapterTitle || chapter.title || "");
+      await refreshDebugStoryInfo(chapter);
 
       state.sessionRuntimeStage = "生成开场白";
       const introResult = await api.introduceDebug({
@@ -5077,6 +5251,7 @@ function createToonflowStore() {
         messages: [],
       });
       applyDebugOrchestrationResult(introResult, chapter);
+      await refreshDebugStoryInfo(chapter);
       if (introResult.plan && shouldStreamDebugPlan(introResult.plan)) {
         await streamDebugPlan(introResult.plan, []);
       }
@@ -5094,6 +5269,7 @@ function createToonflowStore() {
 
       if (result.plan) {
         applyDebugOrchestrationResult(result, chapter);
+        await refreshDebugStoryInfo(chapter);
         if (shouldStreamDebugPlan(result.plan)) {
           state.sessionRuntimeStage = "生成首轮内容";
           await streamDebugPlan(result.plan, []);
@@ -5160,6 +5336,7 @@ function createToonflowStore() {
       });
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
+      await refreshDebugStoryInfo(currentChapter);
       const shouldYieldToUser = shouldYieldToUserFromDebugPlan(result.plan);
       if (result.plan && shouldStreamDebugPlan(result.plan)) {
         await streamDebugPlanOrFallback(result.plan, history);
@@ -5233,6 +5410,7 @@ function createToonflowStore() {
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
+    await refreshDebugStoryInfo(currentChapter);
     if (optimisticMessageId) {
       commitLocalPendingPlayerMessage(optimisticMessageId);
     }
@@ -5247,6 +5425,7 @@ function createToonflowStore() {
 
   async function performSessionPlayerMessage(content: string, optimisticMessageId?: number | null) {
     if (!state.currentSessionId) return;
+    clearPendingSessionOrchestrationPrefetch();
     state.sessionRuntimeStage = "提交用户发言";
     try {
       const result = await api.addMessage({
@@ -5263,6 +5442,7 @@ function createToonflowStore() {
       state.sendText = "";
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
+      await refreshSessionStoryInfo();
       void refreshSessionListState();
       await continueSessionNarrative();
     } finally {
@@ -5353,6 +5533,21 @@ function createToonflowStore() {
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
       applySessionNarrativeResult(committed);
+      await refreshSessionStoryInfo();
+      const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
+      if (
+        latestNarrativeMessage
+        && String(latestNarrativeMessage.roleType || "").trim().toLowerCase() !== "player"
+      ) {
+        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+        if (canPlayerSpeakNow) {
+          clearPendingSessionOrchestrationPrefetch();
+        } else {
+          // 当前句文本一旦已经提交成功，就立刻后台预取下一轮编排。
+          // 这样语音播放期间和 `/game/orchestration` 并发，播完后直接进入下一条 `/game/streamlines`。
+          prefetchNextSessionOrchestration(Number(latestNarrativeMessage.id || 0));
+        }
+      }
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;
@@ -5367,13 +5562,17 @@ function createToonflowStore() {
       for (let step = 0; step < 3; step += 1) {
         const beforeCount = conversationMessages().length;
         const history = conversationMessages();
-        const orchestration = await api.orchestrateSession(state.currentSessionId);
+        const latestHistoryMessage = history.slice(-1)[0] || null;
+        const orchestration = await resolveSessionOrchestration(Number(latestHistoryMessage?.id || 0));
         clearRuntimeRetryState();
         applySessionOrchestrationResult(orchestration);
-        applyAwaitUserTurnFromPlan(orchestration.plan);
-        const shouldYieldToUser = orchestration.plan?.awaitUser === true
-          || orchestration.plan?.nextRoleType?.trim()?.toLowerCase() === "player";
+        await refreshSessionStoryInfo();
+        // 正式链只认 awaitUser，不消费“下一个是谁”这种预编排字段。
+        const shouldYieldToUser = orchestration.plan?.awaitUser === true;
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
+        if (!shouldStreamPlan) {
+          applyAwaitUserTurnFromPlan(orchestration.plan);
+        }
         if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
         }

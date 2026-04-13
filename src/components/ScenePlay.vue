@@ -318,9 +318,6 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
       .map((item) => asMiniRecord(item))
       .map((item) => {
         const currentStatus = scalarText(item.currentStatus);
-        const rawNextRole = scalarText(item.nextRole);
-        const rawNextRoleType = scalarText(item.nextRoleType);
-        const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
         return {
           conversationId: scalarText(item.conversationId),
           messageId: Number(item.messageId || 0),
@@ -328,8 +325,9 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          nextRole: waitingPlayer ? "用户" : rawNextRole,
-          nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
+          // 禁止把旧缓存里的“下一位是谁”回放到 UI。
+          nextRole: "",
+          nextRoleType: "",
           updateTime: Number(item.updateTime || 0),
         };
       })
@@ -1342,7 +1340,8 @@ const runtimeDebugNextRoleLabel = computed(() => {
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
   if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
-  return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
+  // 调试面板只展示当前 turnState 推导出的下一位，不消费编排结果里的 nextRole。
+  return expectedSpeaker.value || "当前角色";
 });
 const runtimeDebugStatusLabel = computed(() => {
   const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;

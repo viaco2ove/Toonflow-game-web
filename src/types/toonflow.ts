@@ -283,6 +283,8 @@ export interface DebugNarrativePlan {
 }
 
 export interface DebugOrchestrationResult {
+  role?: string;
+  motive?: string;
   chapterId: number | null;
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
@@ -322,6 +324,25 @@ export interface StoryInitResult {
   state?: Record<string, unknown> | null;
   opening?: DebugNarrativePlan | null;
   firstChapter?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+/**
+ * 故事运行信息接口的统一返回。
+ *
+ * 用途：
+ * - 承载“故事设定 / 当前章节事件 / 调试锚点”等非台词数据；
+ * - 让 orchestration 和 streamlines 回到各自职责，不再夹带整份运行态。
+ */
+export interface StoryInfoResult {
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  world?: WorldItem | null;
+  chapter?: ChapterItem | null;
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;

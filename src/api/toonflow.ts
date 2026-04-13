@@ -27,6 +27,7 @@ import type {
   SessionOrchestrationResult,
   StoryRuntimeConfig,
   StoryInitResult,
+  StoryInfoResult,
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
@@ -319,6 +320,17 @@ export class ToonflowApi {
    */
   introduceStory(sessionId: string) {
     return this.post<SessionOrchestrationResult>("/game/introduction", { sessionId });
+  }
+
+  /**
+   * 统一读取故事运行信息。
+   *
+   * 用途：
+   * - 正式会话和章节调试都通过它拿故事设定、当前章节事件和调试锚点；
+   * - 避免继续从 orchestration/streamlines 里读取大杂烩状态。
+   */
+  storyInfo(payload: Record<string, unknown>) {
+    return this.post<StoryInfoResult>("/game/storyInfo", payload);
   }
 
   async streamDebugLines(
