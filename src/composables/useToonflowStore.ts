@@ -1262,18 +1262,35 @@ function createToonflowStore() {
   }
 
   /**
+   * 把后端“最小编排返回”规范成统一的前端编排结果。
+   *
+   * 用途：
+   * - `/game/orchestration` 现在可能只返回顶层 `role/motive`；
+   * - 正式链和调试链后续仍然统一消费 `result.plan`，因此这里负责做一次包装。
+   */
+  function normalizeSessionOrchestrationResult(result: SessionOrchestrationResult): SessionOrchestrationResult {
+    const raw = result as unknown as Record<string, unknown>;
+    if (result.plan || (typeof raw.role !== "string" && typeof raw.motive !== "string")) {
+      return result;
+    }
+    return {
+      ...result,
+      plan: {
+        role: String(raw.role || "").trim(),
+        roleType: String(raw.roleType || "").trim() || "narrator",
+        motive: String(raw.motive || "").trim(),
+        awaitUser: Boolean(raw.awaitUser),
+      },
+    };
+  }
+
+  /**
    * 读取当前会话可用的编排结果；优先消费已预取结果，避免语音播完后再白等一轮。
    *
    * 用途：
    * - 只有当前最新台词对应的预取结果才允许复用；
-   * - 一旦用户中途发言或会话切换，就强制回退到实时请求。
-   */
-  /**
-   * 统一读取正式会话的编排结果，并兼容后端仅返回顶层 role/motive 的最小响应。
-   *
-   * 用途：
-   * - 正式链后端已经裁掉大杂烩返回，前端不能再强依赖 result.plan；
-   * - 当后端只返回 role/motive 时，这里负责包装成最小 plan，保证后续仍能进入 streamlines。
+   * - 一旦用户中途发言或会话切换，就强制回退到实时请求；
+   * - 统一兼容后端只返回顶层 `role/motive` 的最小响应。
    */
   async function resolveSessionOrchestration(triggerMessageId: number): Promise<SessionOrchestrationResult> {
     const sessionId = String(state.currentSessionId || "").trim();
@@ -1290,19 +1307,7 @@ function createToonflowStore() {
       clearPendingSessionOrchestrationPrefetch();
       result = await api.orchestrateSession(sessionId);
     }
-    const raw = result as Record<string, unknown>;
-    if (!result.plan && (typeof raw.role === "string" || typeof raw.motive === "string")) {
-      result = {
-        ...result,
-        plan: {
-          role: String(raw.role || "").trim(),
-          roleType: String(raw.roleType || "").trim() || "narrator",
-          motive: String(raw.motive || "").trim(),
-          awaitUser: Boolean(raw.awaitUser),
-        },
-      };
-    }
-    return result;
+    return normalizeSessionOrchestrationResult(result);
   }
 
 
@@ -4596,7 +4601,7 @@ function createToonflowStore() {
       state.sessionOpeningStage = "";
 
       // 正式游玩和章节调试保持一致：先独立拿开场白，再独立拉第一章编排。
-      const introduction = await api.introduceStory(state.currentSessionId);
+      const introduction = normalizeSessionOrchestrationResult(await api.introduceStory(state.currentSessionId));
       if (introduction.plan) {
         applySessionOrchestrationResult(introduction);
         await refreshSessionStoryInfo();
@@ -4609,7 +4614,7 @@ function createToonflowStore() {
         }
       }
 
-      const firstChapterResult = await api.orchestrateSession(state.currentSessionId);
+      const firstChapterResult = normalizeSessionOrchestrationResult(await api.orchestrateSession(state.currentSessionId));
       if (firstChapterResult.plan) {
         const history = conversationMessages();
         applySessionOrchestrationResult(firstChapterResult);
@@ -4868,6 +4873,29 @@ function createToonflowStore() {
     });
     applyDebugStoryInfoResult(result, fallbackChapter);
     return result;
+  }
+
+  /**
+   * 把调试编排接口的最小返回规范成统一的调试 plan。
+   *
+   * 用途：
+   * - 调试链的 introduction/orchestration 现在也可能只返回顶层 role/motive；
+   * - 这里统一包装成 result.plan，避免开场白和首轮正文直接被跳过。
+   */
+  function normalizeDebugOrchestrationResult(result: DebugOrchestrationResult): DebugOrchestrationResult {
+    const raw = result as unknown as Record<string, unknown>;
+    if (result.plan || (typeof raw.role !== "string" && typeof raw.motive !== "string")) {
+      return result;
+    }
+    return {
+      ...result,
+      plan: {
+        role: String(raw.role || "").trim(),
+        roleType: String(raw.roleType || "").trim() || "narrator",
+        motive: String(raw.motive || "").trim(),
+        awaitUser: Boolean(raw.awaitUser),
+      },
+    };
   }
 
   function applyDebugOrchestrationResult(
@@ -5267,12 +5295,12 @@ function createToonflowStore() {
       await refreshDebugStoryInfo(chapter);
 
       state.sessionRuntimeStage = "生成开场白";
-      const introResult = await api.introduceDebug({
+      const introResult = normalizeDebugOrchestrationResult(await api.introduceDebug({
         worldId: state.worldId,
         chapterId: Number(initResult.chapterId || chapter.id || 0) || undefined,
         state: state.debugRuntimeState,
         messages: [],
-      });
+      }));
       applyDebugOrchestrationResult(introResult, chapter);
       await refreshDebugStoryInfo(chapter);
       if (introResult.plan && shouldStreamDebugPlan(introResult.plan)) {
@@ -5283,19 +5311,20 @@ function createToonflowStore() {
       }
 
       state.sessionRuntimeStage = "准备剧情编排";
-      const result = await api.orchestrateDebug({
+      const result = normalizeDebugOrchestrationResult(await api.orchestrateDebug({
         worldId: state.worldId,
         chapterId: Number(initResult.chapterId || chapter.id || 0) || undefined,
         state: state.debugRuntimeState,
         messages: conversationMessages(),
-      });
+      }));
 
       if (result.plan) {
         applyDebugOrchestrationResult(result, chapter);
         await refreshDebugStoryInfo(chapter);
         if (shouldStreamDebugPlan(result.plan)) {
           state.sessionRuntimeStage = "生成首轮内容";
-          await streamDebugPlan(result.plan, []);
+          // 首轮正文必须接在开场白后面流式生成；如果这里传空历史，会把刚播完的开场白整条覆盖掉。
+          await streamDebugPlan(result.plan, conversationMessages());
           if (state.sessionRuntimeStage === "生成首轮内容") {
             state.sessionRuntimeStage = "";
           }
@@ -5350,13 +5379,13 @@ function createToonflowStore() {
       const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
       const beforeCount = conversationMessages().length;
       const history = conversationMessages();
-      const result = await api.orchestrateDebug({
+      const result = normalizeDebugOrchestrationResult(await api.orchestrateDebug({
         worldId: state.worldId,
         chapterId: state.debugChapterId || undefined,
         state: state.debugRuntimeState,
         messages: history,
         playerContent: null,
-      });
+      }));
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
       await refreshDebugStoryInfo(currentChapter);
