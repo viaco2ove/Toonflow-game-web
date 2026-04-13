@@ -1268,20 +1268,43 @@ function createToonflowStore() {
    * - 只有当前最新台词对应的预取结果才允许复用；
    * - 一旦用户中途发言或会话切换，就强制回退到实时请求。
    */
+  /**
+   * 统一读取正式会话的编排结果，并兼容后端仅返回顶层 role/motive 的最小响应。
+   *
+   * 用途：
+   * - 正式链后端已经裁掉大杂烩返回，前端不能再强依赖 result.plan；
+   * - 当后端只返回 role/motive 时，这里负责包装成最小 plan，保证后续仍能进入 streamlines。
+   */
   async function resolveSessionOrchestration(triggerMessageId: number): Promise<SessionOrchestrationResult> {
     const sessionId = String(state.currentSessionId || "").trim();
     const pending = pendingSessionOrchestrationPrefetch;
+    let result: SessionOrchestrationResult;
     if (
       pending
       && pending.sessionId === sessionId
       && pending.triggerMessageId === Number(triggerMessageId)
     ) {
       clearPendingSessionOrchestrationPrefetch();
-      return await pending.promise;
+      result = await pending.promise;
+    } else {
+      clearPendingSessionOrchestrationPrefetch();
+      result = await api.orchestrateSession(sessionId);
     }
-    clearPendingSessionOrchestrationPrefetch();
-    return await api.orchestrateSession(sessionId);
+    const raw = result as Record<string, unknown>;
+    if (!result.plan && (typeof raw.role === "string" || typeof raw.motive === "string")) {
+      result = {
+        ...result,
+        plan: {
+          role: String(raw.role || "").trim(),
+          roleType: String(raw.roleType || "").trim() || "narrator",
+          motive: String(raw.motive || "").trim(),
+          awaitUser: Boolean(raw.awaitUser),
+        },
+      };
+    }
+    return result;
   }
+
 
   let editorAutoPersistTimer: number | null = null;
   let editorPersistMuted = false;
@@ -5530,9 +5553,27 @@ function createToonflowStore() {
         createTime: committedCreateTime,
         saveSnapshot: true,
       });
+      // commitNarrativeTurn 在部分链路下可能只回最新状态，不会回刚生成的 message。
+      // 这里不能先把流式生成出来的最终台词清空，否则开场白这类第一句会直接从历史列表里消失。
+      // 因此先保留“本轮最终消息”，再在 commit 结果没有 message/generatedMessages 时回填它。
+      const fallbackCommittedMessage: MessageItem = {
+        id: Number((finalMessage as Record<string, unknown> | null)?.["id"] || committedCreateTime),
+        role: String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白"),
+        roleType: String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator"),
+        eventType: String((finalMessage as Record<string, unknown> | null)?.["eventType"] || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
+        content: committedContent,
+        createTime: committedCreateTime,
+      };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
-      applySessionNarrativeResult(committed);
+      if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
+        applySessionNarrativeResult({
+          ...committed,
+          message: fallbackCommittedMessage,
+        });
+      } else {
+        applySessionNarrativeResult(committed);
+      }
       await refreshSessionStoryInfo();
       const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
       if (

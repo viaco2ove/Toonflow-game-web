@@ -1306,12 +1306,14 @@ const runtimeDebugPanelOpen = ref(false);
 const latestRuntimeChatTrace = computed(() => {
   const rows = runtimeChatTraceRows.value;
   const currentConversationId = runtimeConversationLabel.value;
-  const scopedRows = currentConversationId
-    ? rows.filter((row) => row.conversationId === currentConversationId)
-    : rows;
-  const source = scopedRows.length ? scopedRows : rows;
-  return source.length ? source[source.length - 1] : null;
+  if (!currentConversationId) {
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+  const scopedRows = rows.filter((row) => row.conversationId === currentConversationId);
+  // 当前会话还没写入 trace 时，不能退回到“所有会话最后一条”，否则会把旧会话角色串进当前 UI。
+  return scopedRows.length ? scopedRows[scopedRows.length - 1] : null;
 });
+
 const runtimeStateRoot = computed(() => {
   if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
   return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
