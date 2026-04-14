@@ -5057,6 +5057,28 @@ function createToonflowStore() {
     return turnState?.canPlayerSpeak !== false;
   }
 
+  /**
+   * 在调试编排结果已经明确“当前该由某个非用户角色发言”时，先把本地 turnState 锁到该角色。
+   *
+   * 用途：
+   * - `/game/storyInfo` 在 `streamlines` 真正落文本前，可能仍返回上一拍的 `canPlayerSpeak=true`；
+   * - 如果这里不先锁住，调试面板和输入框会短暂显示成“下一个 用户”，造成状态错觉；
+   * - 这里只锁“当前要发这句台词的人”，不消费任何“下一位是谁”的预编排字段。
+   */
+  function applyPendingDebugSpeakerTurnFromPlan(plan: DebugNarrativePlan | null | undefined) {
+    if (!plan || !shouldStreamDebugPlan(plan)) return;
+    const root = asMiniRecord(state.debugRuntimeState);
+    const turnState = asMiniRecord(root.turnState);
+    turnState.canPlayerSpeak = false;
+    turnState.expectedRoleType = normalizeScalarEditorText(plan.roleType || "narrator") || "narrator";
+    turnState.expectedRole = normalizeScalarEditorText(plan.role || "旁白") || "旁白";
+    root.turnState = turnState;
+    state.debugRuntimeState = root;
+    state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
+    syncLatestRuntimeTurnStatusWithState();
+    syncRuntimeChatTrace();
+  }
+
   function shouldYieldToUserFromDebugPlan(plan: DebugNarrativePlan | null | undefined) {
     if (!plan) return false;
     return plan.awaitUser === true;
@@ -5302,9 +5324,11 @@ function createToonflowStore() {
         messages: [],
       }));
       applyDebugOrchestrationResult(introResult, chapter);
-      await refreshDebugStoryInfo(chapter);
       if (introResult.plan && shouldStreamDebugPlan(introResult.plan)) {
+        applyPendingDebugSpeakerTurnFromPlan(introResult.plan);
         await streamDebugPlan(introResult.plan, []);
+      } else {
+        await refreshDebugStoryInfo(chapter);
       }
       if (state.sessionRuntimeStage === "生成开场白") {
         state.sessionRuntimeStage = "";
@@ -5320,11 +5344,15 @@ function createToonflowStore() {
 
       if (result.plan) {
         applyDebugOrchestrationResult(result, chapter);
-        await refreshDebugStoryInfo(chapter);
         if (shouldStreamDebugPlan(result.plan)) {
+          applyPendingDebugSpeakerTurnFromPlan(result.plan);
           state.sessionRuntimeStage = "生成首轮内容";
           // 首轮正文必须接在开场白后面流式生成；如果这里传空历史，会把刚播完的开场白整条覆盖掉。
           await streamDebugPlan(result.plan, conversationMessages());
+        } else {
+          await refreshDebugStoryInfo(chapter);
+        }
+        if (shouldStreamDebugPlan(result.plan)) {
           if (state.sessionRuntimeStage === "生成首轮内容") {
             state.sessionRuntimeStage = "";
           }
@@ -5388,10 +5416,12 @@ function createToonflowStore() {
       }));
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
-      await refreshDebugStoryInfo(currentChapter);
       const shouldYieldToUser = shouldYieldToUserFromDebugPlan(result.plan);
       if (result.plan && shouldStreamDebugPlan(result.plan)) {
+        applyPendingDebugSpeakerTurnFromPlan(result.plan);
         await streamDebugPlanOrFallback(result.plan, history);
+      } else {
+        await refreshDebugStoryInfo(currentChapter);
       }
       const canPlayerSpeak = debugCanPlayerSpeakFromState();
       if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak || shouldYieldToUser) {
@@ -5452,23 +5482,27 @@ function createToonflowStore() {
     }
     applyLocalDebugPlayerProfile(content);
     const history = conversationMessages();
-    const result = await api.orchestrateDebug({
+    const result = normalizeDebugOrchestrationResult(await api.orchestrateDebug({
       worldId: state.worldId,
       chapterId: state.debugChapterId || undefined,
       playerContent: content,
       state: state.debugRuntimeState,
       messages: history,
-    });
+    }));
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
-    await refreshDebugStoryInfo(currentChapter);
     if (optimisticMessageId) {
       commitLocalPendingPlayerMessage(optimisticMessageId);
     }
     if (result.plan && shouldStreamDebugPlan(result.plan)) {
+      applyPendingDebugSpeakerTurnFromPlan(result.plan);
       state.sessionRuntimeStage = "继续编排下一轮剧情";
       await streamDebugPlanOrFallback(result.plan, conversationMessages(), content);
+    } else {
+      await refreshDebugStoryInfo(currentChapter);
+    }
+    if (result.plan && shouldStreamDebugPlan(result.plan)) {
       if (state.sessionRuntimeStage === "继续编排下一轮剧情") {
         state.sessionRuntimeStage = "";
       }
