@@ -1545,13 +1545,19 @@ function createToonflowStore() {
     const latestLineIndex = Number(latestMeta?.["lineIndex"]);
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    const latestRoleType = String(latestMessage.roleType || "").trim().toLowerCase();
+    // 用户刚发完言而系统仍在处理时，面板不应提前回退成“等待用户”。
+    // 这时最新消息还是用户消息，但下一步其实是系统继续编排/生成台词。
+    const waitingSystemContinuation = latestRoleType === "player" && state.runtimeProcessingPending;
     const latestRow: RuntimeChatTraceItem = {
       conversationId,
       messageId: Number(latestMessage.id || 0),
       lineIndex: Number.isFinite(latestLineIndex) && latestLineIndex > 0 ? latestLineIndex : history.length,
       currentRole: String(latestMessage.role || "").trim(),
       currentRoleType: String(latestMessage.roleType || "").trim(),
-      currentStatus: currentStatus || (canPlayerSpeakNow ? "waiting_player" : "waiting_next"),
+      currentStatus: waitingSystemContinuation
+        ? "waiting_next"
+        : (currentStatus || (canPlayerSpeakNow ? "waiting_player" : "waiting_next")),
       // 编排结果只负责当前发言角色和动机，不在前端缓存里提前写“下一位是谁”。
       nextRole: "",
       nextRoleType: "",
@@ -5079,6 +5085,33 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
+  /**
+   * 读取调试运行态里登记的“待进入下一章”标记。
+   *
+   * 用途：
+   * - /game/orchestration 在章节成功时不会直接切章，只会先登记 pending chapter；
+   * - 当前确认台词经 /game/streamlines 落地后，前端需要据此继续自动推进下一章开场。
+   */
+  function pendingDebugChapterIdFromState(runtimeState: Record<string, unknown> | null | undefined = state.debugRuntimeState as Record<string, unknown>) {
+    const root = asMiniRecord(runtimeState);
+    const pendingChapterId = Number(root.debugPendingChapterId || 0);
+    return Number.isFinite(pendingChapterId) && pendingChapterId > 0 ? pendingChapterId : 0;
+  }
+
+  /**
+   * 判断当前是否应在台词落地后立即续跑下一章。
+   *
+   * 用途：
+   * - 第 1 章成功后，服务端只会把 pending next chapter 写进 state，不会直接切章；
+   * - 如果这里不自动续跑，界面会停在“当前句已播完，但仍是旧章节”的中间态，
+   *   用户还能继续对旧章节输入，进而把剧情滚乱。
+   */
+  function shouldAutoAdvancePendingDebugChapter() {
+    return pendingDebugChapterIdFromState() > 0
+      && !debugCanPlayerSpeakFromState()
+      && !Boolean(String(state.debugEndDialog || "").trim());
+  }
+
   function shouldYieldToUserFromDebugPlan(plan: DebugNarrativePlan | null | undefined) {
     if (!plan) return false;
     return plan.awaitUser === true;
@@ -5424,6 +5457,12 @@ function createToonflowStore() {
         await refreshDebugStoryInfo(currentChapter);
       }
       const canPlayerSpeak = debugCanPlayerSpeakFromState();
+      if (shouldAutoAdvancePendingDebugChapter()) {
+        // 当前句已经成功落地，但服务端只登记了 pending next chapter；
+        // 这里继续下一轮，让 /game/orchestration 消费 pending 标记并生成新章节开场。
+        advanced = true;
+        continue;
+      }
       if (conversationMessages().length > beforeCount || state.debugEndDialog || canPlayerSpeak || shouldYieldToUser) {
         advanced = true;
         break;
@@ -5499,11 +5538,18 @@ function createToonflowStore() {
       applyPendingDebugSpeakerTurnFromPlan(result.plan);
       state.sessionRuntimeStage = "继续编排下一轮剧情";
       await streamDebugPlanOrFallback(result.plan, conversationMessages(), content);
+      if (shouldAutoAdvancePendingDebugChapter()) {
+        state.sessionRuntimeStage = "切换下一章";
+        await performContinueDebugNarrative();
+      }
     } else {
       await refreshDebugStoryInfo(currentChapter);
     }
     if (result.plan && shouldStreamDebugPlan(result.plan)) {
       if (state.sessionRuntimeStage === "继续编排下一轮剧情") {
+        state.sessionRuntimeStage = "";
+      }
+      if (state.sessionRuntimeStage === "切换下一章") {
         state.sessionRuntimeStage = "";
       }
     }
