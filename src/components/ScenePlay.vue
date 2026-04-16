@@ -13,6 +13,7 @@ const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
 const statePreviewExpanded = ref(false);
 const runtimeEventWindowExpanded = ref(false);
+const miniGamePanelExpanded = ref(false);
 const messages = computed(() => store.state.messages);
 const pendingDotTick = ref(0);
 const session = computed(() => store.state.sessionDetail);
@@ -886,7 +887,7 @@ const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
   if (store.state.sessionOpenError) return "session_error";
   if (store.state.sendPending || store.state.runtimeProcessingPending) return "sending";
-  if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
+  if (activeMiniGame.value) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
   if (latestStatus === "sending") return "sending";
   if (canPlayerSpeak.value && latestStatus === "auto_advancing") {
@@ -910,7 +911,7 @@ const canPlayerInput = computed(() => {
   if (store.state.sessionOpenError) return false;
   if (store.state.sendPending || store.state.runtimeProcessingPending) return false;
   if (sessionRuntimeStageText.value) return false;
-  if (activeMiniGame.value?.acceptsTextInput) return true;
+  if (activeMiniGame.value) return true;
   return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
 const processingDots = computed(() => ".".repeat((pendingDotTick.value % 3) + 1));
@@ -933,8 +934,8 @@ const emptySessionHint = computed(() => {
 const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return "打开会话失败，请重试";
-  if (activeMiniGame.value?.acceptsTextInput) {
-    return activeMiniGame.value.inputHint || "直接输入方案";
+  if (activeMiniGame.value) {
+    return activeMiniGame.value.inputHint || "小游戏进行中，直接输入动作或方案，#退出 可强制退出";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -956,8 +957,8 @@ const playInputPlaceholder = computed(() => {
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
-  if (activeMiniGame.value?.acceptsTextInput) {
-    return "小游戏进行中，直接输入方案即可。";
+  if (activeMiniGame.value) {
+    return "小游戏进行中，请直接通过聊天框输入动作或方案，#退出 可强制退出。";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -1067,11 +1068,10 @@ const activeMiniGame = computed(() => {
   const ui = asMiniRecord(root.ui);
   const status = scalarText(sessionState.status);
   const gameType = scalarText(sessionState.game_type || sessionState.gameType);
-  const playerOptions = asMiniArray<Record<string, unknown>>(ui.player_options || sessionState.player_options);
   const uiStateItems = asMiniArray<Record<string, unknown>>(ui.state_items);
   const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
   if (!gameType) return null;
-  if (!visibleStatuses.has(status) && !playerOptions.length && !sessionState.pending_exit) return null;
+  if (!visibleStatuses.has(status) && !sessionState.pending_exit) return null;
   return {
     gameType,
     displayName: scalarText(asMiniRecord(root.rulebook).displayName) || gameType,
@@ -1079,12 +1079,11 @@ const activeMiniGame = computed(() => {
     phase: miniGamePhaseLabel(gameType, scalarText(sessionState.phase), scalarText(ui.phase_label)),
     round: Number(sessionState.round || 0),
     publicState: asMiniRecord(sessionState.public_state),
-    playerOptions,
     ruleSummary: scalarText(ui.rule_summary),
     narration: scalarText(ui.narration),
     pendingExit: Boolean(sessionState.pending_exit),
     stateItems: miniGameStateItems(gameType, asMiniRecord(sessionState.public_state), uiStateItems),
-    acceptsTextInput: Boolean(ui.accepts_text_input) || ["research_skill", "alchemy", "upgrade_equipment"].includes(gameType),
+    acceptsTextInput: Boolean(ui.accepts_text_input) || ["research_skill", "alchemy", "upgrade_equipment", "battle"].includes(gameType),
     inputHint: scalarText(ui.input_hint),
   };
 });
@@ -1097,22 +1096,8 @@ const battleEnemies = computed(() => {
   if (!game || game.gameType !== "battle") return [];
   return battleEnemiesFromMiniGame(game.publicState);
 });
-const miniGameControlOptions = computed(() => {
-  const game = activeMiniGame.value;
-  if (!game) return [];
-  if (game.gameType === "fishing") {
-    if (game.pendingExit) {
-      return ["继续钓鱼", "退出钓鱼"];
-    }
-    return ["退出钓鱼"];
-  }
-  if (game.status === "suspended") {
-    return ["恢复小游戏", "查看状态", "查看规则", "申请退出"];
-  }
-  if (game.pendingExit) {
-    return ["确认退出", "继续", "查看状态"];
-  }
-  return ["查看状态", "查看规则", "暂停", "申请退出"];
+watch(() => activeMiniGame.value?.gameType || "", () => {
+  miniGamePanelExpanded.value = false;
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
@@ -3603,10 +3588,12 @@ onBeforeUnmount(() => {
             <div class="play-mini-game-panel__title">{{ activeMiniGame.displayName }}</div>
             <div class="play-mini-game-panel__meta">第 {{ activeMiniGame.round || 1 }} 轮 · {{ activeMiniGame.phase || "进行中" }}</div>
           </div>
-          <div class="play-mini-game-panel__status">{{ activeMiniGame.status || "active" }}</div>
+          <button type="button" class="play-mini-game-panel__status" @click="miniGamePanelExpanded = !miniGamePanelExpanded">
+            {{ miniGamePanelExpanded ? "收起" : "展开" }}
+          </button>
         </div>
-        <div v-if="activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
-        <div v-if="miniGameSummaryItems.length" class="play-mini-game-panel__state">
+        <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
+        <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">
           <div
             v-for="item in miniGameSummaryItems"
             :key="item.key"
@@ -3616,27 +3603,8 @@ onBeforeUnmount(() => {
             <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
           </div>
         </div>
-        <div v-if="!activeMiniGame.pendingExit" class="play-mini-game-panel__actions">
-          <button
-            v-for="option in activeMiniGame.playerOptions"
-            :key="String(option.action_id || option.label || option.desc || '')"
-            type="button"
-            class="play-mini-game-panel__action"
-            @click="submitMiniGameAction(String(option.label || option.action_id || ''))"
-          >
-            {{ option.label || option.action_id }}
-          </button>
-        </div>
-        <div class="play-mini-game-panel__controls">
-          <button
-            v-for="action in miniGameControlOptions"
-            :key="action"
-            type="button"
-            class="play-mini-game-panel__control"
-            @click="submitMiniGameAction(action)"
-          >
-            {{ action }}
-          </button>
+        <div v-if="miniGamePanelExpanded" class="play-mini-game-panel__hint">
+          该小游戏只通过聊天框交互。输入动作或方案继续，输入 <code>#退出</code> 可强制退出。
         </div>
       </section>
 
@@ -3771,10 +3739,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-else-if="runtimeProgressHint" class="play-turn-hint" :class="{ 'play-turn-hint--loading': debugAutoAdvancing }">{{ runtimeProgressHint }}</div>
-        <div v-if="activeMiniGame && !activeMiniGame.acceptsTextInput && playMode !== 'setting' && playMode !== 'tips'" class="play-mini-game-input-lock">
-          小游戏进行中，请使用上方面板操作。
-        </div>
-        <template v-else-if="playMode === 'history' && isSessionPlaybackMode">
+        <template v-if="playMode === 'history' && isSessionPlaybackMode">
           <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
         </template>
         <template v-else-if="inputMode === 'text'">
