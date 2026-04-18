@@ -1201,13 +1201,27 @@ const latestRevealedMessage = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 const playStageStyle = computed(() => {
-  const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
+  // 轻微的暗角效果（四个角有淡淡的阴影）
+  const vignette = "radial-gradient(circle at center, rgba(10, 21, 36, 0.05) 0%, rgba(10, 21, 36, 0.15) 70%, rgba(10, 21, 36, 0.2) 100%)";
+
+  const layers = [];
+
   if (chapterBackgroundPath.value) {
     layers.push(`url("${chapterBackgroundPath.value}")`);
   } else {
-    layers.push("linear-gradient(180deg, #132745 0%, #0e2038 100%)");
+    // 默认背景也使用轻微渐变
+    layers.push("linear-gradient(180deg, rgba(19, 39, 69, 0.9) 0%, rgba(14, 32, 56, 0.95) 100%)");
   }
-  return { backgroundImage: layers.join(",") };
+
+  // 暗角效果放在最上层
+  layers.unshift(vignette);
+
+  return {
+    backgroundImage: layers.join(","),
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat"
+  };
 });
 const playTitle = computed(() => currentWorld.value?.name || session.value?.title || store.state.debugSessionTitle || "当前故事");
 const playSubtitle = computed(() => {
