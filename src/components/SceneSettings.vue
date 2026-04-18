@@ -26,6 +26,7 @@ const confirmNewPassword = ref("");
 const promptDrafts = reactive<Record<string, string>>({});
 const showModelManager = ref(false);
 const activeModelKey = ref<string>("");
+const showMiniGamePrompts = ref(false);
 const showTokenUsageDialog = ref(false);
 const tokenUsageStartTime = ref("");
 const tokenUsageEndTime = ref("");
@@ -77,6 +78,19 @@ const storyPromptRows = computed(() =>
     };
   }),
 );
+const miniGamePromptCodes = new Set([
+  "story-mini-game",
+  "story-mini-game-battle",
+  "story-mini-game-fishing",
+  "story-mini-game-werewolf",
+  "story-mini-game-cultivation",
+  "story-mini-game-mining",
+  "story-mini-game-research-skill",
+  "story-mini-game-alchemy",
+  "story-mini-game-upgrade-equipment",
+]);
+const baseStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => !miniGamePromptCodes.has(prompt.code)));
+const miniGameStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => miniGamePromptCodes.has(prompt.code)));
 const isAdmin = computed(() => store.isAdminAccount());
 
 function syncPromptDrafts() {
@@ -310,8 +324,13 @@ watch(
 
     <section v-if="store.state.token && isAdmin" class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">提示词配置</div>
+      <div class="settings-action-row settings-mini-game-agent-row">
+        <button class="button settings-outline-btn" type="button" @click="showMiniGamePrompts = !showMiniGamePrompts">
+          小游戏Agent
+        </button>
+      </div>
       <div class="settings-prompt-list">
-        <div v-for="prompt in storyPromptRows" :key="prompt.code" class="settings-prompt-card">
+        <div v-for="prompt in baseStoryPromptRows" :key="prompt.code" class="settings-prompt-card">
           <div class="settings-prompt-head">
             <div class="settings-prompt-heading">
               <div class="settings-prompt-title">{{ prompt.name || prompt.code }}</div>
@@ -342,6 +361,34 @@ watch(
             :placeholder="prompt.defaultValue || '请输入提示词'"
           />
           <div class="settings-prompt-tip">{{ prompt.tipText }}</div>
+        </div>
+        <div v-if="showMiniGamePrompts" class="settings-mini-game-prompt-group">
+          <div class="settings-mini-game-prompt-title">小游戏Agent 提示词</div>
+          <div v-for="prompt in miniGameStoryPromptRows" :key="prompt.code" class="settings-prompt-card">
+            <div class="settings-prompt-head">
+              <div class="settings-prompt-heading">
+                <div class="settings-prompt-title">{{ prompt.name || prompt.code }}</div>
+                <span class="settings-prompt-status" :class="{ custom: prompt.isCustom }">{{ prompt.statusLabel }}</span>
+              </div>
+              <div class="settings-prompt-actions">
+                <button class="button small settings-prompt-secondary-btn" type="button" @click="resetPrompt(prompt.code)">重置提示词</button>
+                <button class="button small settings-solid-btn settings-prompt-save-btn" type="button" @click="savePrompt(prompt.code)">保存</button>
+              </div>
+            </div>
+            <div class="settings-prompt-inline-meta">
+              <span class="settings-prompt-pill settings-prompt-pill--label">Agent</span>
+              <span class="settings-prompt-pill settings-prompt-pill--value">{{ prompt.meta.agentLabel }}</span>
+              <span class="settings-prompt-pill settings-prompt-pill--label">TS</span>
+              <span class="settings-prompt-pill settings-prompt-pill--value settings-prompt-pill--path">{{ prompt.meta.tsLabel }}</span>
+            </div>
+            <textarea
+              v-model="promptDrafts[prompt.code]"
+              class="input settings-prompt-textarea"
+              rows="6"
+              :placeholder="prompt.defaultValue || '请输入提示词'"
+            />
+            <div class="settings-prompt-tip">{{ prompt.tipText }}</div>
+          </div>
         </div>
       </div>
     </section>

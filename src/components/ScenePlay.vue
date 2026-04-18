@@ -935,7 +935,8 @@ const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return "打开会话失败，请重试";
   if (activeMiniGame.value) {
-    return activeMiniGame.value.inputHint || "小游戏进行中，直接输入动作或方案，#退出 可强制退出";
+    // 小游戏改成纯聊天输入后，这里不再显示动作提示，避免和状态面板重复。
+    return "";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -958,7 +959,7 @@ const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
   if (activeMiniGame.value) {
-    return "小游戏进行中，请直接通过聊天框输入动作或方案，#退出 可强制退出。";
+    return "";
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -3602,9 +3603,6 @@ onBeforeUnmount(() => {
             <span class="play-mini-game-panel__state-key">{{ item.key }}</span>
             <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
           </div>
-        </div>
-        <div v-if="miniGamePanelExpanded" class="play-mini-game-panel__hint">
-          该小游戏只通过聊天框交互。输入动作或方案继续，输入 <code>#退出</code> 可强制退出。
         </div>
       </section>
 

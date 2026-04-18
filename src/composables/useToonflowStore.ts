@@ -805,6 +805,7 @@ const GAME_MODEL_SLOTS = [
   { key: "storyOrchestratorModel", label: "编排师", configType: "text" },
   { key: "storyChapterJudgeModel", label: "章节判定", configType: "text" },
   { key: "storyEventProgressModel", label: "事件进度检测", configType: "text" },
+  { key: "storyMiniGameModel", label: "小游戏动作解析", configType: "text" },
   { key: "storyFastSpeakerModel", label: "快速角色发言", configType: "text" },
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
@@ -828,6 +829,14 @@ const STORY_PROMPT_CODES = [
   "story-chapter",
   "story-event-progress",
   "story-mini-game",
+  "story-mini-game-battle",
+  "story-mini-game-fishing",
+  "story-mini-game-werewolf",
+  "story-mini-game-cultivation",
+  "story-mini-game-mining",
+  "story-mini-game-research-skill",
+  "story-mini-game-alchemy",
+  "story-mini-game-upgrade-equipment",
   "story-safety",
 ] as const;
 
