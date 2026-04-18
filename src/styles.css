@@ -3801,7 +3801,8 @@ textarea::-webkit-scrollbar-thumb {
   flex-direction: column;
   gap: 10px;
   color: #eef4ff;
-  background-color: #122745;
+  /* 主舞台直接使用章节背景，不再额外铺一层深色底。 */
+  background-color: transparent;
   background-position: center;
   background-size: cover;
   overflow: hidden;
@@ -3815,13 +3816,13 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-stage__mask {
-  background:
-    radial-gradient(circle at top right, rgba(113, 149, 230, 0.18), transparent 26%),
-    radial-gradient(circle at bottom left, rgba(255, 210, 114, 0.14), transparent 24%);
+  /* 按要求取消黑色半透明舞台蒙版，保持主舞台全透明。 */
+  background: transparent;
 }
 
 .play-stage__shade {
-  background: linear-gradient(180deg, rgba(8, 19, 33, 0.1) 0%, rgba(8, 19, 33, 0.32) 38%, rgba(8, 19, 33, 0.84) 100%);
+  /* 按要求取消整体暗化遮罩，避免章节背景被统一压暗。 */
+  background: transparent;
 }
 
 .play-head,
@@ -4025,9 +4026,9 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-figure-stage__fade {
-  background:
-    linear-gradient(180deg, rgba(9, 20, 35, 0) 0%, rgba(9, 20, 35, 0.08) 34%, rgba(9, 20, 35, 0.3) 70%, rgba(9, 20, 35, 0.7) 100%),
-    radial-gradient(circle at center bottom, rgba(8, 18, 32, 0.1), rgba(8, 18, 32, 0.58) 68%, rgba(8, 18, 32, 0.78) 100%);
+  /*background:*/
+  /*  linear-gradient(180deg, rgba(9, 20, 35, 0) 0%, rgba(9, 20, 35, 0.08) 34%, rgba(9, 20, 35, 0.3) 70%, rgba(9, 20, 35, 0.7) 100%),*/
+  /*  radial-gradient(circle at center bottom, rgba(8, 18, 32, 0.1), rgba(8, 18, 32, 0.58) 68%, rgba(8, 18, 32, 0.78) 100%);*/
 }
 
 .play-figure {
