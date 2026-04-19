@@ -913,6 +913,7 @@ function createToonflowStore() {
     sessionViewMode: "live" as "live" | "playback",
     sessionPlaybackStartIndex: 0,
     sessionResumeLatestOnOpen: false,
+    sessionStartupPriming: false,
     sessionOpening: false,
     sessionOpeningStage: "",
     sessionOpenError: "",
@@ -1248,6 +1249,12 @@ function createToonflowStore() {
   function prefetchNextSessionOrchestration(triggerMessageId: number) {
     const sessionId = String(state.currentSessionId || "").trim();
     if (!sessionId || !Number.isFinite(Number(triggerMessageId)) || Number(triggerMessageId) <= 0) {
+      return;
+    }
+    // 正式首开阶段会按“开场白 -> 首章编排”顺序显式串起两步。
+    // 这段期间如果再后台预取一次编排，就会和 startFromWorld 的首章编排撞成双请求。
+    if (state.sessionStartupPriming) {
+      clearPendingSessionOrchestrationPrefetch();
       return;
     }
     const turnState = runtimeTurnStateRecord();
@@ -4580,6 +4587,9 @@ function createToonflowStore() {
       state.activeTab = "play";
       state.sessionViewMode = "live";
       state.sessionPlaybackStartIndex = 0;
+      // 正式首开需要独占“开场白 -> 首章编排”这条启动链。
+      // 否则开场白提交后触发的后台预取会和手动首章编排并发，形成双 /game/orchestration。
+      state.sessionStartupPriming = true;
       state.sessionOpening = true;
       state.sessionOpeningStage = "初始化会话";
       state.sessionOpenError = "";
@@ -4645,6 +4655,7 @@ function createToonflowStore() {
 
       void refreshSessionListState();
       state.runtimeProcessingPending = false;
+      state.sessionStartupPriming = false;
       if (quickText.trim()) {
         state.sendText = quickText.trim();
         await sendMessage();
@@ -4654,6 +4665,7 @@ function createToonflowStore() {
       state.sessionOpenError = message;
       state.notice = `进入游玩失败: ${message}`;
     } finally {
+      state.sessionStartupPriming = false;
       state.runtimeProcessingPending = false;
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
