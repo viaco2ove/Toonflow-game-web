@@ -238,6 +238,7 @@ export interface SessionOrchestrationResult {
   role?: string;
   roleType?: string;
   motive?: string;
+  awaitUser?: boolean;
   sessionId: string;
   status: string;
   chapterId?: number | null;

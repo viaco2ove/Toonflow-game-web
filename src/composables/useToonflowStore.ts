@@ -442,8 +442,6 @@ function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | n
   const lineIndex = Number(record["lineIndex"] || 0);
   const updateTime = Number(record["updateTime"] || 0);
   const currentStatus = (String(record["currentStatus"] || "").trim() as RuntimeLineStatus | "");
-  const rawNextRole = String(record["nextRole"] || "").trim();
-  const rawNextRoleType = String(record["nextRoleType"] || "").trim();
   const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
   return {
     conversationId,
@@ -1168,6 +1166,7 @@ function createToonflowStore() {
     }
     await api.revisitMessage(state.currentSessionId, messageId);
     await refreshCurrentSession();
+    scheduleSessionNarrativeIfSystemTurn();
     state.notice = "已回溯到这句台词，可继续编排";
   }
 
@@ -1275,6 +1274,23 @@ function createToonflowStore() {
       triggerMessageId: Number(triggerMessageId),
       promise,
     };
+  }
+
+  /**
+   * 正式会话恢复后按运行态决定是否继续自动编排。
+   *
+   * 用途：
+   * - 二次进入或回溯后，如果当前仍不是用户回合，就继续 `/orchestration -> /streamlines`；
+   * - 不能只在“消息为空”时推进，因为已有旁白但等待下一句生成也是常态。
+   */
+  function scheduleSessionNarrativeIfSystemTurn() {
+    if (!state.currentSessionId || state.sessionViewMode === "playback") return;
+    if (state.runtimeProcessingPending || state.sessionStartupPriming) return;
+    const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+    const hasStreamingMessage = conversationMessages().some((item) => runtimeMessageStatus(item) === "streaming");
+    if (!canPlayerSpeakNow && !hasStreamingMessage) {
+      void scheduleContinueSessionNarrative();
+    }
   }
 
   /**
@@ -4740,11 +4756,7 @@ function createToonflowStore() {
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
       if (!options?.playback) {
-        const loadedMessages = conversationMessages();
-        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (!loadedMessages.length && !canPlayerSpeakNow) {
-          void scheduleContinueSessionNarrative();
-        }
+        scheduleSessionNarrativeIfSystemTurn();
       }
       void refreshSessionListState();
     } catch (error) {
@@ -4928,7 +4940,9 @@ function createToonflowStore() {
   function applyDebugOrchestrationResult(
     result: {
       role?: string | null;
+      roleType?: string | null;
       motive?: string | null;
+      awaitUser?: boolean | null;
       state?: Record<string, unknown> | null;
       chapterId?: number | null;
       chapterTitle?: string | null;
@@ -4945,7 +4959,9 @@ function createToonflowStore() {
       String(result.role || "").trim()
         ? {
           role: String(result.role || "").trim(),
+          roleType: String(result.roleType || "").trim() || "narrator",
           motive: String(result.motive || "").trim(),
+          awaitUser: Boolean((result as { awaitUser?: unknown }).awaitUser),
         } as DebugNarrativePlan
         : null
     );
