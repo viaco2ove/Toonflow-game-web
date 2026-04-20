@@ -442,6 +442,8 @@ function normalizeRuntimeChatTraceItem(input: unknown): RuntimeChatTraceItem | n
   const lineIndex = Number(record["lineIndex"] || 0);
   const updateTime = Number(record["updateTime"] || 0);
   const currentStatus = (String(record["currentStatus"] || "").trim() as RuntimeLineStatus | "");
+  const rawNextRole = String(record["nextRole"] || "").trim();
+  const rawNextRoleType = String(record["nextRoleType"] || "").trim();
   const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
   return {
     conversationId,
@@ -943,7 +945,10 @@ function createToonflowStore() {
   let runtimeRetrySeed = 0;
   let runtimeRetrying = false;
   let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
-  let continueSessionNarrativePromise: Promise<void> = Promise.resolve();
+  // 正式游玩链的“继续编排”必须做单飞控制。
+  // 这里如果用 Promise.resolve() 反复链式 then，会把多次触发排成串行队列，
+  // 结果就是同一轮恢复里连续打出两个 /game/orchestration。
+  let continueSessionNarrativePromise: Promise<boolean> | null = null;
   let continueDebugNarrativePromise: Promise<boolean> | null = null;
   let pendingSessionOrchestrationPrefetch: PendingSessionOrchestrationPrefetch | null = null;
   const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
@@ -1219,11 +1224,14 @@ function createToonflowStore() {
   }
 
   function scheduleContinueSessionNarrative() {
-    continueSessionNarrativePromise = continueSessionNarrativePromise
-      .catch(() => undefined)
-      .then(async () => {
-        await continueSessionNarrative();
-      });
+    if (continueSessionNarrativePromise) {
+      return continueSessionNarrativePromise;
+    }
+    continueSessionNarrativePromise = (async () => {
+      return continueSessionNarrative();
+    })().finally(() => {
+      continueSessionNarrativePromise = null;
+    });
     return continueSessionNarrativePromise;
   }
 
@@ -4595,14 +4603,30 @@ function createToonflowStore() {
       // 正式游玩入口必须先清空上一轮章节调试态，避免误触发调试 streamlines。
       resetDebugSessionState();
       clearRuntimeRetryState();
-      // 正式游玩首启阶段要独占“开场白 -> 首轮编排”这段启动链。
-      // 否则播放页 watcher 会在开场白播完后把最后一条旁白误判成 waiting_next，
-      // 提前触发 continueSessionNarrative()，和这里手动发起的首轮 /game/orchestration 并发撞车。
-      state.runtimeProcessingPending = true;
       state.notice = "正在进入故事...";
       state.activeTab = "play";
       state.sessionViewMode = "live";
       state.sessionPlaybackStartIndex = 0;
+      const existingSession = state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
+        || await fetchLatestSessionForWorld(Number(world.id || 0))
+        || null;
+      if (existingSession?.sessionId) {
+        state.notice = "正在继续上次故事...";
+        // 继续旧会话时不能占用“首开独占链”标记。
+        // 否则 openSession() 内部的自动续编排会被 runtimeProcessingPending / sessionStartupPriming 直接短路。
+        state.runtimeProcessingPending = false;
+        state.sessionStartupPriming = false;
+        await openSession(existingSession.sessionId, { resumeLatest: true });
+        if (quickText.trim()) {
+          state.sendText = quickText.trim();
+          await sendMessage();
+        }
+        return;
+      }
+      // 正式游玩首启阶段要独占“开场白 -> 首轮编排”这段启动链。
+      // 否则播放页 watcher 会在开场白播完后把最后一条旁白误判成 waiting_next，
+      // 提前触发 continueSessionNarrative()，和这里手动发起的首轮 /game/orchestration 并发撞车。
+      state.runtimeProcessingPending = true;
       // 正式首开需要独占“开场白 -> 首章编排”这条启动链。
       // 否则开场白提交后触发的后台预取会和手动首章编排并发，形成双 /game/orchestration。
       state.sessionStartupPriming = true;
@@ -4613,20 +4637,6 @@ function createToonflowStore() {
       state.sessionResumeLatestOnOpen = false;
       state.sessionDetail = null;
       state.messages = [];
-      const existingSession = state.sessions.find((item) => Number(item.worldId || 0) === Number(world.id || 0))
-        || await fetchLatestSessionForWorld(Number(world.id || 0))
-        || null;
-      if (existingSession?.sessionId) {
-        state.sessionOpeningStage = "正在继续上次故事...";
-        state.notice = "正在继续上次故事...";
-        await openSession(existingSession.sessionId, { resumeLatest: true });
-        state.runtimeProcessingPending = false;
-        if (quickText.trim()) {
-          state.sendText = quickText.trim();
-          await sendMessage();
-        }
-        return;
-      }
       state.sessionOpeningStage = "正在初始化故事...";
       state.notice = "正在初始化故事...";
       const initResult = await api.initStory({
