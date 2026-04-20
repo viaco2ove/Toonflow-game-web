@@ -5677,8 +5677,14 @@ function createToonflowStore() {
       }
       const committedContent = String((finalMessage as Record<string, unknown> | null)?.["content"] || accumulated || "");
       const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
+      const committedRole = String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白");
+      const committedRoleType = String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator");
+      const committedEventType = String((finalMessage as Record<string, unknown> | null)?.["eventType"] || streamingMessage.eventType || RUNTIME_STREAM_EVENT);
       const committed = await api.commitNarrativeTurn({
         sessionId: state.currentSessionId,
+        role: committedRole,
+        roleType: committedRoleType,
+        eventType: committedEventType,
         content: committedContent,
         createTime: committedCreateTime,
         saveSnapshot: true,
@@ -5688,9 +5694,9 @@ function createToonflowStore() {
       // 因此先保留“本轮最终消息”，再在 commit 结果没有 message/generatedMessages 时回填它。
       const fallbackCommittedMessage: MessageItem = {
         id: Number((finalMessage as Record<string, unknown> | null)?.["id"] || committedCreateTime),
-        role: String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白"),
-        roleType: String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator"),
-        eventType: String((finalMessage as Record<string, unknown> | null)?.["eventType"] || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
+        role: committedRole,
+        roleType: committedRoleType,
+        eventType: committedEventType,
         content: committedContent,
         createTime: committedCreateTime,
       };

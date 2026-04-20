@@ -235,6 +235,9 @@ export interface SessionNarrativeResult {
 }
 
 export interface SessionOrchestrationResult {
+  role?: string;
+  roleType?: string;
+  motive?: string;
   sessionId: string;
   status: string;
   chapterId?: number | null;
@@ -284,6 +287,7 @@ export interface DebugNarrativePlan {
 
 export interface DebugOrchestrationResult {
   role?: string;
+  roleType?: string;
   motive?: string;
   chapterId: number | null;
   chapterTitle?: string;
