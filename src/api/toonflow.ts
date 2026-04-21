@@ -14,6 +14,7 @@ import type {
   GeneratedImageResult,
   ImportableRoleListResult,
   ImportWorldRoleResult,
+  InitChapterResult,
   LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
@@ -274,6 +275,16 @@ export class ToonflowApi {
 
   orchestrateSession(sessionId: string) {
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
+  }
+
+  /**
+   * 显式初始化正式会话的下一章节运行态。
+   */
+  initChapter(sessionId: string, chapterId?: number | null) {
+    return this.post<InitChapterResult>("/game/initchapter", {
+      sessionId,
+      chapterId: chapterId || undefined,
+    });
   }
 
   commitNarrativeTurn(payload: Record<string, unknown>) {

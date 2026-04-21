@@ -2005,6 +2005,40 @@ function createToonflowStore() {
   }
 
   /**
+   * 判断编排结果是否要求前端先显式初始化下一章节。
+   *
+   * 用途：
+   * - 正式游玩不再根据 chapterId 猜测是否切章；
+   * - 只有后端明确返回 `init_chapter` 命令时，才允许进入下一章初始化接口。
+   */
+  function isInitChapterCommand(command: unknown): command is {
+    type: "init_chapter";
+    chapterId: number;
+    chapterTitle?: string;
+  } {
+    if (!command || typeof command !== "object" || Array.isArray(command)) return false;
+    return String((command as Record<string, unknown>).type || "").trim() === "init_chapter"
+      && Number((command as Record<string, unknown>).chapterId || 0) > 0;
+  }
+
+  /**
+   * 按后端显式命令初始化下一章节，并刷新故事运行信息。
+   *
+   * 用途：
+   * - 章节结束后先切换章节事件图，再进行下一次编排；
+   * - 避免 `/orchestration` 在旧章节状态下直接串到下一章。
+   */
+  async function initCurrentSessionChapter(command: {
+    chapterId: number;
+  }) {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) return null;
+    const result = await api.initChapter(sessionId, Number(command.chapterId || 0) || undefined);
+    await refreshSessionStoryInfo();
+    return result;
+  }
+
+  /**
    * 对“没有后续台词可播”的 await_user 结果做前端兜底。
    *
    * 用途：
@@ -5770,6 +5804,7 @@ function createToonflowStore() {
         clearRuntimeRetryState();
         applySessionOrchestrationResult(orchestration);
         await refreshSessionStoryInfo();
+        const shouldInitNextChapter = isInitChapterCommand(orchestration.command);
         // 正式链只认 awaitUser，不消费“下一个是谁”这种预编排字段。
         const shouldYieldToUser = orchestration.plan?.awaitUser === true;
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
@@ -5778,6 +5813,13 @@ function createToonflowStore() {
         }
         if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
+        }
+        if (shouldInitNextChapter) {
+          await initCurrentSessionChapter({
+            chapterId: Number(orchestration.command?.chapterId || 0),
+          });
+          advanced = true;
+          continue;
         }
         const afterCount = conversationMessages().length;
         const latest = conversationMessages().slice(-1)[0] || null;

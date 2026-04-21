@@ -239,12 +239,31 @@ export interface SessionOrchestrationResult {
   roleType?: string;
   motive?: string;
   awaitUser?: boolean;
+  command?: {
+    type: "init_chapter";
+    chapterId: number;
+    chapterTitle: string;
+    trigger: "chapter_completed";
+  } | null;
   sessionId: string;
   status: string;
   chapterId?: number | null;
   expectedRole?: string;
   expectedRoleType?: string;
   plan?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface InitChapterResult {
+  sessionId: string;
+  status: string;
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  chapter?: ChapterItem | null;
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
