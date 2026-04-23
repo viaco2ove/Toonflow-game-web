@@ -153,9 +153,14 @@ const currentNpcRole = computed<StoryRole | null>(() => {
   return store.state.npcRoles[index] || null;
 });
 const userAvatarProcessing = computed(() => store.isAvatarProcessing("user"));
+const userAvatarProcessingText = computed(() => store.avatarProcessingMessage("user") || "头像处理中...");
 const currentNpcAvatarProcessing = computed(() => {
   const index = editingNpcIndex.value;
   return typeof index === "number" && index >= 0 ? store.isAvatarProcessing("npc", index) : false;
+});
+const currentNpcAvatarProcessingText = computed(() => {
+  const index = editingNpcIndex.value;
+  return typeof index === "number" && index >= 0 ? (store.avatarProcessingMessage("npc", index) || "头像处理中...") : "头像处理中...";
 });
 const hasUserAvatarPreview = computed(() =>
   !!String(store.state.userAvatarPath || store.state.userAvatarBgPath || "").trim(),
@@ -937,7 +942,7 @@ function cancelRemoveCurrentNpc() {
           <div class="create-card-title">角色</div>
           <div class="create-avatar-row">
             <button class="create-avatar-item" type="button" @click="openUserEditor">
-              <div class="avatar create-role-avatar">
+              <div class="avatar create-role-avatar" :class="{ 'avatar--busy': userAvatarProcessing }">
                 <LayeredAvatar
                   :foreground-path="store.resolveMediaPath(store.state.userAvatarPath)"
                   :background-path="store.resolveMediaPath(store.state.userAvatarBgPath || store.state.userAvatarPath)"
@@ -947,9 +952,12 @@ function cancelRemoveCurrentNpc() {
                     <span class="create-user-glyph"></span>
                   </div>
                 </LayeredAvatar>
+                <div v-if="userAvatarProcessing" class="avatar-processing-mask avatar-processing-mask--mini">
+                  <span class="avatar-processing-spinner avatar-processing-spinner--mini"></span>
+                </div>
                 <div class="badge">✎</div>
               </div>
-              <span>用户</span>
+              <span>{{ userAvatarProcessing ? userAvatarProcessingText : '用户' }}</span>
             </button>
             <button
               v-for="(role, index) in store.state.npcRoles"
@@ -958,7 +966,7 @@ function cancelRemoveCurrentNpc() {
               type="button"
               @click="openNpcEditor(index)"
             >
-              <div class="avatar create-role-avatar">
+              <div class="avatar create-role-avatar" :class="{ 'avatar--busy': store.isAvatarProcessing('npc', index) }">
                 <LayeredAvatar
                   :foreground-path="store.resolveMediaPath(role.avatarPath || '')"
                   :background-path="store.resolveMediaPath(role.avatarBgPath || '')"
@@ -966,9 +974,12 @@ function cancelRemoveCurrentNpc() {
                 >
                   <div class="placeholder">{{ role.name.slice(0, 1) || '角' }}</div>
                 </LayeredAvatar>
+                <div v-if="store.isAvatarProcessing('npc', index)" class="avatar-processing-mask avatar-processing-mask--mini">
+                  <span class="avatar-processing-spinner avatar-processing-spinner--mini"></span>
+                </div>
                 <div class="badge">✎</div>
               </div>
-              <span>{{ role.name || '新角色' }}</span>
+              <span>{{ store.isAvatarProcessing('npc', index) ? (store.avatarProcessingMessage('npc', index) || '生成中') : (role.name || '新角色') }}</span>
             </button>
             <button class="create-avatar-item" type="button" @click="createNpcAndOpen">
               <div class="avatar create-role-avatar create-role-avatar-add">
@@ -1282,7 +1293,7 @@ function cancelRemoveCurrentNpc() {
                 </div>
               </div>
               <div class="create-editor-avatar-copy">
-                <strong>{{ userAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
+                <strong>{{ userAvatarProcessing ? userAvatarProcessingText : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF / MP4，保存时会自动标准化。</span>
                 <span>可选：上传、GIF、AI 生图、图标查看大图。</span>
               </div>
@@ -1349,7 +1360,7 @@ function cancelRemoveCurrentNpc() {
                 </div>
               </div>
               <div class="create-editor-avatar-copy">
-                <strong>{{ currentNpcAvatarProcessing ? '头像处理中...' : '点击头像更换' }}</strong>
+                <strong>{{ currentNpcAvatarProcessing ? currentNpcAvatarProcessingText : '点击头像更换' }}</strong>
                 <span>支持 PNG / GIF / MP4，保存时会自动标准化。</span>
                 <span>可选：上传、GIF、AI 生图、图标查看大图。</span>
               </div>

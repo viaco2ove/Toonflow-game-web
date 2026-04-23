@@ -427,7 +427,11 @@ export class ToonflowApi {
   }
 
   convertAvatarVideoToGif(payload: Record<string, unknown>) {
-    return this.post<SeparatedRoleImageResult>("/game/convertAvatarVideoToGif", payload);
+    return this.post<RoleAvatarTaskResult>("/game/convertAvatarVideoToGif", payload);
+  }
+
+  getAvatarVideoToGifTask(taskId: number) {
+    return this.post<RoleAvatarTaskResult>("/game/convertAvatarVideoToGif/status", { taskId });
   }
 
   separateRoleAvatar(payload: Record<string, unknown>) {

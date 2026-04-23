@@ -320,6 +320,12 @@ a {
   color: var(--text);
 }
 
+.my-avatar-processing-text {
+  color: #37527d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .my-profile-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -935,6 +941,13 @@ a {
   height: 54px;
 }
 
+.create-avatar-item > span {
+  max-width: 76px;
+  min-height: 30px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .create-role-avatar .badge {
   width: 17px;
   height: 17px;
@@ -1512,6 +1525,15 @@ a {
   border: 2px solid rgba(255, 255, 255, 0.35);
   border-top-color: #fff4cb;
   animation: avatar-processing-spin 0.8s linear infinite;
+}
+
+.avatar-processing-mask--mini {
+  background: rgba(19, 33, 52, 0.38);
+}
+
+.avatar-processing-spinner--mini {
+  width: 18px;
+  height: 18px;
 }
 
 @keyframes avatar-processing-spin {

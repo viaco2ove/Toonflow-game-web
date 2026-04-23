@@ -184,6 +184,8 @@ const COVER_BG_WIDTH = 1536;
 const COVER_BG_HEIGHT = 864;
 const ROLE_AVATAR_TASK_POLL_INTERVAL_MS = 1000;
 const ROLE_AVATAR_TASK_TIMEOUT_MS = 180000;
+const AVATAR_VIDEO_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+const AVATAR_VIDEO_TASK_POLL_INTERVAL_MS = 2000;
 
 type EditorImageTarget = "account" | "user" | "npc" | "cover" | "chapter";
 
@@ -220,6 +222,33 @@ function looksLikeMp4Name(input: string): boolean {
   if (!raw) return false;
   const clean = raw.split("#")[0]?.split("?")[0] || raw;
   return /\.mp4$/i.test(clean);
+}
+
+/**
+ * 把视频头像任务状态转换成明确的界面提示，避免后端排队时用户以为按钮卡死。
+ */
+function buildAvatarVideoProgressMessage(task: RoleAvatarTaskResult): string {
+  const status = String(task.status || "").trim().toLowerCase();
+  const rawMessage = String(task.message || "").trim();
+  const progress = Number(task.progress ?? 0);
+  const progressText = Number.isFinite(progress) && progress > 0 ? ` ${Math.round(progress)}%` : "";
+  const queuePosition = Number(task.queuePosition || 0);
+  if (status === "queued") {
+    return queuePosition > 0 ? `排队中，第 ${queuePosition} 个` : "排队中";
+  }
+  if (status === "running") {
+    const frameMatch = rawMessage.match(/第\s*(\d+)\s*\/\s*(\d+)\s*帧/);
+    return frameMatch
+      ? `生成中${progressText}，第 ${frameMatch[1]}/${frameMatch[2]} 帧`
+      : `生成中${progressText}`;
+  }
+  if (status === "success") {
+    return "生成完成 100%";
+  }
+  if (status === "failed") {
+    return String(task.errorMessage || task.message || "生成失败").trim() || "生成失败";
+  }
+  return String(task.message || "头像任务处理中").trim() || "头像任务处理中";
 }
 
 function cropRectForTarget(sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) {
@@ -893,6 +922,9 @@ function createToonflowStore() {
     aiGenerating: false,
     avatarProcessingTarget: "" as "" | "account" | "user" | "npc",
     avatarProcessingNpcIndex: null as number | null,
+    avatarProcessingMessage: "",
+    avatarProcessingFlags: {} as Record<string, boolean>,
+    avatarProcessingMessages: {} as Record<string, string>,
     chapters: [] as ChapterItem[],
     selectedChapterId: null as number | null,
     chapterTitle: "",
@@ -3501,7 +3533,7 @@ function createToonflowStore() {
     return result.filePath || result.path || "";
   }
 
-  async function convertAvatarVideoToGifPayload(target: "account" | "user" | "npc", file: File): Promise<{ path: string; bgPath: string }> {
+  async function convertAvatarVideoToGifPayload(target: "account" | "user" | "npc", file: File, roleIndex: number | null = null): Promise<{ path: string; bgPath: string }> {
     if (target !== "account" && state.selectedProjectId <= 0) {
       throw new Error("请先选择项目后再上传 MP4");
     }
@@ -3509,17 +3541,17 @@ function createToonflowStore() {
     if (!isMp4) {
       throw new Error("仅支持上传 MP4 视频转换 GIF");
     }
-    const result = await api.convertAvatarVideoToGif({
+    const task = await api.convertAvatarVideoToGif({
       projectId: target === "account" ? undefined : state.selectedProjectId || undefined,
       fileName: file.name || "avatar.mp4",
       base64Data: await fileToDataUrl(file),
     });
-    const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
-    const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
-    if (!path || !bgPath) {
-      throw new Error("MP4 转 GIF 失败，未返回头像资源");
+    const taskId = Number(task.taskId || task.jobId || 0);
+    if (taskId <= 0) {
+      throw new Error("MP4 转 GIF 任务创建失败");
     }
-    return { path, bgPath };
+    setAvatarProcessingMessage(target, roleIndex, buildAvatarVideoProgressMessage(task));
+    return await waitForAvatarVideoTask(taskId, target, roleIndex);
   }
 
   async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
@@ -3579,6 +3611,23 @@ function createToonflowStore() {
     throw new Error("头像分离处理超时，请稍后重试");
   }
 
+  async function waitForAvatarVideoTask(taskId: number, target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < AVATAR_VIDEO_TASK_TIMEOUT_MS) {
+      const task = await api.getAvatarVideoToGifTask(taskId);
+      const status = String(task.status || "").trim().toLowerCase();
+      setAvatarProcessingMessage(target, npcIndex, buildAvatarVideoProgressMessage(task));
+      if (status === "success") {
+        return resolveSeparatedRolePaths(task);
+      }
+      if (status === "failed") {
+        throw new Error(String(task.errorMessage || task.message || "MP4 转 GIF 失败").trim() || "MP4 转 GIF 失败");
+      }
+      await sleep(AVATAR_VIDEO_TASK_POLL_INTERVAL_MS);
+    }
+    throw new Error("MP4 转 GIF 处理超时，请稍后重试");
+  }
+
   async function separateRoleImageAsset(target: "account" | "user" | "npc", source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
     if (target !== "account" && state.selectedProjectId <= 0) {
       throw new Error("请先选择项目后再上传图片");
@@ -3599,9 +3648,48 @@ function createToonflowStore() {
     return await waitForSeparateRoleAvatarTask(taskId);
   }
 
-  function setAvatarProcessing(target: "account" | "user" | "npc" | null, npcIndex: number | null = null) {
-    state.avatarProcessingTarget = target || "";
+  /**
+   * 生成头像任务的状态键。每个角色独立存储，避免多个角色排队时进度文案互相覆盖。
+   */
+  function avatarProcessingKey(target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    return target === "npc" ? `npc:${typeof npcIndex === "number" ? npcIndex : -1}` : target;
+  }
+
+  /**
+   * 标记指定头像正在处理，并初始化该角色自己的进度文案。
+   */
+  function setAvatarProcessing(target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    const key = avatarProcessingKey(target, npcIndex);
+    state.avatarProcessingTarget = target;
     state.avatarProcessingNpcIndex = target === "npc" && typeof npcIndex === "number" ? npcIndex : null;
+    state.avatarProcessingFlags[key] = true;
+    state.avatarProcessingMessages[key] = "头像任务准备中...";
+    state.avatarProcessingMessage = state.avatarProcessingMessages[key];
+  }
+
+  /**
+   * 更新指定角色自己的头像处理进度，不污染其他角色的进度显示。
+   */
+  function setAvatarProcessingMessage(target: "account" | "user" | "npc", npcIndex: number | null, message: string) {
+    const key = avatarProcessingKey(target, npcIndex);
+    state.avatarProcessingMessages[key] = message;
+    if (state.avatarProcessingTarget === target && (target !== "npc" || state.avatarProcessingNpcIndex === npcIndex)) {
+      state.avatarProcessingMessage = message;
+    }
+  }
+
+  /**
+   * 清理指定头像任务的处理状态；只清理当前任务，避免误清其他正在排队的角色。
+   */
+  function clearAvatarProcessing(target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    const key = avatarProcessingKey(target, npcIndex);
+    delete state.avatarProcessingFlags[key];
+    delete state.avatarProcessingMessages[key];
+    if (state.avatarProcessingTarget === target && (target !== "npc" || state.avatarProcessingNpcIndex === npcIndex)) {
+      state.avatarProcessingTarget = "";
+      state.avatarProcessingNpcIndex = null;
+      state.avatarProcessingMessage = "";
+    }
   }
 
   function clearAvatarFailureNotice() {
@@ -3613,9 +3701,15 @@ function createToonflowStore() {
   }
 
   function isAvatarProcessing(target: "account" | "user" | "npc", npcIndex: number | null = null) {
-    if (state.avatarProcessingTarget !== target) return false;
-    if (target !== "npc") return true;
-    return typeof npcIndex === "number" && state.avatarProcessingNpcIndex === npcIndex;
+    return Boolean(state.avatarProcessingFlags[avatarProcessingKey(target, npcIndex)]);
+  }
+
+  /**
+   * 返回当前头像任务的用户可见进度文案；普通图片分离和视频排队共用这一条状态。
+   */
+  function avatarProcessingMessage(target: "account" | "user" | "npc", npcIndex: number | null = null) {
+    const key = avatarProcessingKey(target, npcIndex);
+    return isAvatarProcessing(target, npcIndex) ? String(state.avatarProcessingMessages[key] || "").trim() : "";
   }
 
   async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
@@ -3672,7 +3766,7 @@ function createToonflowStore() {
       }
       clearAvatarFailureNotice();
     } finally {
-      setAvatarProcessing(null);
+      clearAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
     }
   }
 
@@ -3680,7 +3774,7 @@ function createToonflowStore() {
     clearAvatarFailureNotice();
     setAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
     try {
-      const prepared = await convertAvatarVideoToGifPayload(target, file);
+      const prepared = await convertAvatarVideoToGifPayload(target, file, typeof roleIndex === "number" ? roleIndex : null);
       if (target === "account") {
         state.accountAvatarPath = prepared.path;
         state.accountAvatarBgPath = prepared.bgPath;
@@ -3697,7 +3791,7 @@ function createToonflowStore() {
       }
       clearAvatarFailureNotice();
     } finally {
-      setAvatarProcessing(null);
+      clearAvatarProcessing(target, typeof roleIndex === "number" ? roleIndex : null);
     }
   }
 
@@ -6106,6 +6200,7 @@ function createToonflowStore() {
     updateAvatarFromFile,
     updateAvatarFromMp4,
     isAvatarProcessing,
+    avatarProcessingMessage,
     updateCoverFromFile,
     updateChapterBackgroundFromFile,
     setPlayerVoiceBinding,

@@ -30,6 +30,7 @@ const draftMenuWorld = ref<WorldItem | null>(null);
 const accountDialogTitle = computed(() => "创建角色");
 const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
 const accountAvatarProcessing = computed(() => store.isAvatarProcessing("account"));
+const accountAvatarProcessingText = computed(() => store.avatarProcessingMessage("account") || "头像处理中...");
 
 async function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -198,6 +199,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
       <input ref="avatarVideoInput" type="file" accept="video/mp4" hidden @change="onAvatarVideoFile" />
       <div class="my-profile-meta">
         <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>
+        <div v-if="accountAvatarProcessing" class="my-avatar-processing-text">{{ accountAvatarProcessingText }}</div>
         <div class="subtle">用户ID：{{ store.state.userId || 0 }}</div>
         <div class="my-profile-stats">
           <div class="my-stat">
