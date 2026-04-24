@@ -46,6 +46,7 @@ import { manufacturerLabel } from "../utils/modelConfigCatalog";
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
 const RUNTIME_STREAM_EVENT = "on_streaming_reply";
+const RUNTIME_STREAM_PLACEHOLDER_TEXT = "获取台词中";
 
 type RuntimeRetryTask = {
   token: string;
@@ -1826,7 +1827,9 @@ function createToonflowStore() {
       role: String(plan.role || "旁白"),
       roleType: String(plan.roleType || "narrator"),
       eventType: String(plan.eventType || RUNTIME_STREAM_EVENT),
-      content: "",
+      // 编排接口一返回就先渲染占位台词框，避免用户看到一段时间的空白聊天区。
+      // 首个流式 delta 到来后会直接覆盖成真实台词，不会长期保留这段文案。
+      content: RUNTIME_STREAM_PLACEHOLDER_TEXT,
       createTime: now,
       meta: {
         kind: "runtime_stream",
@@ -2161,6 +2164,22 @@ function createToonflowStore() {
     }
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
+  }
+
+  /**
+   * 判断本轮正式会话消息提交是否已经切入小游戏。
+   *
+   * 用途：
+   * - `#战斗`、`#钓鱼` 等指令会直接由小游戏控制器接管后续输入；
+   * - 一旦小游戏已激活，前端就不能再继续调用主线 `storyInfo -> continueSessionNarrative`；
+   * - 否则会把小游戏首句误当成普通剧情继续推进，造成面板和回合提示串线。
+   */
+  function hasActiveMiniGameInSessionResult(result: SessionNarrativeResult | null | undefined): boolean {
+    const runtimeState = asMiniRecord(result?.state);
+    const miniGameRoot = asMiniRecord(runtimeState.miniGame);
+    const miniGameSession = asMiniRecord(miniGameRoot.session);
+    const status = scalarText(miniGameSession.status);
+    return ["preparing", "active", "settling", "suspended"].includes(status);
   }
 
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
@@ -5749,6 +5768,10 @@ function createToonflowStore() {
       state.sendText = "";
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
+      if (hasActiveMiniGameInSessionResult(result)) {
+        void refreshSessionListState();
+        return;
+      }
       await refreshSessionStoryInfo();
       void refreshSessionListState();
       await continueSessionNarrative();

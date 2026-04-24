@@ -1097,8 +1097,9 @@ const battleEnemies = computed(() => {
   if (!game || game.gameType !== "battle") return [];
   return battleEnemiesFromMiniGame(game.publicState);
 });
-watch(() => activeMiniGame.value?.gameType || "", () => {
-  miniGamePanelExpanded.value = false;
+watch(() => activeMiniGame.value?.gameType || "", (gameType) => {
+  // 小游戏刚启动时默认展开一次，避免“已经进入战斗，但用户看不到状态面板”。
+  miniGamePanelExpanded.value = Boolean(gameType);
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
@@ -1598,6 +1599,11 @@ watch(
     if (!newMessages.length) return;
     for (const message of newMessages) {
       if (cancelled) return;
+      // 流式台词在首个 delta 返回前，只是一个空占位。
+      // 这里先不把它塞进聊天框，避免“编排接口刚返回就先出现获取台词中气泡”的假象。
+      if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
+        continue;
+      }
       const messageKey = messageUiKey(message);
       revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
       await nextTick();
@@ -3224,7 +3230,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})` }"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
