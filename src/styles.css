@@ -3799,6 +3799,7 @@ textarea::-webkit-scrollbar-thumb {
 .main-view--play {
   background: #081425;
   overflow: hidden;
+  display: block;
 }
 
 .play-page {

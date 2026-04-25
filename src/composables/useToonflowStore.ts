@@ -2029,6 +2029,9 @@ function createToonflowStore() {
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
     };
+    // orchestration 只返回最小 plan 时，先在前端本地兜住 awaitUser，
+    // 避免后续独立 storyInfo 还没来得及同步前，界面先短暂显示成“等待旁白/NPC”。
+    applyAwaitUserTurnFromPlan(result.plan);
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
   }
@@ -5920,13 +5923,16 @@ function createToonflowStore() {
         const orchestration = await resolveSessionOrchestration(Number(latestHistoryMessage?.id || 0));
         clearRuntimeRetryState();
         applySessionOrchestrationResult(orchestration);
-        await refreshSessionStoryInfo();
+        const plan = orchestration.plan || null;
         const shouldInitNextChapter = isInitChapterCommand(orchestration.command);
         // 正式链只认 awaitUser，不消费“下一个是谁”这种预编排字段。
-        const shouldYieldToUser = orchestration.plan?.awaitUser === true;
-        const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
+        const shouldYieldToUser = plan?.awaitUser === true;
+        const shouldStreamPlan = shouldStreamSessionPlanFromPlan(plan);
+        await refreshSessionStoryInfo();
         if (!shouldStreamPlan) {
-          applyAwaitUserTurnFromPlan(orchestration.plan);
+          // storyInfo 可能仍落后一拍，刷新后再补一次本地 awaitUser，
+          // 确保 turnState 与最后一条消息状态都稳定切到 waiting_player。
+          applyAwaitUserTurnFromPlan(plan);
         }
         if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
@@ -5942,7 +5948,7 @@ function createToonflowStore() {
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
         const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan || shouldYieldToUser) {
+        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !plan || shouldYieldToUser) {
           advanced = true;
           break;
         }
