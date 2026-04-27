@@ -205,6 +205,8 @@ export interface SessionDetail {
   sessionId?: string;
   title?: string;
   status?: string;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
   chapterId?: number | null;
   state?: Record<string, unknown> | null;
   world?: WorldItem | null;
@@ -362,6 +364,7 @@ export interface StoryInitResult {
  */
 export interface StoryInfoResult {
   worldId: number;
+  status?: string;
   chapterId: number | null;
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
@@ -370,6 +373,8 @@ export interface StoryInfoResult {
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
 }
 
 export interface AiTokenUsageLogItem {

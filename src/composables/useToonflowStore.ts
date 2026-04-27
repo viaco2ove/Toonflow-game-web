@@ -981,6 +981,8 @@ function createToonflowStore() {
     sessionOpeningStage: "",
     sessionOpenError: "",
     sessionRuntimeStage: "",
+    sessionEndDialog: null as string | null,
+    sessionEndDialogDetail: "",
     sendPending: false,
     runtimeProcessingPending: false,
     sessionDetail: null as Loadable<SessionDetail>,
@@ -2002,9 +2004,14 @@ function createToonflowStore() {
     const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
     const nextChapter = result.chapter || existingDetail?.chapter || null;
     const nextWorld = result.world || existingDetail?.world || null;
+    const nextEndDialog = String(result.endDialog || "").trim() || null;
+    const nextEndDialogDetail = String(result.endDialogDetail || "").trim();
     state.sessionDetail = {
       ...(existingDetail || {}),
       sessionId: existingDetail?.sessionId || state.currentSessionId,
+      status: String(result.status || existingDetail?.status || "").trim(),
+      endDialog: nextEndDialog,
+      endDialogDetail: nextEndDialogDetail,
       chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
       state: nextState,
       world: nextWorld,
@@ -2018,6 +2025,8 @@ function createToonflowStore() {
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
     };
+    state.sessionEndDialog = nextEndDialog;
+    state.sessionEndDialogDetail = nextEndDialogDetail;
     if (nextChapter) {
       const chapterIndex = state.chapters.findIndex((item) => Number(item.id || 0) === Number(nextChapter.id || 0));
       if (chapterIndex >= 0) {
@@ -2049,6 +2058,8 @@ function createToonflowStore() {
       ...(existingDetail || {}),
       sessionId: result.sessionId || existingDetail?.sessionId || state.currentSessionId,
       status: result.status || existingDetail?.status || "",
+      endDialog: existingDetail?.endDialog || null,
+      endDialogDetail: String(existingDetail?.endDialogDetail || "").trim(),
       chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
       state: (existingDetail?.state || {}) as Record<string, unknown>,
       chapter: existingDetail?.chapter || null,
@@ -2322,6 +2333,8 @@ function createToonflowStore() {
     state.sessionOpening = false;
     state.sessionOpeningStage = "";
     state.sessionOpenError = "";
+    state.sessionEndDialog = null;
+    state.sessionEndDialogDetail = "";
     state.settingsPanelLoaded = false;
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
@@ -4955,6 +4968,8 @@ function createToonflowStore() {
     state.sessionOpening = true;
     state.sessionOpeningStage = options?.playback ? "读取回放数据" : "读取记忆与角色参数";
     state.sessionOpenError = "";
+    state.sessionEndDialog = null;
+    state.sessionEndDialogDetail = "";
     state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆与角色参数...";
     state.sessionRuntimeStage = "";
     state.sessionDetail = null;

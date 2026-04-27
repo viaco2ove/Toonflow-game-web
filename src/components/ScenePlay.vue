@@ -2831,6 +2831,11 @@ function closeDebugDialog() {
   store.state.debugEndDialogDetail = "";
 }
 
+function closeSessionEndDialog() {
+  store.state.sessionEndDialog = null;
+  store.state.sessionEndDialogDetail = "";
+}
+
 function exitDebugMode() {
   stopVoiceRecognition();
   store.state.debugEndDialog = null;
@@ -3932,6 +3937,32 @@ onBeforeUnmount(() => {
         <div class="modal-actions">
           <button class="button" type="button" @click="closeDebugDialog">继续查看</button>
           <button class="button primary" type="button" @click="exitDebugMode">返回编辑</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="store.state.sessionEndDialog && !store.state.debugMode"
+      class="modal-backdrop play-debug-end-backdrop"
+      @click.self="closeSessionEndDialog"
+    >
+      <div class="modal-panel play-debug-end-panel" style="width:min(100%,420px);">
+        <div class="modal-header">
+          <button class="button small" type="button" @click="closeSessionEndDialog">继续查看</button>
+          <div style="font-weight:900;">章节失败</div>
+          <span class="tiny">{{ store.state.sessionEndDialog }}</span>
+        </div>
+        <div class="modal-body">
+          <div class="surface section-block surface-soft">
+            <div style="font-weight:900; font-size:18px;">章节失败</div>
+            <div class="subtle" style="margin-top:8px;">
+              {{ store.state.sessionEndDialogDetail || "当前章节结束条件失败。可继续查看当前记录，或返回历史重新开始。" }}
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button" type="button" @click="closeSessionEndDialog">继续查看</button>
+          <button class="button primary" type="button" @click="toggleHistoryMode">返回历史</button>
         </div>
       </div>
     </div>
