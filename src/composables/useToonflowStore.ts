@@ -3304,19 +3304,26 @@ function createToonflowStore() {
 
   function isAvatarMattingManufacturer(manufacturer: string | null | undefined): boolean {
     const normalized = String(manufacturer || "").trim().toLowerCase();
-    return normalized === "bria" || normalized === "aliyun_imageseg" || normalized === "tencent_ci" || normalized === "local_birefnet";
+    return normalized === "bria"
+      || normalized === "aliyun_imageseg"
+      || normalized === "tencent_ci"
+      || normalized === "local_birefnet"
+      || normalized === "local_modnet";
   }
 
   function avatarMattingRecommendationScore(item: ModelConfigItem): number {
     const manufacturer = String(item.manufacturer || "").trim().toLowerCase();
+    const model = String(item.model || "").trim().toLowerCase();
     let score = 0;
     if (manufacturer === "bria") score += 1000;
     if (manufacturer === "local_birefnet") score += 960;
+    if (manufacturer === "local_modnet") score += 940;
     if (manufacturer === "tencent_ci") score += 850;
     if (manufacturer === "aliyun_imageseg") score += 700;
-    if (String(item.model || "").trim().toLowerCase() === "segmentcommonimage") score += 80;
-    if (String(item.model || "").trim().toLowerCase() === "aiportraitmatting") score += 120;
-    if (String(item.model || "").trim().toLowerCase() === "birefnet-portrait") score += 160;
+    if (model === "segmentcommonimage") score += 80;
+    if (model === "aiportraitmatting") score += 120;
+    if (model === "birefnet-portrait") score += 160;
+    if (model === "modnet-photographic-portrait") score += 150;
     score += Math.min(Number(item.createTime || 0) / 1_000_000_000_000, 50);
     return score;
   }
@@ -3363,7 +3370,7 @@ function createToonflowStore() {
       const binding = settingsModelBinding("storyAvatarMattingModel");
       const recommendation = settingsRecommendedModel("storyAvatarMattingModel");
       const recommendationText = recommendation ? formatSettingsModelLabel(recommendation) : "Bria / RMBG-2.0";
-      const credentialHint = "Bria 的 API Key 直接填 token；阿里云视觉请填 AccessKeyId|AccessKeySecret 或 JSON；腾讯云数据万象请填 SecretId|SecretKey，Base URL 填标准 COS 桶域名；BiRefNet 本地无需 Key，但首次选择会提示安装本地依赖和模型文件。";
+      const credentialHint = "Bria 的 API Key 直接填 token；阿里云视觉请填 AccessKeyId|AccessKeySecret 或 JSON；腾讯云数据万象请填 SecretId|SecretKey，Base URL 填标准 COS 桶域名；本地头像分离支持独立的 BiRefNet / MODNet 配置，无需 Key，但首次选择会提示安装本地依赖和模型文件。";
       if (!binding?.configId) {
         return {
           tone: "warn",

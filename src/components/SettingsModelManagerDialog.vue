@@ -52,11 +52,27 @@ function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
 
 function isAvatarMattingManufacturer(manufacturer?: string | null): boolean {
   const normalized = String(manufacturer || "").trim().toLowerCase();
-  return normalized === "bria" || normalized === "aliyun_imageseg" || normalized === "tencent_ci" || normalized === "local_birefnet";
+  return normalized === "bria"
+    || normalized === "aliyun_imageseg"
+    || normalized === "tencent_ci"
+    || normalized === "local_birefnet"
+    || normalized === "local_modnet";
 }
 
 function isLocalBiRefNetManufacturer(manufacturer?: string | null): boolean {
   return String(manufacturer || "").trim().toLowerCase() === "local_birefnet";
+}
+
+function isLocalModNetManufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim().toLowerCase() === "local_modnet";
+}
+
+function isLocalAvatarMattingManufacturer(manufacturer?: string | null): boolean {
+  return isLocalBiRefNetManufacturer(manufacturer) || isLocalModNetManufacturer(manufacturer);
+}
+
+function localAvatarMattingTitle(manufacturer?: string | null): string {
+  return isLocalModNetManufacturer(manufacturer) ? "MODNet 本地模型" : "BiRefNet 本地模型";
 }
 
 function isAutoDlTextManufacturer(manufacturer?: string | null): boolean {
@@ -110,6 +126,9 @@ function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelTyp
   }
   if (props.slotKey === "storyAvatarMattingModel" && manufacturer === "local_birefnet") {
     return "birefnet-portrait";
+  }
+  if (props.slotKey === "storyAvatarMattingModel" && manufacturer === "local_modnet") {
+    return "modnet-photographic-portrait";
   }
   return defaultModelNameFor(manufacturer, props.configType, modelType);
 }
@@ -187,7 +206,11 @@ const manufacturerOptions = computed(() =>
       return item.value === "qwen";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
-      return item.value === "bria" || item.value === "aliyun_imageseg" || item.value === "tencent_ci" || item.value === "local_birefnet";
+      return item.value === "bria"
+        || item.value === "aliyun_imageseg"
+        || item.value === "tencent_ci"
+        || item.value === "local_birefnet"
+        || item.value === "local_modnet";
     }
     if (props.configType === "text") {
       return item.value !== "ai_voice_tts"
@@ -196,7 +219,8 @@ const manufacturerOptions = computed(() =>
         && item.value !== "bria"
         && item.value !== "aliyun_imageseg"
         && item.value !== "tencent_ci"
-        && item.value !== "local_birefnet";
+        && item.value !== "local_birefnet"
+        && item.value !== "local_modnet";
     }
     if (props.configType === "voice") {
       return item.value !== "qwen" && item.value !== "lmstudio" && item.value !== "autodl_chat";
@@ -208,6 +232,7 @@ const manufacturerOptions = computed(() =>
       && item.value !== "aliyun_imageseg"
       && item.value !== "tencent_ci"
       && item.value !== "local_birefnet"
+      && item.value !== "local_modnet"
       && item.value !== "lmstudio";
   }),
 );
@@ -221,7 +246,7 @@ const modelTypeOptions = computed(() => {
 
 const shouldShowModelType = computed(() => props.configType !== "image" && modelTypeOptions.value.length > 1);
 const shouldShowTokenPricing = computed(() => props.configType === "text");
-const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalBiRefNetManufacturer(form.manufacturer));
+const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer));
 const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
 const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
@@ -238,7 +263,7 @@ const apiKeyPlaceholder = computed(() => {
   if (props.configType === "text" && form.manufacturer === "lmstudio") {
     return "本地 LM Studio 可留空";
   }
-  if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_birefnet") {
+  if (props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer)) {
     return "本地模型无需填写";
   }
   if (!isApiKeyRequiredFor(form.manufacturer, props.configType)) {
@@ -267,6 +292,9 @@ const apiKeyHint = computed(() => {
   }
   if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_birefnet") {
     return "本地 BiRefNet 不需要 Base URL 或 API Key。首次选择会提示安装 Python 依赖和模型文件，安装完成后即可直接使用。";
+  }
+  if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_modnet") {
+    return "本地 MODNet 不需要 Base URL 或 API Key。首次选择会提示安装 Python 依赖和模型文件，安装完成后即可直接使用。";
   }
   return "";
 });
@@ -311,12 +339,12 @@ watch(
   () => form.manufacturer,
   async (value, oldValue) => {
     if (muteLocalManufacturerPrompt || props.slotKey !== "storyAvatarMattingModel" || !showEditor.value) {
-      if (!isLocalBiRefNetManufacturer(value)) {
+      if (!isLocalAvatarMattingManufacturer(value)) {
         localAvatarMattingStatus.value = null;
       }
       return;
     }
-    if (!isLocalBiRefNetManufacturer(value)) {
+    if (!isLocalAvatarMattingManufacturer(value)) {
       localAvatarMattingStatus.value = null;
       return;
     }
@@ -332,7 +360,7 @@ watch(
         muteLocalManufacturerPrompt = false;
       });
     } catch (err) {
-      store.state.notice = `本地 BiRefNet 安装失败: ${(err as Error).message}`;
+      store.state.notice = `本地头像分离模型安装失败: ${(err as Error).message}`;
       muteLocalManufacturerPrompt = true;
       form.manufacturer = oldValue || defaultSlotManufacturer();
       queueMicrotask(() => {
@@ -350,7 +378,7 @@ watch(
     } else {
       autodlModelPreset.value = "__custom__";
     }
-    if (!visible || !isLocalBiRefNetManufacturer(manufacturer)) {
+    if (!visible || !isLocalAvatarMattingManufacturer(manufacturer)) {
       if (!visible) {
         localAvatarMattingStatus.value = null;
         localAvatarMattingInstalling.value = false;
@@ -360,7 +388,7 @@ watch(
     try {
       await refreshLocalAvatarMattingStatus();
     } catch (err) {
-      store.state.notice = `读取本地 BiRefNet 状态失败: ${(err as Error).message}`;
+      store.state.notice = `读取本地头像分离模型状态失败: ${(err as Error).message}`;
     }
   },
 );
@@ -398,21 +426,21 @@ async function ensureLocalAvatarMattingInstalled(interactive = true): Promise<bo
   if (!status) return false;
   if (status.status === "installed") return true;
   if (status.status === "installing") {
-    store.state.notice = status.message || "本地 BiRefNet 安装中，请稍候";
+    store.state.notice = status.message || "本地头像分离模型安装中，请稍候";
     return false;
   }
   if (!status.canInstall) {
-    throw new Error(status.message || "当前环境无法安装本地 BiRefNet");
+    throw new Error(status.message || "当前环境无法安装本地头像分离模型");
   }
   if (!interactive) return false;
-  const confirmed = window.confirm(`${status.message || "首次使用需要安装本地 BiRefNet。"}\n\n确认后会自动安装 Python 依赖和模型文件。`);
+  const confirmed = window.confirm(`${status.message || "首次使用需要安装本地头像分离模型。"}\n\n确认后会自动安装 Python 依赖和模型文件。`);
   if (!confirmed) return false;
   localAvatarMattingInstalling.value = true;
-  store.state.notice = "正在安装本地 BiRefNet，请稍候... pip install torch opencv-python pillow onnxruntime onnx";
+  store.state.notice = "正在安装本地头像分离模型，请稍候...";
   try {
     const installed = await store.installLocalAvatarMattingModel(form.manufacturer, form.model.trim());
     localAvatarMattingStatus.value = installed;
-    store.state.notice = installed.message || "本地 BiRefNet 已安装";
+    store.state.notice = installed.message || "本地头像分离模型已安装";
     return installed.status === "installed";
   } finally {
     localAvatarMattingInstalling.value = false;
@@ -423,7 +451,7 @@ async function installLocalAvatarMattingFromButton() {
   try {
     await ensureLocalAvatarMattingInstalled(true);
   } catch (err) {
-    store.state.notice = `本地 BiRefNet 安装失败: ${(err as Error).message}`;
+    store.state.notice = `本地头像分离模型安装失败: ${(err as Error).message}`;
   }
 }
 
@@ -512,7 +540,7 @@ async function submitEditor() {
       store.state.notice = "API Key 不能为空";
       return;
     }
-    if (props.slotKey === "storyAvatarMattingModel" && isLocalBiRefNetManufacturer(manufacturer)) {
+    if (props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(manufacturer)) {
       const ready = await ensureLocalAvatarMattingInstalled(true);
       if (!ready) return;
     }
@@ -580,21 +608,21 @@ async function confirmBinding() {
       return;
     }
     const selectedRow = slotRows.value.find((row) => row.id === selectedId.value) || null;
-    if (props.slotKey === "storyAvatarMattingModel" && selectedRow && isLocalBiRefNetManufacturer(selectedRow.manufacturer)) {
+    if (props.slotKey === "storyAvatarMattingModel" && selectedRow && isLocalAvatarMattingManufacturer(selectedRow.manufacturer)) {
       const status = await store.fetchLocalAvatarMattingStatus(selectedRow.manufacturer || "", selectedRow.model || "");
       if (status.status !== "installed") {
         if (!status.canInstall) {
-          store.state.notice = status.message || "当前环境无法安装本地 BiRefNet";
+          store.state.notice = status.message || "当前环境无法安装本地头像分离模型";
           return;
         }
-        const confirmed = window.confirm(`${status.message || "本地 BiRefNet 尚未安装。"}\n\n确认后会自动安装，再继续绑定。`);
+        const confirmed = window.confirm(`${status.message || "本地头像分离模型尚未安装。"}\n\n确认后会自动安装，再继续绑定。`);
         if (!confirmed) return;
         localAvatarMattingInstalling.value = true;
-        store.state.notice = "正在安装本地 BiRefNet，请稍候...";
+        store.state.notice = "正在安装本地头像分离模型，请稍候...";
         try {
           const installed = await store.installLocalAvatarMattingModel(selectedRow.manufacturer || "", selectedRow.model || "");
           if (installed.status !== "installed") {
-            store.state.notice = installed.message || "本地 BiRefNet 尚未安装完成";
+            store.state.notice = installed.message || "本地头像分离模型尚未安装完成";
             return;
           }
         } finally {
@@ -778,7 +806,7 @@ async function confirmBinding() {
           <label>本地安装</label>
           <div class="settings-local-model-card">
             <div class="settings-local-model-copy">
-              <div class="settings-local-model-title">BiRefNet 本地模型</div>
+              <div class="settings-local-model-title">{{ localAvatarMattingTitle(form.manufacturer) }}</div>
               <div class="settings-local-model-text">
                 {{ localAvatarMattingStatus?.message || '首次使用需要安装 Python 依赖和模型文件。' }}
               </div>
