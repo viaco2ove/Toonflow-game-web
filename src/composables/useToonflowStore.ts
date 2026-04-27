@@ -97,6 +97,7 @@ type PendingSessionOrchestrationPrefetch = {
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const RUNTIME_CHAT_STORAGE_LIMIT = 24;
 const DEBUG_REVISIT_STORAGE_KEY = "toonflow.debugRevisit";
+const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
 // 调试回溯快照：纯内存存储，无数量上限；localStorage 仅作页面刷新后的恢复缓存（写入时不截断）
 
 type DebugRevisitSnapshot = {
@@ -134,6 +135,35 @@ function storageRemove(key: string): void {
   } catch {
     // noop
   }
+}
+
+/**
+ * 读取播放页的自动语音偏好。
+ *
+ * 用途：
+ * - opening 的启动链发生在 store，不能依赖 ScenePlay 组件内的局部 ref；
+ * - 这里直接复用同一个 localStorage 键，决定 opening 至少该等待多久。
+ */
+function readPlayAutoVoicePreference(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(PLAY_AUTO_VOICE_STORAGE_KEY) !== "0";
+}
+
+/**
+ * 估算 opening 最少展示时长。
+ *
+ * 用途：
+ * - 静音时至少停 2 秒，避免开场白刚出现就被首章正文顶掉；
+ * - 自动语音开启时按字数估算一个接近语音播放时长的等待值，让 opening 先完整播完再进第一章。
+ */
+function estimateOpeningPresentationMs(text: string): number {
+  const normalized = String(text || "").trim();
+  if (!normalized) return 2000;
+  if (!readPlayAutoVoicePreference()) {
+    return 2000;
+  }
+  const estimated = normalized.length * 180 + 1200;
+  return Math.max(2000, Math.min(12000, estimated));
 }
 
 function asMiniRecord(value: unknown): Record<string, any> {
@@ -2040,6 +2070,18 @@ function createToonflowStore() {
     if (!plan) return false;
     const roleType = String(plan.roleType || "").trim().toLowerCase();
     return Boolean(String(plan.role || "").trim()) && roleType !== "player";
+  }
+
+  /**
+   * 等待 opening 至少完成一次可感知展示，再进入第一章正文编排。
+   *
+   * 用途：
+   * - 防止开场白刚落库就被首章正文立刻顶掉，形成“一闪而过”；
+   * - 静音模式至少停 2 秒；
+   * - 自动语音开启时，按 opening 长度估算一段接近朗读时长的等待窗口。
+   */
+  async function waitForSessionOpeningPresentation(text: string) {
+    await sleep(estimateOpeningPresentationMs(text));
   }
 
   /**
@@ -4808,7 +4850,7 @@ function createToonflowStore() {
         await refreshSessionStoryInfo();
         if (shouldStreamSessionPlanFromPlan(introduction.plan)) {
           state.sessionRuntimeStage = "播放开场白";
-          await streamSessionPlan(introduction, []);
+          await streamSessionIntroductionPlan(introduction, []);
           if (state.sessionRuntimeStage === "播放开场白") {
             state.sessionRuntimeStage = "";
           }
@@ -5320,6 +5362,20 @@ function createToonflowStore() {
     return Boolean(String(plan.role || "").trim()) && roleType !== "player";
   }
 
+  /**
+   * 判断调试计划是否属于“作者写死的 opening 文案”。
+   *
+   * 用途：
+   * - debug opening 不该再走普通 streamlines 的 speaker 改写链；
+   * - 这里单独识别固定 opening，改走 `/game/streamlines/introduction`；
+   * - 其余正文台词仍保持原来的 debug streamlines 流程。
+   */
+  function shouldUseDebugIntroductionStream(plan: DebugNarrativePlan | null | undefined) {
+    if (!plan) return false;
+    return String(plan.eventType || "").trim().toLowerCase() === "on_opening"
+      && Boolean(String(plan.presetContent || "").trim());
+  }
+
   async function streamDebugPlanOrFallback(
     plan: DebugNarrativePlan,
     historyMessages: MessageItem[],
@@ -5352,6 +5408,7 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
     playerContent?: string | null,
   ) {
+    const useIntroductionStream = shouldUseDebugIntroductionStream(plan);
     const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
     let finalMessage: Record<string, unknown> | null = null;
@@ -5359,7 +5416,10 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
     let done = false;
     try {
-      await api.streamDebugLines({
+      const streamRunner = useIntroductionStream
+        ? api.streamIntroductionLines.bind(api)
+        : api.streamDebugLines.bind(api);
+      await streamRunner({
         worldId: state.worldId,
         chapterId: state.debugChapterId || undefined,
         state: state.debugRuntimeState,
@@ -5424,6 +5484,9 @@ function createToonflowStore() {
       }
       await refreshDebugStoryInfo(state.chapters.find((item) => item.id === state.debugChapterId) || null);
       const finalMessageRecord = (finalMessage || {}) as Record<string, unknown>;
+      if (useIntroductionStream) {
+        await waitForSessionOpeningPresentation(String(finalMessageRecord.content || accumulated || ""));
+      }
       recordDebugRevisitSnapshot({
         id: streamingMessage.id,
         role: String(finalMessageRecord["role"] || streamingMessage.role || ""),
@@ -5905,6 +5968,124 @@ function createToonflowStore() {
           prefetchNextSessionOrchestration(Number(latestNarrativeMessage.id || 0));
         }
       }
+    } catch (error) {
+      updateMessageById(streamingMessage.id, () => null, true);
+      throw error;
+    }
+  }
+
+  /**
+   * 开场白专用流。
+   *
+   * 用途：
+   * - opening 必须直接播放章节写死文案，不能再复用普通台词流的 speaker 改写链；
+   * - 这里只消费 `/game/streamlines/introduction` 的 preset 分片；
+   * - 提交成功后额外等待一段 opening 展示时间，避免一闪而过。
+   */
+  async function streamSessionIntroductionPlan(
+    orchestration: SessionOrchestrationResult,
+    historyMessages: MessageItem[],
+  ) {
+    if (!state.currentSessionId || !orchestration.plan) return;
+    const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
+    let accumulated = "";
+    let finalMessage: Record<string, unknown> | null = null;
+    let done = false;
+    state.messages = [...historyMessages, streamingMessage];
+    syncRuntimeChatTrace();
+    try {
+      await api.streamIntroductionLines({
+        sessionId: state.currentSessionId,
+        plan: orchestration.plan,
+      }, async (event) => {
+        if (event.type === "delta") {
+          const text = String(event.data?.text || "");
+          if (!text) return;
+          accumulated += text;
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
+          return;
+        }
+        if (event.type === "done") {
+          done = true;
+          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
+          const finalContent = String(finalMessage?.content || accumulated || "");
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            role: String(finalMessage?.role || message.role || ""),
+            roleType: String(finalMessage?.roleType || message.roleType || ""),
+            eventType: String(finalMessage?.eventType || message.eventType || "on_opening"),
+            content: finalContent,
+            meta: buildRuntimeStreamMeta(message.meta, {
+              streaming: false,
+              status: "generated",
+            }),
+          }), true);
+          return;
+        }
+        if (event.type === "sentence") {
+          const text = String(event.data?.text || "").trim();
+          if (!text) return;
+          updateMessageById(streamingMessage.id, (message) => {
+            const metaRecord = buildRuntimeStreamMeta(message.meta, {
+              streaming: true,
+              status: "streaming",
+            });
+            const rawSentences = Array.isArray(metaRecord.sentences) ? metaRecord.sentences : [];
+            const sentences = rawSentences.map((item) => String(item || "").trim()).filter(Boolean);
+            if (!sentences.includes(text)) {
+              sentences.push(text);
+            }
+            return {
+              ...message,
+              meta: buildRuntimeStreamMeta(metaRecord, { sentences }),
+            };
+          }, true);
+          return;
+        }
+        if (event.type === "error") {
+          throw new Error(String(event.data?.message || "开场白流播放失败"));
+        }
+      });
+      if (!done) {
+        throw new Error("开场白流未正常结束");
+      }
+      const committedContent = String((finalMessage as Record<string, unknown> | null)?.["content"] || accumulated || "");
+      const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
+      const committedRole = String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白");
+      const committedRoleType = String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator");
+      const committedEventType = String((finalMessage as Record<string, unknown> | null)?.["eventType"] || orchestration.plan.eventType || "on_opening");
+      const committed = await api.commitNarrativeTurn({
+        sessionId: state.currentSessionId,
+        role: committedRole,
+        roleType: committedRoleType,
+        eventType: committedEventType,
+        content: committedContent,
+        createTime: committedCreateTime,
+        saveSnapshot: true,
+      });
+      const fallbackCommittedMessage: MessageItem = {
+        id: Number((finalMessage as Record<string, unknown> | null)?.["id"] || committedCreateTime),
+        role: committedRole,
+        roleType: committedRoleType,
+        eventType: committedEventType,
+        content: committedContent,
+        createTime: committedCreateTime,
+      };
+      state.messages = [...historyMessages];
+      syncRuntimeChatTrace();
+      if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
+        applySessionNarrativeResult({
+          ...committed,
+          message: fallbackCommittedMessage,
+        });
+      } else {
+        applySessionNarrativeResult(committed);
+      }
+      await refreshSessionStoryInfo();
+      await waitForSessionOpeningPresentation(committedContent);
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;

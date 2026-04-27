@@ -1319,6 +1319,19 @@ const runtimeStateRoot = computed(() => {
   if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
   return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
 });
+
+/**
+ * 判断消息是否属于固定 opening。
+ *
+ * 用途：
+ * - opening 现在走独立 introduction 流；
+ * - 首条 opening 比普通正文更早落地，自动朗读 watcher 偶发会错过它；
+ * - 这里只挑出 `on_opening` 的非用户消息，给语音兜底逻辑使用。
+ */
+function isOpeningNarrativeMessage(message: MessageItem | null | undefined): boolean {
+  if (!message || message.roleType === "player") return false;
+  return String(message.eventType || "").trim().toLowerCase() === "on_opening";
+}
 const runtimeChapterProgressRecord = computed(() => asMiniRecord(runtimeStateRoot.value.chapterProgress));
 const runtimeChapterProgressDebug = computed(() => {
   const progress = runtimeChapterProgressRecord.value;
@@ -1686,6 +1699,55 @@ watch(
       }
     } finally {
       debugAutoAdvancing.value = false;
+    }
+  },
+);
+
+watch(
+  () => [
+    store.state.currentSessionId,
+    playMode.value,
+    autoVoice.value,
+    store.state.debugMode,
+    store.state.debugLoading,
+    latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
+    latestRevealedMessage.value ? runtimeMessageStatus(latestRevealedMessage.value) : "",
+    latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
+    latestRevealedMessage.value ? messageDisplayContent(latestRevealedMessage.value) : "",
+    runtimeVoiceMessageKey.value,
+    runtimeVoicePhase.value,
+    canPlayerSpeak.value,
+  ],
+  async () => {
+    if (!autoVoice.value || playMode.value !== "live" || store.state.debugMode || store.state.debugLoading) {
+      return;
+    }
+    const latest = latestRevealedMessage.value;
+    if (!latest || !isOpeningNarrativeMessage(latest)) {
+      return;
+    }
+    if (isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
+      return;
+    }
+    const content = messageDisplayContent(latest).trim();
+    if (!content) {
+      return;
+    }
+    const status = runtimeMessageStatus(latest);
+    const messageKey = messageUiKey(latest);
+    if (!messageKey || status !== "generated") {
+      return;
+    }
+    if (runtimeVoiceMessageKey.value === messageKey || runtimeVoicePhase.value) {
+      return;
+    }
+    // opening 在启动链里偶发会跳过通用的 reveal->voice 流程。
+    // 这里补一次只针对 opening 的自动朗读，确保开场白在自动语音开启时一定会播。
+    store.setRuntimeMessageStatus(latest.id, "voicing");
+    const played = await playMessageAudio(latest, false, true);
+    store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    if (!played) {
+      await sleep(estimateRevealDelayMs(content));
     }
   },
 );

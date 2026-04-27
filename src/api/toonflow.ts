@@ -334,6 +334,87 @@ export class ToonflowApi {
   }
 
   /**
+   * 开场白专用流接口。
+   *
+   * 用途：
+   * - opening 是章节写死文案，不能再走普通 streamlines 的 speaker 改写链；
+   * - 这里直接消费后端 `/game/streamlines/introduction` 返回的 preset 分片事件。
+   */
+  async streamIntroductionLines(
+    payload: Record<string, unknown>,
+    onEvent: (event: StreamLinesEvent) => void | Promise<void>,
+  ): Promise<void> {
+    const controller = new AbortController();
+    let idleTimer = 0;
+    let timedOut = false;
+    const resetIdleTimer = () => {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+      idleTimer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 15000);
+    };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const authHeaders = this.headers();
+    if (authHeaders.Authorization) {
+      headers.Authorization = authHeaders.Authorization;
+    }
+    try {
+      const response = await fetch(this.url("/game/streamlines/introduction"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload || {}),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        let message = `HTTP ${response.status}`;
+        try {
+          message = (await response.text()) || message;
+        } catch {
+          // noop
+        }
+        throw new Error(message);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      resetIdleTimer();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        resetIdleTimer();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const text = line.trim();
+          if (!text) continue;
+          const event = JSON.parse(text) as StreamLinesEvent;
+          await onEvent(event);
+        }
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        const event = JSON.parse(tail) as StreamLinesEvent;
+        await onEvent(event);
+      }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error("开场白流空闲超时");
+      }
+      throw error;
+    } finally {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+    }
+  }
+
+  /**
    * 统一读取故事运行信息。
    *
    * 用途：
