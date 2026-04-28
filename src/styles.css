@@ -4613,7 +4613,7 @@ textarea::-webkit-scrollbar-thumb {
   height: 30px;
   border-radius: 999px;
   border: 1px solid rgba(188, 204, 226, 0.32);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(186, 142, 129, 0.85);
   color: #eef5ff;
 }
 
