@@ -1111,8 +1111,8 @@ const battleEnemies = computed(() => {
   return battleEnemiesFromMiniGame(game.publicState);
 });
 watch(() => activeMiniGame.value?.gameType || "", (gameType) => {
-  // 小游戏刚启动时默认展开一次，避免“已经进入战斗，但用户看不到状态面板”。
-  miniGamePanelExpanded.value = Boolean(gameType);
+  // 战斗等强状态小游戏仍默认展开；修炼开局先让旁白提问，面板保持折叠避免抢占对话焦点。
+  miniGamePanelExpanded.value = Boolean(gameType) && gameType !== "cultivation";
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
