@@ -477,16 +477,29 @@ const chapterBackgroundPath = computed(() =>
   ),
 );
 const chapterEntryText = computed(() => formatConditionText(currentChapter.value?.entryCondition));
+
+function resolveVisibleChapterGoalText(): string {
+  const configuredGoal = (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition).trim();
+  if (configuredGoal) return configuredGoal;
+
+  const sourceState = store.state.debugMode
+    ? asMiniRecord(store.state.debugRuntimeState)
+    : asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
+  const progress = asMiniRecord(sourceState.chapterProgress);
+  // listSession 不一定带章节 completionCondition，用运行时待完成目标兜底，避免底部目标消失。
+  return (scalarText(progress.pendingGoal) || scalarText(progress.eventSummary)).trim();
+}
+
 const chapterCompletionText = computed(() => {
   if (currentChapter.value?.showCompletionCondition === false) return "对用户隐藏";
-  return formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "无";
+  return resolveVisibleChapterGoalText() || "自由剧情";
 });
 // 底部目标 chip 只展示章节结束条件，避免把当前事件摘要和结束条件混在一起。
-const chapterObjectiveText = computed(() =>
-  currentChapter.value?.showCompletionCondition === false
-    ? ""
-    : ((formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim())
-);
+const chapterObjectiveText = computed(() => {
+  if (currentChapter.value?.showCompletionCondition === false) return "";
+  // 结束条件为空时仍要展示稳定目标，避免底部目标 chip 直接消失。
+  return resolveVisibleChapterGoalText() || "自由剧情";
+});
 const chapterObjectivePreview = computed(() => {
   const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
