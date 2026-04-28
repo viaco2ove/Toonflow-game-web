@@ -16,6 +16,8 @@ export interface RoleParameterCard {
   gender?: string;
   age?: number | null;
   level?: number | null;
+  exp?: number | null;
+  next_level_exp?: number | null;
   level_desc?: string;
   personality?: string;
   appearance?: string;

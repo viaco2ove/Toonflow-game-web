@@ -692,6 +692,8 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const ageValue = ageText && /^\d+$/.test(ageText) ? Number(ageText) : null;
   const levelText = scalarText(raw.level);
   const levelValue = levelText && /^\d+$/.test(levelText) ? Number(levelText) : null;
+  const expValue = Number(raw.exp);
+  const nextLevelExpValue = Number(raw.next_level_exp ?? raw.nextLevelExp);
   const hpValue = Number(raw.hp);
   const mpValue = Number(raw.mp);
   const moneyValue = Number(raw.money);
@@ -701,6 +703,10 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     gender: scalarText(raw.gender),
     age: ageValue != null && Number.isFinite(ageValue) ? ageValue : null,
     level: levelValue != null && Number.isFinite(levelValue) ? levelValue : 1,
+    // 参数卡里的经验值字段来自运行时 JSON，不在这里显式解析的话，
+    // 详情面板就会把已有数字误判成“未设定”。
+    exp: Number.isFinite(expValue) ? expValue : 0,
+    next_level_exp: Number.isFinite(nextLevelExpValue) ? nextLevelExpValue : 100,
     level_desc: scalarText(raw.level_desc || raw.levelDesc) || "初入此界",
     personality: scalarText(raw.personality),
     appearance: scalarText(raw.appearance),
@@ -2727,6 +2733,8 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "性别", value: scalarText(card.gender) || fallback },
     { label: "年龄", value: card.age != null ? String(card.age) : fallback },
     { label: "等级", value: card.level != null ? String(card.level) : fallback },
+    { label: "经验值", value: card.exp != null ? String(card.exp) : fallback },
+    { label: "下一级所需经验", value: card.next_level_exp != null ? String(card.next_level_exp) : fallback },
     { label: "等级称号", value: scalarText(card.level_desc) || fallback },
     { label: "性格", value: scalarText(card.personality) || fallback },
     { label: "外貌", value: scalarText(card.appearance) || fallback },

@@ -999,7 +999,7 @@ function cancelRemoveCurrentNpc() {
 
       <section class="create-section">
         <div class="create-card create-card--compact">
-          <div class="create-card-title">全局背景（选填）</div>
+          <div class="create-card-title">全局背景（选填）重要的信息请放最前面</div>
           <div class="field">
             <textarea
               ref="globalBackgroundInput"
