@@ -481,21 +481,28 @@ const chapterCompletionText = computed(() => {
   if (currentChapter.value?.showCompletionCondition === false) return "对用户隐藏";
   return formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "无";
 });
-const chapterObjectiveText = computed(() => {
-  if (currentChapter.value?.showCompletionCondition !== false) {
-    const chapterObjective = (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim();
-    if (chapterObjective) return chapterObjective;
-  }
-  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
-  if (currentEventSummary) return currentEventSummary;
-  const nextSummary = eventDigestWindowItems.value.map((item) => scalarText(item.eventSummary)).find(Boolean);
-  if (nextSummary) return nextSummary;
-  return scalarText(runtimeEventWindowText.value);
-});
+// 底部目标 chip 只展示章节结束条件，避免把当前事件摘要和结束条件混在一起。
+const chapterObjectiveText = computed(() =>
+  currentChapter.value?.showCompletionCondition === false
+    ? ""
+    : ((formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim())
+);
 const chapterObjectivePreview = computed(() => {
   const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   return normalized.length > 20 ? `${normalized.slice(0, 20)}...` : normalized;
+});
+// 编排信息面板单独展示当前事件目标，优先使用当前事件摘要；没有时才回退到章节结束条件。
+const currentEventTargetText = computed(() => {
+  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
+  if (currentEventSummary && currentEventSummary !== "当前事件摘要待生成") {
+    return currentEventSummary;
+  }
+  const nextSummary = eventDigestWindowItems.value.map((item) => scalarText(item.eventSummary)).find(Boolean);
+  if (nextSummary && nextSummary !== "当前事件摘要待生成") {
+    return nextSummary;
+  }
+  return chapterObjectiveText.value;
 });
 const chapterStatusItems = computed(() => [
   { label: "章节状态", value: currentChapter.value?.status || "draft" },
@@ -3623,6 +3630,9 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="eventProgressOpen" class="play-inline-card">
           <div class="play-inline-card__title">当前事件进度</div>
+          <div v-if="currentEventTargetText" class="play-inline-card__text">
+            当前事件目标：{{ currentEventTargetText }}
+          </div>
           <div class="play-inline-card__text">{{ currentEventProgressText }}</div>
           <div v-if="debugOrchestratorRuntimeText" class="play-inline-card__text">
             {{ debugOrchestratorRuntimeText }}
