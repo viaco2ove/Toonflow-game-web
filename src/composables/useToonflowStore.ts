@@ -4561,6 +4561,45 @@ function createToonflowStore() {
     state.notice = "草稿已删除";
   }
 
+  /**
+   * 删除指定章节，并把编辑器切换到相邻章节或新的空草稿。
+   * 删除后会重新保存故事设置，避免世界设置里残留已删除章节的附加配置。
+   */
+  async function deleteChapter(chapterId: number) {
+    const targetId = Number(chapterId || 0);
+    if (!Number.isFinite(targetId) || targetId <= 0) {
+      throw new Error("chapterId 无效");
+    }
+    const beforeDelete = orderedChapters();
+    const deletedIndex = beforeDelete.findIndex((item) => Number(item.id || 0) === targetId);
+    if (deletedIndex < 0) {
+      throw new Error("未找到章节");
+    }
+
+    await api.deleteChapter(targetId);
+    const remaining = beforeDelete
+      .filter((item) => Number(item.id || 0) !== targetId)
+      .map((item, index) => ({
+        ...item,
+        // 与后端删除后的排序保持一致，避免标签显示和下一章 fallback 使用旧序号。
+        sort: index + 1,
+      }));
+    state.chapters = remaining;
+
+    const nextChapter = remaining[Math.min(deletedIndex, remaining.length - 1)] || null;
+    if (nextChapter) {
+      await selectChapter(nextChapter.id, false);
+    } else {
+      beginNewChapterDraft();
+    }
+
+    if (state.worldId) {
+      await saveWorldOnly("preserve");
+    }
+    state.notice = "章节已删除";
+    primeStoryEditorPersistState();
+  }
+
   function resetChapterDraft() {
     const nextSort = Math.max(0, ...state.chapters.map((item) => Number(item.sort || 0))) + 1;
     const empty = createEmptyEditorState(nextSort);
@@ -4760,14 +4799,16 @@ function createToonflowStore() {
   }
 
   async function generateChapterRuntimeOutlineDraft() {
-    const existingOutline = parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
     const outline = await api.previewRuntimeOutline({
       openingRole: state.chapterOpeningRole,
       openingText: state.chapterOpeningLine,
       content: state.chapterContent,
       entryCondition: state.chapterEntryCondition || undefined,
       completionCondition: state.chapterCondition || undefined,
-      runtimeOutline: existingOutline || undefined,
+      // “生成草稿”必须从章节正文重新构建 Phase Graph。
+      // 如果把编辑框里的旧 JSON 传给后端，后端会按“作者显式配置”优先保留旧 phases，
+      // 这样曾经误生成的非事件节点会一直残留。
+      runtimeOutline: undefined,
     });
     state.chapterRuntimeOutlineText = `${JSON.stringify(outline || {}, null, 2)}\n`;
     state.notice = "已生成章节 Phase Graph 草稿";
@@ -6410,6 +6451,7 @@ function createToonflowStore() {
     listImportableRoles,
     importRoleFromWorld,
     deleteWorld,
+    deleteChapter,
     saveStoryEditor,
     saveWorldOnly,
     saveChapterDraft,

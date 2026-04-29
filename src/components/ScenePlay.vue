@@ -491,13 +491,8 @@ const chapterEntryText = computed(() => formatConditionText(currentChapter.value
 function resolveVisibleChapterGoalText(): string {
   const configuredGoal = (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition).trim();
   if (configuredGoal) return configuredGoal;
-
-  const sourceState = store.state.debugMode
-    ? asMiniRecord(store.state.debugRuntimeState)
-    : asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
-  const progress = asMiniRecord(sourceState.chapterProgress);
-  // listSession 不一定带章节 completionCondition，用运行时待完成目标兜底，避免底部目标消失。
-  return (scalarText(progress.pendingGoal) || scalarText(progress.eventSummary)).trim();
+  // 底部目标只展示章节结束条件；事件目标统一放到编排信息面板。
+  return "";
 }
 
 const chapterCompletionText = computed(() => {

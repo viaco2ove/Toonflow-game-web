@@ -47,6 +47,7 @@ const imageDialogNpcIndex = ref<number | null>(null);
 const voiceDialogTarget = ref<VoiceTarget | null>(null);
 const voiceDialogNpcIndex = ref<number | null>(null);
 const showDeleteNpcConfirm = ref(false);
+const deletingChapter = ref<ChapterTabItem | null>(null);
 const publishPending = ref(false);
 const importRoleWorldName = ref("");
 const importRoleName = ref("");
@@ -821,6 +822,37 @@ async function selectChapter(targetChapterId: number | null) {
 }
 
 /**
+ * 打开章节删除确认弹窗。
+ * 这里只记录目标章节，真正删除在确认按钮里执行，避免误触标签里的图标按钮。
+ */
+function askDeleteChapter(chapter: ChapterTabItem) {
+  if (chapter.id === null) return;
+  deletingChapter.value = chapter;
+}
+
+/**
+ * 关闭章节删除确认弹窗，不改变当前编辑内容。
+ */
+function cancelDeleteChapter() {
+  deletingChapter.value = null;
+}
+
+/**
+ * 删除已保存章节，并交给 store 选择相邻章节或新草稿。
+ */
+async function confirmDeleteChapter() {
+  const chapterId = deletingChapter.value?.id;
+  if (!chapterId) return;
+  try {
+    await store.deleteChapter(chapterId);
+  } catch (err) {
+    store.state.notice = `删除章节失败: ${(err as Error).message}`;
+  } finally {
+    deletingChapter.value = null;
+  }
+}
+
+/**
  * 在插入角色 mention 后恢复输入框和页面滚动，避免点击标签时浏览器把 textarea 滚到别处。
  * 光标仍然保持在插入内容之后，方便用户连续编辑。
  */
@@ -1218,16 +1250,30 @@ function cancelRemoveCurrentNpc() {
       </button>
 
       <div v-if="chapterTabs.length > 1" class="create-chapter-tabs">
-        <button
+        <div
           v-for="chapter in chapterTabs"
           :key="chapter.id === null ? 'draft' : chapter.id"
           class="create-chapter-pill"
           :class="{ active: store.state.selectedChapterId === chapter.id }"
-          type="button"
-          @click="chapter.id !== null ? selectChapter(chapter.id) : undefined"
         >
-          {{ chapter.label }}
-        </button>
+          <button
+            class="create-chapter-select-btn"
+            type="button"
+            @click="chapter.id !== null ? selectChapter(chapter.id) : undefined"
+          >
+            {{ chapter.label }}
+          </button>
+          <button
+            v-if="chapter.id !== null"
+            class="create-chapter-delete-btn"
+            type="button"
+            aria-label="删除章节"
+            title="删除章节"
+            @click.stop="askDeleteChapter(chapter)"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <section class="create-section">
@@ -1544,6 +1590,21 @@ function cancelRemoveCurrentNpc() {
       @close="closeVoiceDialog"
       @confirm="handleVoiceConfirm"
     />
+
+    <div v-if="deletingChapter" class="modal-backdrop" @click.self="cancelDeleteChapter">
+      <div class="modal-panel" style="width:min(100%,360px);">
+        <div class="modal-header">
+          <div style="font-weight:900;">删除章节</div>
+        </div>
+        <div class="modal-body">
+          确认删除《{{ deletingChapter.label }}》？此操作会删除对应调试会话，删除后无法恢复。
+        </div>
+        <div class="modal-actions">
+          <button class="button" type="button" @click="cancelDeleteChapter">取消</button>
+          <button class="button small danger-solid" type="button" @click="confirmDeleteChapter">删除</button>
+        </div>
+      </div>
+    </div>
 
     <div
       v-if="store.state.debugLoading"

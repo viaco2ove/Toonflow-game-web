@@ -1215,16 +1215,50 @@ a {
   background: #f2f7ff;
   color: #2e466a;
   border-radius: 999px;
-  padding: 5px 10px;
+  padding: 4px 7px 4px 9px;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .create-chapter-pill.active {
   background: #314f7e;
   border-color: #2a426a;
   color: #fff;
+}
+
+.create-chapter-select-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 1px 0;
+  font: inherit;
+}
+
+.create-chapter-delete-btn {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(46, 70, 106, 0.12);
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.create-chapter-pill.active .create-chapter-delete-btn {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.create-chapter-delete-btn:hover {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .create-advanced-toggle {

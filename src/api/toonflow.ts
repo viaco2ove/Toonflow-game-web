@@ -219,6 +219,14 @@ export class ToonflowApi {
     return this.post<ChapterItem>("/game/saveChapter", payload);
   }
 
+  /**
+   * 删除一个已保存章节。
+   * 后端会校验当前账号是否拥有该故事，并清理章节关联的调试会话。
+   */
+  deleteChapter(chapterId: number) {
+    return this.post<boolean>("/game/deleteChapter", { chapterId });
+  }
+
   previewRuntimeOutline(payload: Record<string, unknown>) {
     return this.post<Record<string, unknown>>("/game/previewRuntimeOutline", payload);
   }
