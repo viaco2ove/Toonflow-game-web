@@ -34,12 +34,22 @@ const currentChapter = computed(() => {
   }
   const activeChapterId = runtimeChapterId.value;
   const sessionChapter = session.value?.chapter || null;
+  const matchedChapter = activeChapterId
+    ? store.state.chapters.find((item) => Number(item.id || 0) === activeChapterId) || null
+    : null;
   if (activeChapterId && Number(sessionChapter?.id || 0) === activeChapterId) {
-    return sessionChapter;
+    return matchedChapter
+      ? {
+        ...matchedChapter,
+        ...sessionChapter,
+        completionCondition: sessionChapter.completionCondition ?? matchedChapter.completionCondition,
+        showCompletionCondition: sessionChapter.showCompletionCondition ?? matchedChapter.showCompletionCondition,
+        runtimeOutline: sessionChapter.runtimeOutline ?? matchedChapter.runtimeOutline,
+      }
+      : sessionChapter;
   }
   if (activeChapterId) {
-    const matched = store.state.chapters.find((item) => Number(item.id || 0) === activeChapterId);
-    if (matched) return matched;
+    if (matchedChapter) return matchedChapter;
   }
   return sessionChapter;
 });
@@ -496,7 +506,6 @@ const chapterCompletionText = computed(() => {
 });
 // 底部目标 chip 只展示章节结束条件，避免把当前事件摘要和结束条件混在一起。
 const chapterObjectiveText = computed(() => {
-  if (currentChapter.value?.showCompletionCondition === false) return "";
   // 结束条件为空时仍要展示稳定目标，避免底部目标 chip 直接消失。
   return resolveVisibleChapterGoalText() || "自由剧情";
 });
@@ -3726,6 +3735,8 @@ onBeforeUnmount(() => {
 
       <div class="play-story-footer">
         <div class="play-story-main">
+<!--          {{ chapterObjectivePreview }}{{ playMode }}-->
+
           <button
             v-if="chapterObjectivePreview && playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
             type="button"

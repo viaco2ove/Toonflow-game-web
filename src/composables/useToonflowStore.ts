@@ -983,6 +983,8 @@ function createToonflowStore() {
     sessionRuntimeStage: "",
     sessionEndDialog: null as string | null,
     sessionEndDialogDetail: "",
+    sessionAwaitUserPending: false,
+    sessionAwaitUserSessionId: "",
     sendPending: false,
     runtimeProcessingPending: false,
     sessionDetail: null as Loadable<SessionDetail>,
@@ -2001,7 +2003,20 @@ function createToonflowStore() {
    */
   function applySessionStoryInfoResult(result: StoryInfoResult) {
     const existingDetail = state.sessionDetail || null;
-    const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    let nextState = cloneDebugSnapshotState(result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
+      // orchestration 的 awaitUser 是用户回合的强信号；storyInfo 可能落后一拍，不能用旧 turnState 重新锁住输入框。
+      const root = asMiniRecord(nextState);
+      const turnState = asMiniRecord(root.turnState);
+      const displayName = scalarText(asMiniRecord(root.player).name) || state.playerName || "用户";
+      root.turnState = {
+        ...turnState,
+        canPlayerSpeak: true,
+        expectedRoleType: "player",
+        expectedRole: displayName,
+      };
+      nextState = root;
+    }
     const nextChapter = result.chapter || existingDetail?.chapter || null;
     const nextWorld = result.world || existingDetail?.world || null;
     const nextEndDialog = String(result.endDialog || "").trim() || null;
@@ -2072,6 +2087,9 @@ function createToonflowStore() {
     };
     // orchestration 只返回最小 plan 时，先在前端本地兜住 awaitUser，
     // 避免后续独立 storyInfo 还没来得及同步前，界面先短暂显示成“等待旁白/NPC”。
+    const shouldYieldToUser = Boolean(result.plan?.awaitUser) && !shouldStreamSessionPlanFromPlan(result.plan);
+    state.sessionAwaitUserPending = shouldYieldToUser;
+    state.sessionAwaitUserSessionId = shouldYieldToUser ? String(result.sessionId || state.currentSessionId || "").trim() : "";
     applyAwaitUserTurnFromPlan(result.plan);
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
@@ -2141,6 +2159,8 @@ function createToonflowStore() {
     // 正式链只接受“是否交还用户输入”的最小信号，不消费“下一位是谁”这种预编排字段。
     const shouldYieldToUser = Boolean(currentPlan?.awaitUser);
     if (!shouldYieldToUser || shouldStreamSessionPlanFromPlan(currentPlan)) return;
+    state.sessionAwaitUserPending = true;
+    state.sessionAwaitUserSessionId = String(state.currentSessionId || "").trim();
     const detail = state.sessionDetail || null;
     const root = asMiniRecord(detail?.state);
     if (!Object.keys(root).length) return;
@@ -2236,6 +2256,20 @@ function createToonflowStore() {
     const miniGameSession = asMiniRecord(miniGameRoot.session);
     const status = scalarText(miniGameSession.status);
     return ["preparing", "active", "settling", "suspended"].includes(status);
+  }
+
+  /**
+   * 判断当前会话是否仍被小游戏接管。
+   *
+   * 作用：
+   * - 语音播放结束、重试或其他自动推进入口可能绕过 `addMessage` 的即时返回判断；
+   * - 只要小游戏仍处于活动状态，就不能再调用主线 `/game/orchestration`；
+   * - 否则陪练/NPC 的小游戏台词会被当作普通剧情台词继续编排，看起来像“自动退出小游戏”。
+   */
+  function hasActiveMiniGameInCurrentSession(): boolean {
+    return hasActiveMiniGameInSessionResult({
+      state: state.sessionDetail?.state || {},
+    } as SessionNarrativeResult);
   }
 
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
@@ -4980,6 +5014,9 @@ function createToonflowStore() {
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
       if (!options?.playback) {
+        await refreshSessionStoryInfo();
+      }
+      if (!options?.playback) {
         scheduleSessionNarrativeIfSystemTurn();
       }
       void refreshSessionListState();
@@ -5976,6 +6013,10 @@ function createToonflowStore() {
         applySessionNarrativeResult(committed);
       }
       await refreshSessionStoryInfo();
+      if (hasActiveMiniGameInCurrentSession()) {
+        clearPendingSessionOrchestrationPrefetch();
+        return;
+      }
       const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
       if (
         latestNarrativeMessage
@@ -6116,10 +6157,15 @@ function createToonflowStore() {
 
   async function performContinueSessionNarrative() {
     if (!state.currentSessionId) return;
+    if (hasActiveMiniGameInCurrentSession()) return;
     state.sessionRuntimeStage = "继续编排下一轮剧情";
     try {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
+        if (hasActiveMiniGameInCurrentSession()) {
+          advanced = true;
+          break;
+        }
         const beforeCount = conversationMessages().length;
         const history = conversationMessages();
         const latestHistoryMessage = history.slice(-1)[0] || null;
@@ -6132,6 +6178,10 @@ function createToonflowStore() {
         const shouldYieldToUser = plan?.awaitUser === true;
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(plan);
         await refreshSessionStoryInfo();
+        if (hasActiveMiniGameInCurrentSession()) {
+          advanced = true;
+          break;
+        }
         if (!shouldStreamPlan) {
           // storyInfo 可能仍落后一拍，刷新后再补一次本地 awaitUser，
           // 确保 turnState 与最后一条消息状态都稳定切到 waiting_player。
@@ -6169,6 +6219,7 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
+    if (hasActiveMiniGameInCurrentSession()) return true;
     state.runtimeProcessingPending = true;
     try {
       await performContinueSessionNarrative();
