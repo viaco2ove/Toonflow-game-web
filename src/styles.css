@@ -4812,6 +4812,8 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-mini-game-panel {
+  position: relative;
+  z-index: 3;
   display: grid;
   gap: 10px;
   padding: 10px 12px;
@@ -4820,6 +4822,7 @@ textarea::-webkit-scrollbar-thumb {
   border: 1px solid rgba(188, 204, 226, 0.18);
   box-shadow: 0 14px 28px rgba(5, 14, 26, 0.24);
   backdrop-filter: blur(12px);
+  /* 任务/小游戏面板需要始终压在立绘之上，否则展开详情时会被绝对定位的角色前景遮住。 */
 }
 
 .play-mini-game-panel__head {

@@ -2263,28 +2263,44 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断本轮正式会话消息提交是否已经切入小游戏。
+   * 判断指定小游戏类型是否会真正接管输入，从而阻塞主线编排继续执行。
+   *
+   * 说明：
+   * - `task` 只复用小游戏面板展示任务信息，普通输入仍应继续走主线事件进度检测与编排；
+   * - 其他传统小游戏（战斗、钓鱼、修炼等）仍会真正接管输入，需要阻塞主线续写；
+   * - 这里集中维护“哪些小游戏会阻塞”的规则，避免发送消息和自动续编排各写一套判断。
+   */
+  function isBlockingMiniGameType(gameType: string): boolean {
+    return gameType !== "task";
+  }
+
+  /**
+   * 判断本轮正式会话消息提交是否已经切入“会阻塞主线”的小游戏。
    *
    * 用途：
    * - `#战斗`、`#钓鱼` 等指令会直接由小游戏控制器接管后续输入；
-   * - 一旦小游戏已激活，前端就不能再继续调用主线 `storyInfo -> continueSessionNarrative`；
-   * - 否则会把小游戏首句误当成普通剧情继续推进，造成面板和回合提示串线。
+   * - 一旦阻塞型小游戏已激活，前端就不能再继续调用主线 `storyInfo -> continueSessionNarrative`；
+   * - `task` 虽然也会显示面板，但它本质上仍是主线任务推进，不应阻塞编排。
    */
   function hasActiveMiniGameInSessionResult(result: SessionNarrativeResult | null | undefined): boolean {
     const runtimeState = asMiniRecord(result?.state);
     const miniGameRoot = asMiniRecord(runtimeState.miniGame);
     const miniGameSession = asMiniRecord(miniGameRoot.session);
     const status = scalarText(miniGameSession.status);
+    const gameType = scalarText(miniGameSession.game_type) || scalarText(asMiniRecord(miniGameRoot.rulebook).gameType);
+    if (!isBlockingMiniGameType(gameType)) {
+      return false;
+    }
     return ["preparing", "active", "settling", "suspended"].includes(status);
   }
 
   /**
-   * 判断当前会话是否仍被小游戏接管。
+   * 判断当前会话是否仍被“阻塞型小游戏”接管。
    *
    * 作用：
    * - 语音播放结束、重试或其他自动推进入口可能绕过 `addMessage` 的即时返回判断；
-   * - 只要小游戏仍处于活动状态，就不能再调用主线 `/game/orchestration`；
-   * - 否则陪练/NPC 的小游戏台词会被当作普通剧情台词继续编排，看起来像“自动退出小游戏”。
+   * - 只要阻塞型小游戏仍处于活动状态，就不能再调用主线 `/game/orchestration`；
+   * - `task` 任务面板不算阻塞态，否则用户在任务中发言后就永远不会再触发角色编排。
    */
   function hasActiveMiniGameInCurrentSession(): boolean {
     return hasActiveMiniGameInSessionResult({
