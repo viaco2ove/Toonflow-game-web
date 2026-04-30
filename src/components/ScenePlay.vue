@@ -2745,6 +2745,17 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
   if (!card) return [];
   const fallback = "未设定";
   const stringifyList = (items?: string[]) => items?.length ? items.join("、") : fallback;
+  const stringifyExecutingTask = () => {
+    const task = card.executing_task;
+    if (!task) return fallback;
+    return scalarText(task.summary)
+      || [
+        scalarText(task.title),
+        scalarText(task.objective) ? `目标：${scalarText(task.objective)}` : "",
+        scalarText(task.status) ? `状态：${scalarText(task.status)}` : "",
+      ].filter(Boolean).join("｜")
+      || fallback;
+  };
   const stringifyOther = () => {
     try {
       return JSON.stringify(card.other ?? [], null, 2);
@@ -2769,6 +2780,7 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "血量", value: card.hp != null ? String(card.hp) : fallback },
     { label: "蓝量", value: card.mp != null ? String(card.mp) : fallback },
     { label: "金钱", value: card.money != null ? String(card.money) : fallback },
+    { label: "正在执行的任务", value: stringifyExecutingTask() },
     { label: "其他", value: stringifyOther() },
   ];
 }

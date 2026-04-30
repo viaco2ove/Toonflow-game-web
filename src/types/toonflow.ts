@@ -29,6 +29,16 @@ export interface RoleParameterCard {
   mp?: number;
   money?: number;
   other?: string[];
+  executing_task?: {
+    title?: string;
+    category?: string;
+    objective?: string;
+    process?: string[];
+    successConditions?: string[];
+    failureConditions?: string[];
+    status?: string;
+    summary?: string;
+  } | null;
 }
 
 export interface VoiceMixItem {
