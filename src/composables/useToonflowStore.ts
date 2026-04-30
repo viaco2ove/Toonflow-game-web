@@ -1875,6 +1875,26 @@ function createToonflowStore() {
     };
   }
 
+  /**
+   * 解析流式 `done` 事件里的最终正文。
+   *
+   * 用途：
+   * - `data.content` 是后端流接口明确返回的完整正文，应当作为最高优先级来源；
+   * - `accumulated` 是前端按 delta 拼接出的完整正文，可作为第二优先级兜底；
+   * - `message.content` 只作为兼容旧链路的最后兜底，避免某些调试结构里被摘要化后误提交入库。
+   */
+  function resolveStreamDoneContent(
+    eventData: Record<string, unknown> | null | undefined,
+    finalMessage: Record<string, unknown> | null | undefined,
+    accumulated: string,
+  ): string {
+    const directContent = String(eventData?.content || "").trim();
+    if (directContent) return directContent;
+    const accumulatedContent = String(accumulated || "").trim();
+    if (accumulatedContent) return accumulatedContent;
+    return String(finalMessage?.content || "");
+  }
+
   function runtimeMessageIdentity(message: MessageItem | null | undefined): string {
     if (!message) return "";
     return `${Number(message.id || 0)}_${Number(message.createTime || 0)}`;
@@ -5539,9 +5559,10 @@ function createToonflowStore() {
         }
         if (event.type === "done") {
           done = true;
-          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
+          const eventData = (event.data || {}) as Record<string, unknown>;
+          finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalMessageRecord = finalMessage || {};
-          const finalContent = String(finalMessageRecord.content || accumulated || "");
+          const finalContent = resolveStreamDoneContent(eventData, finalMessageRecord, accumulated);
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessageRecord.role || message.role || ""),
@@ -5585,14 +5606,14 @@ function createToonflowStore() {
       await refreshDebugStoryInfo(state.chapters.find((item) => item.id === state.debugChapterId) || null);
       const finalMessageRecord = (finalMessage || {}) as Record<string, unknown>;
       if (useIntroductionStream) {
-        await waitForSessionOpeningPresentation(String(finalMessageRecord.content || accumulated || ""));
+        await waitForSessionOpeningPresentation(resolveStreamDoneContent(null, finalMessageRecord, accumulated));
       }
       recordDebugRevisitSnapshot({
         id: streamingMessage.id,
         role: String(finalMessageRecord["role"] || streamingMessage.role || ""),
         roleType: String(finalMessageRecord["roleType"] || streamingMessage.roleType || ""),
         eventType: String(finalMessageRecord["eventType"] || streamingMessage.eventType || RUNTIME_STREAM_EVENT),
-        content: String(finalMessageRecord["content"] || accumulated || ""),
+        content: resolveStreamDoneContent(null, finalMessageRecord, accumulated),
         createTime: Number(streamingMessage.createTime || Date.now()),
         meta: buildRuntimeStreamMeta(streamingMessage.meta, {
           streaming: false,
@@ -5976,8 +5997,9 @@ function createToonflowStore() {
         }
         if (event.type === "done") {
           done = true;
-          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
-          const finalContent = String(finalMessage?.content || accumulated || "");
+          const eventData = (event.data || {}) as Record<string, unknown>;
+          finalMessage = (eventData.message || {}) as Record<string, unknown>;
+          const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessage?.role || message.role || ""),
@@ -6018,7 +6040,7 @@ function createToonflowStore() {
       if (!done) {
         throw new Error("台词流未正常结束");
       }
-      const committedContent = String((finalMessage as Record<string, unknown> | null)?.["content"] || accumulated || "");
+      const committedContent = resolveStreamDoneContent(null, finalMessage, accumulated);
       const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
       const committedRole = String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白");
       const committedRoleType = String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator");
@@ -6114,8 +6136,9 @@ function createToonflowStore() {
         }
         if (event.type === "done") {
           done = true;
-          finalMessage = (event.data?.message || {}) as Record<string, unknown>;
-          const finalContent = String(finalMessage?.content || accumulated || "");
+          const eventData = (event.data || {}) as Record<string, unknown>;
+          finalMessage = (eventData.message || {}) as Record<string, unknown>;
+          const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessage?.role || message.role || ""),
@@ -6156,7 +6179,7 @@ function createToonflowStore() {
       if (!done) {
         throw new Error("开场白流未正常结束");
       }
-      const committedContent = String((finalMessage as Record<string, unknown> | null)?.["content"] || accumulated || "");
+      const committedContent = resolveStreamDoneContent(null, finalMessage, accumulated);
       const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
       const committedRole = String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白");
       const committedRoleType = String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator");
