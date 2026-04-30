@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a Vue 3 + Vite + TypeScript web client for Toonflow Game. Main application code lives in `src/`: `components/` contains screen and shared UI components such as `SceneHome.vue`, `ScenePlay.vue`, and dialogs; `composables/` holds stateful logic like `useToonflowStore.ts`; `api/` wraps backend requests in `ToonflowApi`; `types/` stores shared TypeScript models; `utils/` contains small helpers. Global entry points are `src/main.ts`, `src/App.vue`, and `src/styles.css`. Build helpers live in `scripts/`, and WSL notes are in `md/wsl/`.
+This repository is a Vue 3 + Vite + TypeScript web client for "Toonflow Game". Main application code lives in `src/`: `components/` contains screen and shared UI components such as `SceneHome.vue`, `ScenePlay.vue`, and dialogs; `composables/` holds stateful logic like `useToonflowStore.ts`; `api/` wraps backend requests in `ToonflowApi`; `types/` stores shared TypeScript models; `utils/` contains small helpers. Global entry points are `src/main.ts`, `src/App.vue`, and `src/styles.css`. Build helpers live in `scripts/`, and WSL notes are in `md/wsl/`.
 
 ## Build, Test, and Development Commands
 Use Yarn in this repo because `yarn.lock` is committed.

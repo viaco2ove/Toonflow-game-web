@@ -1128,8 +1128,9 @@ const battleEnemies = computed(() => {
   return battleEnemiesFromMiniGame(game.publicState);
 });
 watch(() => activeMiniGame.value?.gameType || "", (gameType) => {
-  // 战斗等强状态小游戏仍默认展开；修炼开局先让旁白提问，面板保持折叠避免抢占对话焦点。
-  miniGamePanelExpanded.value = Boolean(gameType) && gameType !== "cultivation";
+  // 战斗等强状态小游戏仍默认展开。
+  // 修炼和任务都会先给出文字说明或等待用户输入，默认收起能避免面板一出现就遮住关键对话。
+  miniGamePanelExpanded.value = Boolean(gameType) && gameType !== "cultivation" && gameType !== "task";
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
