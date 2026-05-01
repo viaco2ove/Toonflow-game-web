@@ -1024,8 +1024,9 @@ const playTurnHint = computed(() => {
  * 为小游戏输入区生成占位提示。
  *
  * 用途：
- * - 优先复用后端下发的 `inputHint`，让不同小游戏的提示可配置；
- * - 后端没给时，再按任务/修炼等常见类型补一个稳定兜底，避免输入区完全空白。
+ * - 小游戏模式下，长提示应放到底部 turn hint，不应塞进输入框；
+ * - 否则移动端和窄屏下输入框会被占位文本撑高，影响输入体验；
+ * - 因此文本输入统一返回空串，语音模式仅保留“按住说话”。
  */
 function miniGameInputPlaceholder(
   game: NonNullable<typeof activeMiniGame.value>,
@@ -1033,19 +1034,6 @@ function miniGameInputPlaceholder(
 ) {
   if (!textMode) {
     return "按住说话";
-  }
-  const serverHint = game.inputHint.trim();
-  if (serverHint) {
-    return serverHint;
-  }
-  if (game.gameType === "task") {
-    return "直接输入你的任务行动，输入 #退出 放弃当前任务";
-  }
-  if (game.gameType === "cultivation") {
-    return "直接输入修炼动作或目标，输入 #退出 结束本轮修炼";
-  }
-  if (game.acceptsTextInput) {
-    return `直接输入${game.displayName}行动`;
   }
   return "";
 }
