@@ -4503,6 +4503,9 @@ function createToonflowStore() {
 
   function clearToken() {
     state.token = "";
+    state.userName = "";
+    state.userId = 0;
+    clearAccountBoundViewState();
     state.accountAvatarPath = "";
     state.accountAvatarBgPath = "";
     state.settingsPanelLoaded = false;
@@ -4523,9 +4526,6 @@ function createToonflowStore() {
     if (tab === "settings" && state.token.trim()) {
       void ensureSettingsPanelData();
       return;
-    }
-    if (tab === "history" && state.token.trim()) {
-      void refreshSessionListState();
     }
     if (["home", "create", "history", "my"].includes(tab) && state.token.trim()) {
       void refreshMainTabData(tab);
