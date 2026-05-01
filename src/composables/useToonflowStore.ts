@@ -4316,6 +4316,66 @@ function createToonflowStore() {
     };
   }
 
+  /**
+   * 清理账号绑定的展示缓存，避免切换账号后短时间继续显示旧账号的数据。
+   *
+   * 用途：
+   * - 登录新账号前，先把旧账号的作品、会话、头像等列表态清空；
+   * - 后续即使刷新接口稍慢，页面也不会继续误显示上一个账号的数据。
+   */
+  function clearAccountBoundViewState() {
+    state.projects = [];
+    state.worlds = [];
+    state.sessions = [];
+    state.selectedProjectId = 0;
+    state.homeRecommendWorldId = 0;
+    state.accountAvatarPath = "";
+    state.accountAvatarBgPath = "";
+  }
+
+  /**
+   * 按主菜单页签刷新对应的数据。
+   *
+   * 用途：
+   * - 点击底部主菜单时，主动拉取该页面依赖的数据，而不是只切换 activeTab；
+   * - “我的/主页/创建故事”共用账号、项目、故事数据，“聊过”额外刷新会话列表。
+   */
+  async function refreshMainTabData(tab: AppTab) {
+    if (!state.token.trim()) return;
+    try {
+      const needsSessionList = tab === "history" || tab === "my";
+      const [user, projects, worlds, sessions] = await Promise.all([
+        api.getUser().catch(() => null),
+        api.getProjects().catch(() => []),
+        api.listWorlds(undefined, true).catch(() => []),
+        needsSessionList ? requestSessionList(undefined).catch(() => [] as SessionItem[]) : Promise.resolve(null),
+      ]);
+      if (user) {
+        state.userName = String((user as any).name || "");
+        state.userId = Number((user as any).id || 0);
+        const accountAvatarPath = String((user as any).avatarPath || "").trim();
+        const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
+        state.accountAvatarPath = accountAvatarPath;
+        state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
+      }
+      state.projects = projects || [];
+      if (!state.projects.length) {
+        state.selectedProjectId = 0;
+      } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
+        state.selectedProjectId = state.projects[0].id;
+      }
+      state.worlds = worlds || [];
+      if (tab === "home") {
+        refreshRecommendedWorld();
+      }
+      if (needsSessionList && sessions) {
+        state.sessions = dedupeSessionsByWorld(sessions || []);
+      }
+    } catch (err) {
+      state.notice = `刷新页面数据失败: ${(err as Error).message}`;
+    }
+  }
+
   async function reloadAll() {
     saveSettings();
     if (!state.token.trim()) {
@@ -4328,18 +4388,25 @@ function createToonflowStore() {
         api.getUser().catch(() => null),
         api.getProjects().catch(() => []),
         api.listWorlds(undefined, true).catch(() => []),
-        requestSessionList(undefined).catch(() => state.sessions),
+        requestSessionList(undefined).catch(() => [] as SessionItem[]),
       ]);
       if (user) {
         state.userName = String((user as any).name || "");
         state.userId = Number((user as any).id || 0);
         const accountAvatarPath = String((user as any).avatarPath || "").trim();
         const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
-        state.accountAvatarPath = accountAvatarPath || state.accountAvatarPath;
-        state.accountAvatarBgPath = accountAvatarBgPath || state.accountAvatarBgPath || state.accountAvatarPath;
+        state.accountAvatarPath = accountAvatarPath;
+        state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
+      } else {
+        state.userName = "";
+        state.userId = 0;
+        state.accountAvatarPath = "";
+        state.accountAvatarBgPath = "";
       }
       state.projects = projects || [];
-      if (state.projects.length && !state.projects.find((item) => item.id === state.selectedProjectId)) {
+      if (!state.projects.length) {
+        state.selectedProjectId = 0;
+      } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
         state.selectedProjectId = state.projects[0].id;
       }
       if (state.selectedProjectId <= 0 && state.projects.length) {
@@ -4381,6 +4448,7 @@ function createToonflowStore() {
     state.loading = true;
     try {
       const result = await api.login(state.loginUsername.trim(), state.loginPassword);
+      clearAccountBoundViewState();
       state.token = result.token;
       state.userName = result.name || state.loginUsername.trim();
       state.userId = result.id || 0;
@@ -4406,6 +4474,7 @@ function createToonflowStore() {
       const result = await api.register(trimmedName, password);
       state.loginUsername = trimmedName;
       state.loginPassword = password;
+      clearAccountBoundViewState();
       state.token = result.token;
       state.userName = result.name || trimmedName;
       state.userId = result.id || 0;
@@ -4451,14 +4520,15 @@ function createToonflowStore() {
 
   function setTab(tab: AppTab) {
     state.activeTab = tab;
-    if (tab === "home") {
-      refreshRecommendedWorld();
+    if (tab === "settings" && state.token.trim()) {
+      void ensureSettingsPanelData();
+      return;
     }
     if (tab === "history" && state.token.trim()) {
       void refreshSessionListState();
     }
-    if (tab === "settings" && state.token.trim()) {
-      void ensureSettingsPanelData();
+    if (["home", "create", "history", "my"].includes(tab) && state.token.trim()) {
+      void refreshMainTabData(tab);
     }
   }
 
