@@ -965,8 +965,7 @@ const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return "打开会话失败，请重试";
   if (activeMiniGame.value) {
-    // 小游戏改成纯聊天输入后，这里不再显示动作提示，避免和状态面板重复。
-    return "";
+    return miniGameInputPlaceholder(activeMiniGame.value, inputMode.value === "text");
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -989,7 +988,7 @@ const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
   if (activeMiniGame.value) {
-    return "";
+    return miniGameTurnHint(activeMiniGame.value);
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
@@ -1020,6 +1019,55 @@ const playTurnHint = computed(() => {
   }
   return `当前还没轮到用户发言，等待${runtimeDebugNextRoleLabel.value}继续。`;
 });
+
+/**
+ * 为小游戏输入区生成占位提示。
+ *
+ * 用途：
+ * - 优先复用后端下发的 `inputHint`，让不同小游戏的提示可配置；
+ * - 后端没给时，再按任务/修炼等常见类型补一个稳定兜底，避免输入区完全空白。
+ */
+function miniGameInputPlaceholder(
+  game: NonNullable<typeof activeMiniGame.value>,
+  textMode: boolean,
+) {
+  if (!textMode) {
+    return "按住说话";
+  }
+  const serverHint = game.inputHint.trim();
+  if (serverHint) {
+    return serverHint;
+  }
+  if (game.gameType === "task") {
+    return "直接输入你的任务行动，输入 #退出 放弃当前任务";
+  }
+  if (game.gameType === "cultivation") {
+    return "直接输入修炼动作或目标，输入 #退出 结束本轮修炼";
+  }
+  if (game.acceptsTextInput) {
+    return `直接输入${game.displayName}行动`;
+  }
+  return "";
+}
+
+/**
+ * 为小游戏模式生成底部状态提示。
+ *
+ * 用途：
+ * - 任务和修炼需要明确告诉用户当前处于特殊玩法中；
+ * - 普通小游戏若后端已经提供 `inputHint`，这里直接复用，减少前后端文案分叉。
+ */
+function miniGameTurnHint(game: NonNullable<typeof activeMiniGame.value>) {
+  const serverHint = game.inputHint.trim();
+  if (game.gameType === "task") {
+    return serverHint || "当前处于任务执行状态，直接输入行动推进任务；输入 #退出 视为放弃当前任务。";
+  }
+  if (game.gameType === "cultivation") {
+    return serverHint || "当前处于修炼状态，直接输入修炼动作或目标；输入 #退出 结束本轮修炼。";
+  }
+  return serverHint;
+}
+
 function miniGamePhaseLabel(gameType: string, phase: string, uiPhaseLabel: string) {
   if (uiPhaseLabel) return uiPhaseLabel;
   if (gameType === "fishing") {
