@@ -121,11 +121,24 @@ function storageGet(key: string, fallback = ""): string {
   }
 }
 
-function storageSet(key: string, value: string): void {
+/**
+ * 安全写入 localStorage，并返回是否写入成功。
+ *
+ * 用途：
+ * - 之前这里静默吞掉异常，导致配额打满时调试面板和运行态 trace 停在旧值；
+ * - 现在至少返回布尔值并打印告警，方便定位“接口成功但前端状态没更新”的问题。
+ */
+function storageSet(key: string, value: string): boolean {
   try {
     window.localStorage.setItem(key, value);
-  } catch {
-    // noop
+    return true;
+  } catch (error) {
+    console.warn("[toonflow:web] localStorage 写入失败", {
+      key,
+      size: value.length,
+      error,
+    });
+    return false;
   }
 }
 
@@ -1036,7 +1049,41 @@ function createToonflowStore() {
   }
 
   function persistAllDebugRevisitStorage(input: Record<string, DebugRevisitSnapshot[]>) {
-    storageSet(DEBUG_REVISIT_STORAGE_KEY, JSON.stringify(input));
+    const raw = JSON.stringify(input);
+    if (storageSet(DEBUG_REVISIT_STORAGE_KEY, raw)) {
+      return;
+    }
+    // 调试回溯快照过大时，优先裁剪旧快照，避免把运行态 trace 的 localStorage 一起挤爆。
+    const trimmedEntries = Object.entries(input)
+      .map(([conversationId, snapshots]) => {
+        const normalized = Array.isArray(snapshots) ? [...snapshots] : [];
+        normalized.sort((left, right) => Number(left.capturedAt || 0) - Number(right.capturedAt || 0));
+        return [conversationId, normalized.slice(-6)] as const;
+      })
+      .sort((left, right) => {
+        const leftLast = Number(left[1][left[1].length - 1]?.capturedAt || 0);
+        const rightLast = Number(right[1][right[1].length - 1]?.capturedAt || 0);
+        return leftLast - rightLast;
+      })
+      .slice(-10);
+    const trimmedPayload = Object.fromEntries(trimmedEntries);
+    storageSet(DEBUG_REVISIT_STORAGE_KEY, JSON.stringify(trimmedPayload));
+  }
+
+  /**
+   * 后台刷新正式会话 storyInfo，并把异常限定在日志里。
+   *
+   * 用途：
+   * - 当编排已经明确交还用户输入时，不能再因为 storyInfo 慢一拍或报错而继续锁住输入框；
+   * - 因此这里提供一个后台刷新兜底，让“交还用户输入”和“同步服务端权威状态”解耦。
+   */
+  function refreshSessionStoryInfoInBackground(reason: string) {
+    void refreshSessionStoryInfo().catch((error) => {
+      console.warn("[toonflow:web] 后台刷新 storyInfo 失败", {
+        reason,
+        error,
+      });
+    });
   }
 
   function loadDebugRevisitSnapshots(conversationId: string) {
@@ -6251,12 +6298,28 @@ function createToonflowStore() {
         const latestHistoryMessage = history.slice(-1)[0] || null;
         const orchestration = await resolveSessionOrchestration(Number(latestHistoryMessage?.id || 0));
         clearRuntimeRetryState();
-        applySessionOrchestrationResult(orchestration);
+        try {
+          // 编排接口已经成功返回时，前端状态合并也必须显式兜底，
+          // 避免响应成功但本地应用阶段抛错后，界面继续停在“处理中”。
+          applySessionOrchestrationResult(orchestration);
+        } catch (error) {
+          throw new Error(`前端应用编排结果失败：${asUiErrorMessage(error)}`);
+        }
         const plan = orchestration.plan || null;
         const shouldInitNextChapter = isInitChapterCommand(orchestration.command);
         // 正式链只认 awaitUser，不消费“下一个是谁”这种预编排字段。
         const shouldYieldToUser = plan?.awaitUser === true;
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(plan);
+        if (!shouldStreamPlan) {
+          // 编排已明确交还用户输入时，先本地切回用户回合，再后台刷新 storyInfo，
+          // 避免一次慢速 storyInfo 请求把输入框额外锁住十几秒。
+          applyAwaitUserTurnFromPlan(plan);
+          if (shouldYieldToUser) {
+            refreshSessionStoryInfoInBackground("orchestration_await_user");
+            advanced = true;
+            break;
+          }
+        }
         await refreshSessionStoryInfo();
         if (hasActiveMiniGameInCurrentSession()) {
           advanced = true;
