@@ -69,6 +69,7 @@ export interface StoryRole {
 export interface VoiceBindingDraft {
   label: string;
   configId?: number | null;
+  roleId?: string;
   presetId: string;
   mode: string;
   referenceAudioPath?: string;

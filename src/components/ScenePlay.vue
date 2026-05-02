@@ -906,7 +906,9 @@ const roleCards = computed(() => {
   });
 });
 const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnState));
-const canPlayerSpeak = computed(() => runtimeTurnState.value.canPlayerSpeak !== false);
+// 正式会话优先认 store 里的 awaitUser 本地兜底态，
+// 避免 orchestration 已经交还用户输入，但 storyInfo 旧 turnState 还没追上时短暂锁住输入框。
+const canPlayerSpeak = computed(() => store.sessionCanPlayerSpeak());
 const playSessionStatus = computed(() => scalarText(session.value?.status));
 const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
 const latestConversationMessage = computed(() => {
@@ -2270,6 +2272,7 @@ function splitSpeechSegments(input: string): string[] {
 function createVoiceBindingDraft(source: {
   label?: string | null;
   configId?: number | null;
+  roleId?: string | null;
   presetId?: string | null;
   mode?: string | null;
   referenceAudioPath?: string | null;
@@ -2281,6 +2284,7 @@ function createVoiceBindingDraft(source: {
   const draft: VoiceBindingDraft = {
     label: String(source.label || "").trim(),
     configId: source.configId ?? null,
+    roleId: String(source.roleId || "").trim(),
     presetId: String(source.presetId || "").trim(),
     mode: String(source.mode || "text").trim() || "text",
     referenceAudioPath: String(source.referenceAudioPath || "").trim(),
@@ -2320,6 +2324,7 @@ function narratorVoiceBinding(): VoiceBindingDraft | null {
   return createVoiceBindingDraft({
     label: settings?.narratorVoice || narratorRole?.voice || store.state.narratorVoice || narratorRole?.name || store.state.narratorName || "旁白",
     configId: configId ?? null,
+    roleId: "narrator",
     presetId: !presetId && normalizedMode === "text" ? "story_narrator" : presetId,
     mode: normalizedMode,
     referenceAudioPath: settings?.narratorVoiceReferenceAudioPath || narratorRole?.voiceReferenceAudioPath || store.state.narratorVoiceReferenceAudioPath || "",
@@ -2338,6 +2343,7 @@ function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
   return createVoiceBindingDraft({
     label: role.voice || role.name,
     configId: configId ?? null,
+    roleId: role.id || "",
     presetId,
     mode,
     referenceAudioPath: role.voiceReferenceAudioPath || "",
@@ -2369,6 +2375,7 @@ function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: Voi
     return createVoiceBindingDraft({
       label: originalBinding?.label || store.state.narratorVoice || store.state.narratorName || "旁白",
       configId: originalBinding?.configId ?? narratorVoiceBinding()?.configId ?? null,
+      roleId: originalBinding?.roleId || "narrator",
       mode: "text",
       presetId: "story_narrator",
     });
@@ -2383,6 +2390,7 @@ function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: Voi
   return createVoiceBindingDraft({
     label: originalBinding?.label || role?.voice || roleName || "角色",
     configId: originalBinding?.configId ?? role?.voiceConfigId ?? null,
+    roleId: originalBinding?.roleId || role?.id || "",
     mode: "text",
     presetId: fallbackPresetId,
   });
@@ -2397,6 +2405,7 @@ function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
   const runtimeContextKey = binding.configId || currentWorld.value?.id || store.state.currentSessionId || "runtime";
   return [
     runtimeContextKey,
+    binding.roleId || "",
     binding.mode || "text",
     binding.presetId || "",
     binding.referenceAudioPath || "",
@@ -2437,6 +2446,7 @@ async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<Vo
     binding.referenceText,
     binding.promptText,
     binding.mixVoices || [],
+    { roleId: binding.roleId || "" },
   )
     .then((generated) => {
       if (!generated.audioPath) {
@@ -2479,6 +2489,7 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
       {
         format: RUNTIME_FAST_PREVIEW_FORMAT,
         sampleRate: RUNTIME_FAST_PREVIEW_SAMPLE_RATE,
+        roleId: playableBinding.roleId || "",
       },
     ),
     15000,

@@ -1361,6 +1361,29 @@ function createToonflowStore() {
   }
 
   /**
+   * 判断当前最后一条正式台词是否仍需要继续预取下一轮编排。
+   *
+   * 用途：
+   * - `/game/streamlines` 结束后，服务端 `storyInfo.turnState` 可能会慢一拍才切到用户回合；
+   * - 这时如果只看旧的 `turnState.canPlayerSpeak`，前端会把已经在等待用户回应的句子误判成“系统还要继续说”；
+   * - 这里同时结合本地 awaitUser 兜底和最后一条消息状态，避免把已进入用户回合的句子继续拿去预取下一轮 `/game/orchestration`。
+   */
+  function shouldPrefetchNextSessionOrchestration(latestMessage: MessageItem | null): boolean {
+    if (!latestMessage || isRuntimeRetryMessage(latestMessage) || isStreamingRuntimeMessage(latestMessage)) {
+      return false;
+    }
+    const latestRoleType = String(latestMessage.roleType || "").trim().toLowerCase();
+    if (!latestRoleType || latestRoleType === "player") {
+      return false;
+    }
+    const latestStatus = runtimeMessageStatus(latestMessage);
+    if (latestStatus === "waiting_player") {
+      return false;
+    }
+    return !sessionCanPlayerSpeak();
+  }
+
+  /**
    * 在当前台词已经生成完成后，后台预取下一轮 `/game/orchestration`。
    *
    * 用途：
@@ -1391,6 +1414,8 @@ function createToonflowStore() {
       return;
     }
     const promise = api.orchestrateSession(sessionId);
+    console.log("[orchestrateSession] promise");
+    console.log(promise);
     pendingSessionOrchestrationPrefetch = {
       sessionId,
       triggerMessageId: Number(triggerMessageId),
@@ -1457,10 +1482,16 @@ function createToonflowStore() {
     ) {
       clearPendingSessionOrchestrationPrefetch();
       result = await pending.promise;
+      console.log("[orchestrateSession] pending.promise result");
+      console.log(result);
     } else {
       clearPendingSessionOrchestrationPrefetch();
       result = await api.orchestrateSession(sessionId);
+      console.log("[orchestrateSession] result");
+      console.log(result);
     }
+    console.log("[orchestrateSession] resolveSessionOrchestration result");
+    console.log(result);
     return normalizeSessionOrchestrationResult(result);
   }
 
@@ -1505,6 +1536,47 @@ function createToonflowStore() {
     return typeof turnState === "object" && turnState !== null && !Array.isArray(turnState)
       ? (turnState as Record<string, unknown>)
       : {};
+  }
+
+  /**
+   * 判断当前正式会话是否正处于“编排已明确交还用户输入”的本地兜底态。
+   *
+   * 用途：
+   * - `/game/orchestration` 返回 `awaitUser=true` 后，`storyInfo` 可能仍落后一拍；
+   * - 这段窗口期里不能再完全依赖服务端旧 turnState，否则输入框会短暂显示成“等待旁白/NPC”；
+   * - 这里只认当前会话自己的 pending 标记，避免会话切换时串线。
+   */
+  function hasPendingSessionAwaitUser(sessionId: string = String(state.currentSessionId || "").trim()): boolean {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId) return false;
+    return state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === normalizedSessionId;
+  }
+
+  /**
+   * 清除当前正式会话“等待用户输入”的本地兜底标记。
+   *
+   * 用途：
+   * - 用户一旦再次发言，或系统已经真正开始生成下一句台词，就不能继续保留 awaitUser 的前端强信号；
+   * - 否则后续系统回合会被错误渲染成“仍轮到用户”。
+   */
+  function clearPendingSessionAwaitUser(sessionId: string = String(state.currentSessionId || "").trim()) {
+    const normalizedSessionId = String(sessionId || "").trim();
+    if (!normalizedSessionId || !hasPendingSessionAwaitUser(normalizedSessionId)) return;
+    state.sessionAwaitUserPending = false;
+    state.sessionAwaitUserSessionId = "";
+  }
+
+  /**
+   * 读取正式会话当前是否允许用户发言。
+   *
+   * 用途：
+   * - 优先认可 orchestration 的 `awaitUser=true` 本地强信号；
+   * - 其余情况再回退到服务端 turnState；
+   * - 避免 UI 因 `storyInfo` 慢一拍短暂锁住输入框。
+   */
+  function sessionCanPlayerSpeak(): boolean {
+    if (hasPendingSessionAwaitUser()) return true;
+    return runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
   }
 
   function cloneDebugRuntimeRecord(input: unknown): Record<string, unknown> {
@@ -2278,6 +2350,9 @@ function createToonflowStore() {
     const lineStart = existingMessages.length;
     const normalizedIncoming = incoming.map((message, index) => normalizeSessionRuntimeMessage(message, lineStart + index + 1, turnState));
     const mergedMessages = mergeConversationMessages(existingMessages, normalizedIncoming);
+    if (normalizedIncoming.some((message) => String(message.roleType || "").trim().toLowerCase() !== "player")) {
+      clearPendingSessionAwaitUser(result.sessionId || existingDetail?.sessionId || state.currentSessionId);
+    }
 
     state.sessionDetail = {
       ...(existingDetail || {}),
@@ -3658,10 +3733,12 @@ function createToonflowStore() {
       speed?: number | null;
       format?: string | null;
       sampleRate?: number | null;
+      roleId?: string | null;
     } = {},
   ): Promise<string> {
     const result = await api.streamVoice({
       configId: configId || undefined,
+      roleId: String(options.roleId || "").trim() || undefined,
       text,
       mode,
       voiceId,
@@ -5888,6 +5965,8 @@ function createToonflowStore() {
         state: state.debugRuntimeState,
         messages: conversationMessages(),
       }));
+      console.log("[orchestrateDebug] result");
+      console.log(result);
 
       if (result.plan) {
         applyDebugOrchestrationResult(result, chapter);
@@ -5961,6 +6040,8 @@ function createToonflowStore() {
         messages: history,
         playerContent: null,
       }));
+      console.log("[orchestrateDebug] result");
+      console.log(result);
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
       const shouldYieldToUser = shouldYieldToUserFromDebugPlan(result.plan);
@@ -6042,6 +6123,8 @@ function createToonflowStore() {
       state: state.debugRuntimeState,
       messages: history,
     }));
+   console.log("[orchestrateDebug] result");
+    console.log(result);
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
@@ -6072,6 +6155,7 @@ function createToonflowStore() {
   async function performSessionPlayerMessage(content: string, optimisticMessageId?: number | null) {
     if (!state.currentSessionId) return;
     clearPendingSessionOrchestrationPrefetch();
+    clearPendingSessionAwaitUser(state.currentSessionId);
     state.sessionRuntimeStage = "提交用户发言";
     try {
       const result = await api.addMessage({
@@ -6214,18 +6298,16 @@ function createToonflowStore() {
         return;
       }
       const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
-      if (
-        latestNarrativeMessage
-        && String(latestNarrativeMessage.roleType || "").trim().toLowerCase() !== "player"
-      ) {
-        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (canPlayerSpeakNow) {
-          clearPendingSessionOrchestrationPrefetch();
-        } else {
-          // 当前句文本一旦已经提交成功，就立刻后台预取下一轮编排。
-          // 这样语音播放期间和 `/game/orchestration` 并发，播完后直接进入下一条 `/game/streamlines`。
-          prefetchNextSessionOrchestration(Number(latestNarrativeMessage.id || 0));
+      if (shouldPrefetchNextSessionOrchestration(latestNarrativeMessage)) {
+        // 当前句文本一旦已经提交成功，且最后一条台词仍然明确属于系统继续推进时，
+        // 才后台预取下一轮编排。否则已经轮到用户输入的句子会被误判成系统继续说话。
+        prefetchNextSessionOrchestration(Number(latestNarrativeMessage?.id || 0));
+      } else {
+        if (pendingSessionOrchestrationPrefetch) {
+          console.log("[orchestrateSession] pending.promise clear curr user");
+          console.log(pendingSessionOrchestrationPrefetch);
         }
+        clearPendingSessionOrchestrationPrefetch();
       }
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
@@ -6648,6 +6730,7 @@ function createToonflowStore() {
     startDebugCurrentChapter,
     continueDebugNarrative,
     continueSessionNarrative,
+    sessionCanPlayerSpeak,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
     retryFailedPlayerMessage,
