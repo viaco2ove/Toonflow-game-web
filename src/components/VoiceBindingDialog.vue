@@ -94,6 +94,23 @@ function isAliyunDirectCosyVoiceModel(model?: string | null): boolean {
   ].includes(normalized);
 }
 
+/**
+ * 判断当前试听文本是否满足 CosyVoice 的最小可播放要求。
+ *
+ * 用途：
+ * - 后端会拒绝“纯编号 / 纯标点 / 纯空白”的试听文本；
+ * - web 端提前拦截，避免用户点试听后才收到后端 InvalidParameter 报错。
+ */
+function isPlayableCosyVoicePreviewText(input?: string | null): boolean {
+  const normalizedText = String(input || "").replace(/\s+/g, " ").trim();
+  if (!normalizedText) return false;
+  // 这里复用后端同口径的字符过滤规则，保证两端行为一致。
+  const meaningfulText = normalizedText
+    .replace(/\s+/g, "")
+    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
+  return !!meaningfulText;
+}
+
 function isAliyunDirectQwenVoiceCloneModel(model?: string | null): boolean {
   return String(model || "").trim().toLowerCase().startsWith("qwen3-tts-vc");
 }
@@ -247,6 +264,11 @@ function validate(): string | null {
   if (selectedMode.value === "mix" && !mixVoices.value.some((item) => item.voiceId)) return "混合模式至少选择一个音色";
   if (selectedMode.value === "prompt_voice" && !promptText.value.trim()) return "提示词模式需要填写提示词";
   if (!previewText.value.trim()) return "请输入试听文本";
+  const isDirectCosyVoice = String(selectedModel.value?.manufacturer || "").trim() === "aliyun_direct"
+    && isAliyunDirectCosyVoiceModel(selectedModel.value?.model);
+  if (isDirectCosyVoice && !isPlayableCosyVoicePreviewText(previewText.value)) {
+    return "当前 CosyVoice 试听文本不能只包含编号、标点或空白";
+  }
   return null;
 }
 
