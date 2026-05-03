@@ -2178,12 +2178,16 @@ function createToonflowStore() {
    */
   function applySessionStoryInfoResult(result: StoryInfoResult) {
     const existingDetail = state.sessionDetail || null;
+    const shouldForceClearMiniGame = shouldForceClearMiniGameStateFromMessages(state.messages);
     let nextState = cloneDebugSnapshotState(
       mergeVisibleMiniGameState(
         (result.state || null) as Record<string, unknown> | null,
         (existingDetail?.state || null) as Record<string, unknown> | null,
       ),
     ) as Record<string, unknown>;
+    if (shouldForceClearMiniGame) {
+      nextState = clearVisibleMiniGameState(nextState);
+    }
     if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
       // 兼容旧本地 pending 标记：如果这时 storyInfo 还没追上，就先维持用户回合，避免旧缓存短暂锁住输入框。
       const root = asMiniRecord(nextState);
@@ -2379,9 +2383,65 @@ function createToonflowStore() {
     syncLatestRuntimeTurnStatusWithState();
   }
 
-  function applySessionNarrativeResult(result: SessionNarrativeResult) {
+  /**
+   * 当最新正式台词本身已经是明确问句时，立即把回合交还给用户。
+   *
+   * 用途：
+   * - 部分会话里服务端 `turnState.canPlayerSpeak` 会慢一拍才追上最新台词；
+   * - 如果这里不先本地让出用户回合，播放页 watcher 会把这句问句误判成 `waiting_next`，
+   *   继而继续触发下一轮自动编排；
+   * - 这里仅对“已落地、非用户、明确问句”的正式台词生效，避免把普通系统续写错误打断。
+   */
+  function applyAwaitUserTurnFromNarrativeMessage(message: MessageItem | null | undefined): boolean {
+    if (!message || !isRuntimeReplyPromptMessage(message)) {
+      return false;
+    }
+    state.sessionAwaitUserPending = true;
+    state.sessionAwaitUserSessionId = String(state.currentSessionId || "").trim();
+    const detail = state.sessionDetail || null;
+    const root = asMiniRecord(detail?.state);
+    if (Object.keys(root).length) {
+      const turnState = asMiniRecord(root.turnState);
+      const displayName = scalarText(asMiniRecord(root.player).name) || state.playerName || "用户";
+      turnState.canPlayerSpeak = true;
+      turnState.expectedRoleType = "player";
+      turnState.expectedRole = displayName;
+      turnState.lastSpeakerRoleType = scalarText(message.roleType);
+      turnState.lastSpeaker = scalarText(message.role);
+      root.turnState = turnState;
+      state.sessionDetail = {
+        ...(detail || {}),
+        state: root,
+        latestSnapshot: {
+          ...(detail?.latestSnapshot || {}),
+          state: root,
+        },
+      };
+    }
+    updateMessageById(
+      message.id,
+      (current) => ({
+        ...current,
+        meta: buildRuntimeStreamMeta(current.meta, {
+          streaming: false,
+          status: "waiting_player",
+        }),
+      }),
+      true,
+    );
+    clearPendingSessionOrchestrationPrefetch();
+    syncLatestRuntimeTurnStatusWithState();
+    return true;
+  }
+
+  function applySessionNarrativeResult(
+    result: SessionNarrativeResult,
+    options?: {
+      forceClearMiniGame?: boolean;
+    },
+  ) {
     const existingDetail = state.sessionDetail || null;
-    const nextState = mergeVisibleMiniGameState(
+    let nextState = mergeVisibleMiniGameState(
       (result.state || null) as Record<string, unknown> | null,
       (existingDetail?.state || null) as Record<string, unknown> | null,
     );
@@ -2389,6 +2449,10 @@ function createToonflowStore() {
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
     ].filter(Boolean) as MessageItem[];
+    const shouldForceClearMiniGame = options?.forceClearMiniGame === true || shouldForceClearMiniGameStateFromMessages(incoming);
+    if (shouldForceClearMiniGame) {
+      nextState = clearVisibleMiniGameState(nextState);
+    }
     const existingMessages = conversationMessages();
     const turnState = typeof nextState === "object" && nextState !== null && !Array.isArray(nextState)
       ? ((nextState as Record<string, unknown>).turnState as Record<string, unknown> | undefined) || {}
@@ -2418,6 +2482,9 @@ function createToonflowStore() {
       messages: mergedMessages,
     };
     state.messages = mergedMessages;
+    // 问句一旦已经正式落地，就地把回合切给用户。
+    // 这样可以在 storyInfo 慢一拍时，先阻止自动续编排继续往后跑。
+    applyAwaitUserTurnFromNarrativeMessage(normalizedIncoming.slice(-1)[0] || null);
     if (result.chapter) {
       const index = state.chapters.findIndex((item) => Number(item.id || 0) === Number(result.chapter?.id || 0));
       if (index >= 0) {
@@ -2462,8 +2529,52 @@ function createToonflowStore() {
     const gameType = scalarText(session.game_type) || scalarText(session.gameType) || scalarText(asMiniRecord(root.rulebook).gameType);
     if (!gameType) return false;
     const pendingExit = session.pending_exit === true;
-    const settledButVisible = phase === "settling" && (status === "finished" || status === "aborted");
-    return ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit || settledButVisible;
+    return ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit;
+  }
+
+  /**
+   * 判断用户本轮输入是否为“强制退出小游戏”命令。
+   *
+   * 用途：
+   * - 用户输入 `#退出` 时，无论后端当前是否仍持有小游戏状态，前端都应立即关闭面板；
+   * - 这样可以避免旧小游戏面板因为一次中间态响应继续残留在页面上。
+   */
+  function isMiniGamePanelCloseCommand(content: string | null | undefined): boolean {
+    return String(content || "").trim() === "#退出";
+  }
+
+  /**
+   * 判断服务端返回的消息里，是否已经明确告知“当前没有进行中的小游戏”。
+   *
+   * 用途：
+   * - 后端虽然会返回普通对话消息，但文字已经表达小游戏不存在；
+   * - 这时如果前端继续保留旧 `miniGame`，就会出现“旁白说没有小游戏，但面板还挂着”的错觉。
+   */
+  function shouldForceClearMiniGameStateFromMessages(messages: MessageItem[] | null | undefined): boolean {
+    if (!Array.isArray(messages) || messages.length <= 0) {
+      return false;
+    }
+    return messages.some((message) => String(message.content || "").includes("当前没有进行中的小游戏"));
+  }
+
+  /**
+   * 从运行态里移除小游戏面板状态。
+   *
+   * 用途：
+   * - `#退出` 或服务端明确提示“当前没有进行中的小游戏”时，需要强制清空旧面板；
+   * - 这里返回新对象，避免直接修改原始运行态引用。
+   */
+  function clearVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): Record<string, unknown> {
+    const root = asMiniRecord(runtimeState);
+    if (!("miniGame" in root)) {
+      return root;
+    }
+    const nextState = { ...root };
+    delete nextState.miniGame;
+    WebDebugLogUtil.log("[aiGame][miniGame] clearVisibleMiniGameState remove stale miniGame", {
+      before: root,
+    });
+    return nextState;
   }
 
   /**
@@ -2521,15 +2632,13 @@ function createToonflowStore() {
     }
     const phase = scalarText(miniGameSession.phase);
     const pendingExit = miniGameSession.pending_exit === true;
-    const settledButVisible = phase === "settling" && (status === "finished" || status === "aborted");
-    const active = ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit || settledButVisible;
+    const active = ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit;
     if (active) {
       WebDebugLogUtil.log("[aiGame][miniGame] blocking miniGame active", {
         gameType,
         status,
         phase,
         pendingExit,
-        settledButVisible,
       });
     }
     return active;
@@ -6297,6 +6406,19 @@ function createToonflowStore() {
     clearPendingSessionAwaitUser(state.currentSessionId);
     state.sessionRuntimeStage = "提交用户发言";
     try {
+      const shouldCloseMiniGamePanel = isMiniGamePanelCloseCommand(content);
+      if (shouldCloseMiniGamePanel && state.sessionDetail) {
+        const clearedState = clearVisibleMiniGameState((state.sessionDetail.state || null) as Record<string, unknown> | null);
+        state.sessionDetail = {
+          ...state.sessionDetail,
+          state: clearedState,
+          latestSnapshot: {
+            ...(state.sessionDetail.latestSnapshot || {}),
+            state: clearedState,
+          },
+        };
+        syncRuntimeChatTrace();
+      }
       const result = await api.addMessage({
         sessionId: state.currentSessionId,
         roleType: "player",
@@ -6310,7 +6432,9 @@ function createToonflowStore() {
       }
       state.sendText = "";
       clearRuntimeRetryState();
-      applySessionNarrativeResult(result);
+      applySessionNarrativeResult(result, {
+        forceClearMiniGame: shouldCloseMiniGamePanel,
+      });
       // 这里必须读取“已经合并进当前会话”的小游戏状态。
       // 某些中间响应会临时漏掉 miniGame，如果继续只看 result.state，
       // 前端会误以为小游戏结束，从而错误触发主线 storyInfo / orchestration。

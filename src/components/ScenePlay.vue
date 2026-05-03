@@ -1159,18 +1159,16 @@ const activeMiniGame = computed(() => {
   const ui = asMiniRecord(root.ui);
   const status = scalarText(sessionState.status);
   const gameType = scalarText(sessionState.game_type || sessionState.gameType);
-  const phase = scalarText(sessionState.phase);
   const uiStateItems = asMiniArray<Record<string, unknown>>(ui.state_items);
   const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
   const pendingExit = Boolean(sessionState.pending_exit);
-  const settledButVisible = phase === "settling" && (status === "finished" || status === "aborted");
   if (!gameType) return null;
-  if (!visibleStatuses.has(status) && !pendingExit && !settledButVisible) return null;
+  if (!visibleStatuses.has(status) && !pendingExit) return null;
   return {
     gameType,
     displayName: scalarText(asMiniRecord(root.rulebook).displayName) || gameType,
     status,
-    phase: miniGamePhaseLabel(gameType, phase, scalarText(ui.phase_label)),
+    phase: miniGamePhaseLabel(gameType, scalarText(sessionState.phase), scalarText(ui.phase_label)),
     round: Number(sessionState.round || 0),
     publicState: asMiniRecord(sessionState.public_state),
     ruleSummary: scalarText(ui.rule_summary),
