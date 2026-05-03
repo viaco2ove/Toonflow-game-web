@@ -1575,6 +1575,8 @@ function createToonflowStore() {
    */
   function sessionCanPlayerSpeak(): boolean {
     if (hasPendingSessionAwaitUser()) return true;
+    const latestMessage = conversationMessages().filter((message) => !isRuntimeRetryMessage(message)).slice(-1)[0] || null;
+    if (isRuntimeReplyPromptMessage(latestMessage)) return true;
     return runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
   }
 
@@ -1752,6 +1754,23 @@ function createToonflowStore() {
     return (String(meta?.["status"] || "").trim() as RuntimeLineStatus | "") || "";
   }
 
+  /**
+   * 判断最后一条正式台词是否已经明确在等待用户回应。
+   *
+   * 用途：
+   * - 服务端 turnState 在部分链路里会短暂滞后，仍给出 waiting_next；
+   * - 如果最后一条非用户台词本身已经是明确问句，前端继续锁住输入框只会制造假状态；
+   * - 这里只做保守兜底：仅识别已落地、非流式、非用户的问句消息。
+   */
+  function isRuntimeReplyPromptMessage(message: MessageItem | null | undefined): boolean {
+    if (!message || isRuntimeRetryMessage(message) || isStreamingRuntimeMessage(message)) return false;
+    if (String(message.roleType || "").trim().toLowerCase() === "player") return false;
+    const content = String(message.content || "").trim();
+    if (!content) return false;
+    if (/[?？]\s*$/.test(content)) return true;
+    return /(有何事|什么事|怎么了|你是谁|你怎么来了|寻我有何事|说吧|是否|要不要|还是选择|你打算|有什么事)/.test(content);
+  }
+
   function syncRuntimeChatTrace() {
     const conversationId = runtimeConversationId();
     const turnState = runtimeTurnStateRecord();
@@ -1769,7 +1788,7 @@ function createToonflowStore() {
     const latestMeta = runtimeMetaRecord(latestMessage.meta);
     const latestLineIndex = Number(latestMeta?.["lineIndex"]);
     const currentStatus = runtimeMessageStatus(latestMessage);
-    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false || isRuntimeReplyPromptMessage(latestMessage);
     const latestRoleType = String(latestMessage.roleType || "").trim().toLowerCase();
     // 用户刚发完言而系统仍在处理时，面板不应提前回退成“等待用户”。
     // 这时最新消息还是用户消息，但下一步其实是系统继续编排/生成台词。
@@ -1834,7 +1853,7 @@ function createToonflowStore() {
     if (String(latest.roleType || "").trim() === "player") return;
     if (isStreamingRuntimeMessage(latest)) return;
     const turnState = runtimeTurnStateRecord();
-    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false;
+    const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false || isRuntimeReplyPromptMessage(latest);
     const nextStatus: RuntimeLineStatus = canPlayerSpeakNow ? "waiting_player" : "waiting_next";
     const currentMeta = runtimeMetaRecord(latest.meta);
     const currentStatus = runtimeMessageStatus(latest);
@@ -2188,6 +2207,11 @@ function createToonflowStore() {
         state.chapters = [...state.chapters, nextChapter];
       }
     }
+    // storyInfo 已经是正式会话的权威 turnState。
+    // 这里需要立刻把最后一条已落地台词从“generated”规范成 waiting_player / waiting_next，
+    // 否则输入区会继续把已结束的本轮台词误显示为“正在生成下一句内容...”。
+    syncLatestRuntimeTurnStatusWithState();
+    syncRuntimeChatTrace();
   }
 
   /**
@@ -2377,6 +2401,9 @@ function createToonflowStore() {
       }
     }
     state.sessionRuntimeStage = "";
+    // commitNarrativeTurn / addMessage 返回的新 state 可能已经切换了正式回合。
+    // 这里先按最新 turnState 规范最后一条台词状态，避免 UI 在 storyInfo 刷新前长时间停在 generated。
+    syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
   }
 
@@ -5331,7 +5358,7 @@ function createToonflowStore() {
 
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
-    console.log("[useToonflowStore] refreshCurrentSession");
+    console.log("[aiGame][useToonflowStore] refreshCurrentSession");
     state.sessionRuntimeStage = "加载session...";
     try {
       const detail = await api.getSession(state.currentSessionId);
@@ -6303,6 +6330,7 @@ function createToonflowStore() {
       if (shouldPrefetchNextSessionOrchestration(latestNarrativeMessage)) {
         // 当前句文本一旦已经提交成功，且最后一条台词仍然明确属于系统继续推进时，
         // 才后台预取下一轮编排。否则已经轮到用户输入的句子会被误判成系统继续说话。
+        console.log("[orchestrateSession] prefetchNext");
         prefetchNextSessionOrchestration(Number(latestNarrativeMessage?.id || 0));
       } else {
         if (pendingSessionOrchestrationPrefetch) {

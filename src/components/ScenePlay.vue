@@ -984,7 +984,9 @@ const playInputPlaceholder = computed(() => {
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败";
   }
-  return `当前轮到${expectedSpeaker.value}发言`;
+  // 正式会话不再消费“下一位是谁”的预编排字段。
+  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成“下一位”，因此统一退回泛化提示。
+  return "当前还没轮到用户发言";
 });
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
@@ -994,6 +996,7 @@ const playTurnHint = computed(() => {
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
+  console.log("[aiGame][runtimeStatus] status %o ,runtimeStatus %o", status, runtimeStatus);
   if (runtimeStatus === "sending") {
     return `正在处理${processingDots.value}`;
   }
@@ -1019,7 +1022,9 @@ const playTurnHint = computed(() => {
   if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing" || runtimeStatus === "orchestrated") {
     return "正在生成下一句内容...";
   }
-  return `当前还没轮到用户发言，等待${runtimeDebugNextRoleLabel.value}继续。`;
+  // 正式会话的下一位角色名可能滞后于最新 turnState，同样不适合作为主提示直接展示。
+  // 这里统一改成泛化文案，避免出现“轮到某角色发言”但实际并非如此的误导状态。
+  return "当前还没轮到用户发言，等待剧情继续。";
 });
 
 /**
