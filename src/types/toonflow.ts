@@ -253,13 +253,6 @@ export interface SessionOrchestrationResult {
   role?: string;
   roleType?: string;
   motive?: string;
-  awaitUser?: boolean;
-  command?: {
-    type: "init_chapter";
-    chapterId: number;
-    chapterTitle: string;
-    trigger: "chapter_completed";
-  } | null;
   sessionId: string;
   status: string;
   chapterId?: number | null;

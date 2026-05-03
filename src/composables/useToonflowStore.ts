@@ -1539,11 +1539,11 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断当前正式会话是否正处于“编排已明确交还用户输入”的本地兜底态。
+   * 判断当前正式会话是否正处于“等待用户输入”的本地兜底态。
    *
    * 用途：
-   * - `/game/orchestration` 返回 `awaitUser=true` 后，`storyInfo` 可能仍落后一拍；
-   * - 这段窗口期里不能再完全依赖服务端旧 turnState，否则输入框会短暂显示成“等待旁白/NPC”；
+   * - 仅保留给旧会话缓存兼容使用；
+   * - 正式 `/game/orchestration` 响应已经不再对外返回 awaitUser，因此新链路主要依赖服务端 storyInfo.turnState；
    * - 这里只认当前会话自己的 pending 标记，避免会话切换时串线。
    */
   function hasPendingSessionAwaitUser(sessionId: string = String(state.currentSessionId || "").trim()): boolean {
@@ -1570,9 +1570,8 @@ function createToonflowStore() {
    * 读取正式会话当前是否允许用户发言。
    *
    * 用途：
-   * - 优先认可 orchestration 的 `awaitUser=true` 本地强信号；
-   * - 其余情况再回退到服务端 turnState；
-   * - 避免 UI 因 `storyInfo` 慢一拍短暂锁住输入框。
+   * - 正式链以服务端 `storyInfo.turnState` 为准；
+   * - 仅在仍残留旧本地兜底标记时，才临时放行用户输入，避免兼容期旧缓存串线。
    */
   function sessionCanPlayerSpeak(): boolean {
     if (hasPendingSessionAwaitUser()) return true;
@@ -2144,7 +2143,7 @@ function createToonflowStore() {
     const existingDetail = state.sessionDetail || null;
     let nextState = cloneDebugSnapshotState(result.state || existingDetail?.state || {}) as Record<string, unknown>;
     if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
-      // orchestration 的 awaitUser 是用户回合的强信号；storyInfo 可能落后一拍，不能用旧 turnState 重新锁住输入框。
+      // 兼容旧本地 pending 标记：如果这时 storyInfo 还没追上，就先维持用户回合，避免旧缓存短暂锁住输入框。
       const root = asMiniRecord(nextState);
       const turnState = asMiniRecord(root.turnState);
       const displayName = scalarText(asMiniRecord(root.player).name) || state.playerName || "用户";
@@ -2224,12 +2223,9 @@ function createToonflowStore() {
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
     };
-    // orchestration 只返回最小 plan 时，先在前端本地兜住 awaitUser，
-    // 避免后续独立 storyInfo 还没来得及同步前，界面先短暂显示成“等待旁白/NPC”。
-    const shouldYieldToUser = Boolean(result.plan?.awaitUser) && !shouldStreamSessionPlanFromPlan(result.plan);
-    state.sessionAwaitUserPending = shouldYieldToUser;
-    state.sessionAwaitUserSessionId = shouldYieldToUser ? String(result.sessionId || state.currentSessionId || "").trim() : "";
-    applyAwaitUserTurnFromPlan(result.plan);
+    // 正式会话的用户回合与切章都改由服务端 state + storyInfo 驱动，
+    // orchestration 响应只保留最小的 role/roleType/motive，不再在这里本地改 turnState。
+    clearPendingSessionAwaitUser(String(result.sessionId || state.currentSessionId || "").trim());
     state.sessionRuntimeStage = "";
     syncRuntimeChatTrace();
   }
@@ -5335,9 +5331,17 @@ function createToonflowStore() {
 
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
-    const detail = await api.getSession(state.currentSessionId);
-    applyLoadedSessionDetail(detail);
-    void refreshSessionListState();
+    console.log("[useToonflowStore] refreshCurrentSession");
+    state.sessionRuntimeStage = "加载session...";
+    try {
+      const detail = await api.getSession(state.currentSessionId);
+      applyLoadedSessionDetail(detail);
+      void refreshSessionListState();
+    } finally {
+      if (state.sessionRuntimeStage === "加载session...") {
+        state.sessionRuntimeStage = "";
+      }
+    }
   }
 
   function isReadyDebugEventDigest(input: unknown) {
@@ -5464,7 +5468,6 @@ function createToonflowStore() {
         role: String(raw.role || "").trim(),
         roleType: String(raw.roleType || "").trim() || "narrator",
         motive: String(raw.motive || "").trim(),
-        awaitUser: Boolean(raw.awaitUser),
       },
     };
   }
@@ -5493,7 +5496,6 @@ function createToonflowStore() {
           role: String(result.role || "").trim(),
           roleType: String(result.roleType || "").trim() || "narrator",
           motive: String(result.motive || "").trim(),
-          awaitUser: Boolean((result as { awaitUser?: unknown }).awaitUser),
         } as DebugNarrativePlan
         : null
     );
@@ -6458,45 +6460,20 @@ function createToonflowStore() {
           throw new Error(`前端应用编排结果失败：${asUiErrorMessage(error)}`);
         }
         const plan = orchestration.plan || null;
-        const shouldInitNextChapter = isInitChapterCommand(orchestration.command);
-        // 正式链只认 awaitUser，不消费“下一个是谁”这种预编排字段。
-        const shouldYieldToUser = plan?.awaitUser === true;
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(plan);
-        if (!shouldStreamPlan) {
-          // 编排已明确交还用户输入时，先本地切回用户回合，再后台刷新 storyInfo，
-          // 避免一次慢速 storyInfo 请求把输入框额外锁住十几秒。
-          applyAwaitUserTurnFromPlan(plan);
-          if (shouldYieldToUser) {
-            refreshSessionStoryInfoInBackground("orchestration_await_user");
-            advanced = true;
-            break;
-          }
-        }
         await refreshSessionStoryInfo();
         if (hasActiveMiniGameInCurrentSession()) {
           advanced = true;
           break;
         }
-        if (!shouldStreamPlan) {
-          // storyInfo 可能仍落后一拍，刷新后再补一次本地 awaitUser，
-          // 确保 turnState 与最后一条消息状态都稳定切到 waiting_player。
-          applyAwaitUserTurnFromPlan(plan);
-        }
         if (shouldStreamPlan) {
           await streamSessionPlan(orchestration, history);
-        }
-        if (shouldInitNextChapter) {
-          await initCurrentSessionChapter({
-            chapterId: Number(orchestration.command?.chapterId || 0),
-          });
-          advanced = true;
-          continue;
         }
         const afterCount = conversationMessages().length;
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
         const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !plan || shouldYieldToUser) {
+        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !plan) {
           advanced = true;
           break;
         }
