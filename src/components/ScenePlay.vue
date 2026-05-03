@@ -4,6 +4,7 @@ import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
+import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
 const store = useToonflowStore();
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
@@ -918,9 +919,11 @@ const latestConversationMessage = computed(() => {
 const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
   if (store.state.sessionOpenError) return "session_error";
+  const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
+  if (latestStatus === "waiting_player" && canPlayerSpeak.value) return "waiting_player";
+  if (latestStatus === "waiting_next" && !canPlayerSpeak.value) return "waiting_next";
   if (store.state.sendPending || store.state.runtimeProcessingPending) return "sending";
   if (activeMiniGame.value) return "waiting_player";
-  const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
   if (latestStatus === "sending") return "sending";
   if (canPlayerSpeak.value && latestStatus === "auto_advancing") {
     return "waiting_player";
@@ -941,9 +944,10 @@ const currentRuntimeInputStatus = computed(() => {
 const canPlayerInput = computed(() => {
   if (store.state.sessionOpening) return false;
   if (store.state.sessionOpenError) return false;
+  if (activeMiniGame.value) return true;
+  if (canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player") return true;
   if (store.state.sendPending || store.state.runtimeProcessingPending) return false;
   if (sessionRuntimeStageText.value) return false;
-  if (activeMiniGame.value) return true;
   return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
 const processingDots = computed(() => ".".repeat((pendingDotTick.value % 3) + 1));
@@ -971,13 +975,13 @@ const playInputPlaceholder = computed(() => {
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
+  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
+    return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
+  }
   if (runtimeStatus === "sending") {
     return `处理中${processingDots.value}`;
   }
   if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
-  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
-    return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
-  }
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成";
   }
@@ -996,7 +1000,10 @@ const playTurnHint = computed(() => {
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
-  console.log("[aiGame][runtimeStatus] status %o ,runtimeStatus %o", status, runtimeStatus);
+
+  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
+    return "";
+  }
   if (runtimeStatus === "sending") {
     return `正在处理${processingDots.value}`;
   }
@@ -1013,19 +1020,29 @@ const playTurnHint = computed(() => {
   if (isLocalFailedPlayerMessage(latestConversationMessage.value)) {
     return "发送失败，可重试或重新输入。";
   }
-  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
-    return "";
-  }
   if (runtimeStatus === "voicing") {
     return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
   }
   if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing" || runtimeStatus === "orchestrated") {
+       WebDebugLogUtil.log("[aiGame][runtimeStatus] status", {
+          status,
+          runtimeStatus,
+          canPlayerSpeak: canPlayerSpeak.value,
+          expectedSpeaker: expectedSpeaker.value,
+        });
     return "正在生成下一句内容...";
   }
+  WebDebugLogUtil.log("[aiGame][runtimeStatus] status", {
+      status,
+      runtimeStatus,
+      canPlayerSpeak: canPlayerSpeak.value,
+      expectedSpeaker: expectedSpeaker.value,
+    });
   // 正式会话的下一位角色名可能滞后于最新 turnState，同样不适合作为主提示直接展示。
   // 这里统一改成泛化文案，避免出现“轮到某角色发言”但实际并非如此的误导状态。
   return "当前还没轮到用户发言，等待剧情继续。";
 });
+
 
 /**
  * 为小游戏输入区生成占位提示。
@@ -1169,6 +1186,24 @@ const miniGameSummaryItems = computed(() => {
   if (!activeMiniGame.value) return [];
   return activeMiniGame.value.stateItems || [];
 });
+
+/**
+ * 监听小游戏面板视图变化，便于排查“为什么小游戏面板出现或消失”。
+ */
+watch(
+  activeMiniGame,
+  (game) => {
+    WebDebugLogUtil.log("[aiGame][miniGame] activeMiniGame changed", game ? {
+      gameType: game.gameType,
+      status: game.status,
+      phase: game.phase,
+      pendingExit: game.pendingExit,
+      acceptsTextInput: game.acceptsTextInput,
+    } : null);
+  },
+  { deep: true, immediate: true },
+);
+
 const battleEnemies = computed(() => {
   const game = activeMiniGame.value;
   if (!game || game.gameType !== "battle") return [];
@@ -1434,11 +1469,12 @@ const runtimeDebugNextRoleLabel = computed(() => {
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
   if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
-  // 调试面板只展示当前 turnState 推导出的下一位，不消费编排结果里的 nextRole。
-  return expectedSpeaker.value || "当前角色";
+  // 正式会话的 turnState.expectedRole 在部分链路里会滞后于最新台词。
+  // 这里继续展示具体角色名，只会把旧缓存误显示成“下一位纳兰嫣然”。
+  return "剧情继续";
 });
 const runtimeDebugStatusLabel = computed(() => {
-  const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;
+  const status = currentRuntimeInputStatus.value || scalarText(latestRuntimeChatTrace.value?.currentStatus);
   if (!status && canPlayerSpeak.value) return "等待用户";
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "session_error") return "打开失败";

@@ -42,6 +42,7 @@ import {
 } from "../types/toonflow";
 import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 import { manufacturerLabel } from "../utils/modelConfigCatalog";
+import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -1414,8 +1415,7 @@ function createToonflowStore() {
       return;
     }
     const promise = api.orchestrateSession(sessionId);
-    console.log("[orchestrateSession] promise");
-    console.log(promise);
+    WebDebugLogUtil.log("[orchestrateSession] promise", promise);
     pendingSessionOrchestrationPrefetch = {
       sessionId,
       triggerMessageId: Number(triggerMessageId),
@@ -1482,16 +1482,13 @@ function createToonflowStore() {
     ) {
       clearPendingSessionOrchestrationPrefetch();
       result = await pending.promise;
-      console.log("[orchestrateSession] pending.promise result");
-      console.log(result);
+      WebDebugLogUtil.log("[orchestrateSession] pending.promise result", result);
     } else {
       clearPendingSessionOrchestrationPrefetch();
       result = await api.orchestrateSession(sessionId);
-      console.log("[orchestrateSession] result");
-      console.log(result);
+      WebDebugLogUtil.log("[orchestrateSession] result", result);
     }
-    console.log("[orchestrateSession] resolveSessionOrchestration result");
-    console.log(result);
+    WebDebugLogUtil.log("[orchestrateSession] resolveSessionOrchestration result", result);
     return normalizeSessionOrchestrationResult(result);
   }
 
@@ -1855,6 +1852,27 @@ function createToonflowStore() {
     const turnState = runtimeTurnStateRecord();
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false || isRuntimeReplyPromptMessage(latest);
     const nextStatus: RuntimeLineStatus = canPlayerSpeakNow ? "waiting_player" : "waiting_next";
+    if (state.sessionDetail?.state && typeof state.sessionDetail.state === "object" && !Array.isArray(state.sessionDetail.state)) {
+      const sessionState = state.sessionDetail.state as Record<string, unknown>;
+      const nextTurnState = asMiniRecord(sessionState.turnState);
+      // 正式会话一旦已经轮到用户输入，就地把 turnState.expectedRole 改成“用户”。
+      // 否则旧角色名会继续污染调试面板和输入框提示，表现成“下一位 纳兰嫣然”等假状态。
+      if (canPlayerSpeakNow) {
+        nextTurnState.canPlayerSpeak = true;
+        nextTurnState.expectedRoleType = "player";
+        nextTurnState.expectedRole = state.playerName || "用户";
+      }
+      sessionState.turnState = nextTurnState;
+      if (state.sessionDetail.latestSnapshot && typeof state.sessionDetail.latestSnapshot === "object") {
+        state.sessionDetail.latestSnapshot = {
+          ...state.sessionDetail.latestSnapshot,
+          state: {
+            ...(asMiniRecord(state.sessionDetail.latestSnapshot.state)),
+            turnState: nextTurnState,
+          },
+        };
+      }
+    }
     const currentMeta = runtimeMetaRecord(latest.meta);
     const currentStatus = runtimeMessageStatus(latest);
     if (
@@ -2160,7 +2178,12 @@ function createToonflowStore() {
    */
   function applySessionStoryInfoResult(result: StoryInfoResult) {
     const existingDetail = state.sessionDetail || null;
-    let nextState = cloneDebugSnapshotState(result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    let nextState = cloneDebugSnapshotState(
+      mergeVisibleMiniGameState(
+        (result.state || null) as Record<string, unknown> | null,
+        (existingDetail?.state || null) as Record<string, unknown> | null,
+      ),
+    ) as Record<string, unknown>;
     if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
       // 兼容旧本地 pending 标记：如果这时 storyInfo 还没追上，就先维持用户回合，避免旧缓存短暂锁住输入框。
       const root = asMiniRecord(nextState);
@@ -2358,7 +2381,10 @@ function createToonflowStore() {
 
   function applySessionNarrativeResult(result: SessionNarrativeResult) {
     const existingDetail = state.sessionDetail || null;
-    const nextState = (result.state || existingDetail?.state || {}) as Record<string, unknown>;
+    const nextState = mergeVisibleMiniGameState(
+      (result.state || null) as Record<string, unknown> | null,
+      (existingDetail?.state || null) as Record<string, unknown> | null,
+    );
     const incoming = [
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
@@ -2420,6 +2446,96 @@ function createToonflowStore() {
   }
 
   /**
+   * 判断某份正式会话运行态里的小游戏面板当前是否仍应显示。
+   *
+   * 用途：
+   * - 正式会话在 `addMessage / storyInfo / getSession` 之间也会出现中间响应；
+   * - 某些响应会短暂漏掉 `miniGame`，如果直接覆盖，面板会瞬间消失；
+   * - 这里统一维护“仍可见小游戏”的判定，为状态合并与阻塞判断提供依据。
+   */
+  function hasVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): boolean {
+    const stateRoot = asMiniRecord(runtimeState);
+    const root = asMiniRecord(stateRoot.miniGame);
+    const session = asMiniRecord(root.session);
+    const status = scalarText(session.status);
+    const phase = scalarText(session.phase);
+    const gameType = scalarText(session.game_type) || scalarText(session.gameType) || scalarText(asMiniRecord(root.rulebook).gameType);
+    if (!gameType) return false;
+    const pendingExit = session.pending_exit === true;
+    const settledButVisible = phase === "settling" && (status === "finished" || status === "aborted");
+    return ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit || settledButVisible;
+  }
+
+  /**
+   * 在正式会话的中间响应临时缺失 `miniGame` 时，保留上一拍仍可见的小游戏状态。
+   *
+   * 用途：
+   * - 只在“新状态没有小游戏，但旧状态里小游戏仍应显示”时兜底；
+   * - 避免用户刚输入战斗/钓鱼/修炼指令后，面板被一次中间态响应瞬间清空。
+   */
+  function mergeVisibleMiniGameState(
+    preferredState: Record<string, unknown> | null | undefined,
+    fallbackState: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> {
+    const preferredRoot = asMiniRecord(preferredState);
+    const fallbackRoot = asMiniRecord(fallbackState);
+    if (!hasVisibleMiniGameState(fallbackRoot)) {
+      return preferredRoot;
+    }
+    const fallbackMiniGame = asMiniRecord(fallbackRoot.miniGame);
+    if (!Object.keys(fallbackMiniGame).length) {
+      return preferredRoot;
+    }
+    const preferredMiniGame = asMiniRecord(preferredRoot.miniGame);
+    const preferredSession = asMiniRecord(preferredMiniGame.session);
+    const preferredGameType = scalarText(preferredSession.game_type) || scalarText(preferredSession.gameType) || scalarText(asMiniRecord(preferredMiniGame.rulebook).gameType);
+    if (preferredGameType) {
+      return preferredRoot;
+    }
+    WebDebugLogUtil.log("[aiGame][miniGame] mergeVisibleMiniGameState retain fallback miniGame", {
+      preferredState: preferredRoot,
+      fallbackMiniGame,
+    });
+    return {
+      ...preferredRoot,
+      miniGame: fallbackMiniGame,
+    };
+  }
+
+  /**
+   * 判断指定运行态是否仍被“阻塞型小游戏”接管。
+   *
+   * 用途：
+   * - 正式会话的小游戏同样会产出旁白/NPC 台词；
+   * - 这些台词不能触发主线 `/game/orchestration` 自动续写；
+   * - `task` 面板虽然也会显示，但不应阻塞主线任务编排。
+   */
+  function hasActiveMiniGameInRuntimeState(runtimeState: Record<string, unknown> | null | undefined): boolean {
+    const stateRoot = asMiniRecord(runtimeState);
+    const miniGameRoot = asMiniRecord(stateRoot.miniGame);
+    const miniGameSession = asMiniRecord(miniGameRoot.session);
+    const status = scalarText(miniGameSession.status);
+    const gameType = scalarText(miniGameSession.game_type) || scalarText(asMiniRecord(miniGameRoot.rulebook).gameType);
+    if (!isBlockingMiniGameType(gameType)) {
+      return false;
+    }
+    const phase = scalarText(miniGameSession.phase);
+    const pendingExit = miniGameSession.pending_exit === true;
+    const settledButVisible = phase === "settling" && (status === "finished" || status === "aborted");
+    const active = ["preparing", "active", "settling", "suspended"].includes(status) || pendingExit || settledButVisible;
+    if (active) {
+      WebDebugLogUtil.log("[aiGame][miniGame] blocking miniGame active", {
+        gameType,
+        status,
+        phase,
+        pendingExit,
+        settledButVisible,
+      });
+    }
+    return active;
+  }
+
+  /**
    * 判断本轮正式会话消息提交是否已经切入“会阻塞主线”的小游戏。
    *
    * 用途：
@@ -2428,15 +2544,12 @@ function createToonflowStore() {
    * - `task` 虽然也会显示面板，但它本质上仍是主线任务推进，不应阻塞编排。
    */
   function hasActiveMiniGameInSessionResult(result: SessionNarrativeResult | null | undefined): boolean {
-    const runtimeState = asMiniRecord(result?.state);
-    const miniGameRoot = asMiniRecord(runtimeState.miniGame);
-    const miniGameSession = asMiniRecord(miniGameRoot.session);
-    const status = scalarText(miniGameSession.status);
-    const gameType = scalarText(miniGameSession.game_type) || scalarText(asMiniRecord(miniGameRoot.rulebook).gameType);
-    if (!isBlockingMiniGameType(gameType)) {
-      return false;
-    }
-    return ["preparing", "active", "settling", "suspended"].includes(status);
+    return hasActiveMiniGameInRuntimeState(
+      mergeVisibleMiniGameState(
+        (result?.state || null) as Record<string, unknown> | null,
+        (state.sessionDetail?.state || null) as Record<string, unknown> | null,
+      ),
+    );
   }
 
   /**
@@ -2448,9 +2561,7 @@ function createToonflowStore() {
    * - `task` 任务面板不算阻塞态，否则用户在任务中发言后就永远不会再触发角色编排。
    */
   function hasActiveMiniGameInCurrentSession(): boolean {
-    return hasActiveMiniGameInSessionResult({
-      state: state.sessionDetail?.state || {},
-    } as SessionNarrativeResult);
+    return hasActiveMiniGameInRuntimeState((state.sessionDetail?.state || {}) as Record<string, unknown>);
   }
 
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
@@ -5358,7 +5469,9 @@ function createToonflowStore() {
 
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
-    console.log("[aiGame][useToonflowStore] refreshCurrentSession");
+    WebDebugLogUtil.log("[aiGame][useToonflowStore] refreshCurrentSession", {
+      sessionId: state.currentSessionId,
+    });
     state.sessionRuntimeStage = "加载session...";
     try {
       const detail = await api.getSession(state.currentSessionId);
@@ -5994,8 +6107,7 @@ function createToonflowStore() {
         state: state.debugRuntimeState,
         messages: conversationMessages(),
       }));
-      console.log("[orchestrateDebug] result");
-      console.log(result);
+      WebDebugLogUtil.log("[orchestrateDebug] result", result);
 
       if (result.plan) {
         applyDebugOrchestrationResult(result, chapter);
@@ -6069,8 +6181,7 @@ function createToonflowStore() {
         messages: history,
         playerContent: null,
       }));
-      console.log("[orchestrateDebug] result");
-      console.log(result);
+      WebDebugLogUtil.log("[orchestrateDebug] result", result);
       clearRuntimeRetryState();
       applyDebugOrchestrationResult(result, currentChapter);
       const shouldYieldToUser = shouldYieldToUserFromDebugPlan(result.plan);
@@ -6152,8 +6263,7 @@ function createToonflowStore() {
       state: state.debugRuntimeState,
       messages: history,
     }));
-   console.log("[orchestrateDebug] result");
-    console.log(result);
+    WebDebugLogUtil.log("[orchestrateDebug] result", result);
     const currentChapter = state.chapters.find((item) => item.id === state.debugChapterId) || null;
     clearRuntimeRetryState();
     applyDebugOrchestrationResult(result, currentChapter);
@@ -6201,7 +6311,10 @@ function createToonflowStore() {
       state.sendText = "";
       clearRuntimeRetryState();
       applySessionNarrativeResult(result);
-      if (hasActiveMiniGameInSessionResult(result)) {
+      // 这里必须读取“已经合并进当前会话”的小游戏状态。
+      // 某些中间响应会临时漏掉 miniGame，如果继续只看 result.state，
+      // 前端会误以为小游戏结束，从而错误触发主线 storyInfo / orchestration。
+      if (hasActiveMiniGameInCurrentSession()) {
         void refreshSessionListState();
         return;
       }
@@ -6330,12 +6443,13 @@ function createToonflowStore() {
       if (shouldPrefetchNextSessionOrchestration(latestNarrativeMessage)) {
         // 当前句文本一旦已经提交成功，且最后一条台词仍然明确属于系统继续推进时，
         // 才后台预取下一轮编排。否则已经轮到用户输入的句子会被误判成系统继续说话。
-        console.log("[orchestrateSession] prefetchNext");
+        WebDebugLogUtil.log("[orchestrateSession] prefetchNext", {
+          messageId: Number(latestNarrativeMessage?.id || 0),
+        });
         prefetchNextSessionOrchestration(Number(latestNarrativeMessage?.id || 0));
       } else {
         if (pendingSessionOrchestrationPrefetch) {
-          console.log("[orchestrateSession] pending.promise clear curr user");
-          console.log(pendingSessionOrchestrationPrefetch);
+          WebDebugLogUtil.log("[orchestrateSession] pending.promise clear curr user", pendingSessionOrchestrationPrefetch);
         }
         clearPendingSessionOrchestrationPrefetch();
       }
