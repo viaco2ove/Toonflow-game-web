@@ -2600,6 +2600,13 @@ async function playRuntimeVoiceBlob(
   const player = new Audio(runtimeVoiceObjectUrl);
   player.preload = "auto";
   runtimeVoicePlayer = player;
+  WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 准备播放", {
+    waitForCompletion,
+    speakable: speakable.slice(0, 60),
+    blobSize: blob.size,
+    blobType: blob.type,
+    activeMiniGame: activeMiniGame.value,
+  });
   const completed = await new Promise<boolean>((resolve) => {
     runtimeVoiceResolve = resolve;
     let finished = false;
@@ -2619,15 +2626,39 @@ async function playRuntimeVoiceBlob(
       resolve(ok);
     };
     player.onplay = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 真正开始播放", {
+        waitForCompletion,
+        currentTime: player.currentTime,
+        duration: Number.isFinite(player.duration) ? player.duration : -1,
+        speakable: speakable.slice(0, 60),
+      });
       onPlay?.();
       if (manual) menuVisibleHint.value = "正在播放试听";
       if (!waitForCompletion) {
         finalize(true, "正在播放试听");
       }
     };
-    player.onended = () => finalize(true, "朗读完成");
-    player.onerror = () => finalize(false, "朗读失败");
-    void player.play().catch(() => finalize(false, "朗读失败"));
+    player.onended = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放结束", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(true, "朗读完成");
+    };
+    player.onerror = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放错误", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(false, "朗读失败");
+    };
+    void player.play().catch((error) => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob play() rejected", {
+        error: String((error as Error)?.message || error || ""),
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(false, "朗读失败");
+    });
   });
   return completed;
 }

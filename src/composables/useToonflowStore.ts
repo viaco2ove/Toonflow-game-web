@@ -2690,6 +2690,27 @@ function createToonflowStore() {
     return hasActiveMiniGameInRuntimeState((state.sessionDetail?.state || {}) as Record<string, unknown>);
   }
 
+  /**
+   * 读取当前正式会话里待继续消费的小游戏编排计划。
+   *
+   * 用途：
+   * - 战斗等小游戏会先提交“旁白播报”一句，再把敌方回合作为 next plan 提升到 state.pendingNarrativePlan；
+   * - web 端在 refreshSessionStoryInfo 之后需要显式把这条链接上，否则只会停在旁白播报，不会继续进入敌方回合；
+   * - 这里只返回小游戏相关 plan，避免误把普通主线的 pendingNarrativePlan 当成小游戏链继续执行。
+   */
+  function getPendingMiniGameNarrativePlan(): DebugNarrativePlan | null {
+    const stateRoot = asMiniRecord((state.sessionDetail?.state || null) as Record<string, unknown> | null);
+    const pendingPlan = asMiniRecord(stateRoot.pendingNarrativePlan);
+    const eventType = scalarText(pendingPlan.eventType);
+    if (!eventType.startsWith("on_mini_game")) {
+      return null;
+    }
+    if (eventType === "on_mini_game_finish") {
+      return null;
+    }
+    return pendingPlan as unknown as DebugNarrativePlan;
+  }
+
   function showRuntimeRetryMessage(message: string, run: () => Promise<void>, retryLabel = "重试") {
     const token = createRuntimeRetryToken();
     const now = Date.now();
@@ -6624,6 +6645,15 @@ function createToonflowStore() {
       }
       await refreshSessionStoryInfo();
       if (hasActiveMiniGameInCurrentSession()) {
+        const chainedMiniGamePlan = getPendingMiniGameNarrativePlan();
+        if (chainedMiniGamePlan) {
+          WebDebugLogUtil.log("[aiGame][miniGame] refresh 后续到敌方回合", {
+            eventType: chainedMiniGamePlan.eventType,
+            plan: chainedMiniGamePlan,
+          });
+          await streamSessionPlan(chainedMiniGamePlan, conversationMessages());
+          return;
+        }
         clearPendingSessionOrchestrationPrefetch();
         return;
       }
