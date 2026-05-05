@@ -2652,6 +2652,17 @@ function createToonflowStore() {
    * - 一旦阻塞型小游戏已激活，前端就不能再继续调用主线 `storyInfo -> continueSessionNarrative`；
    * - `task` 虽然也会显示面板，但它本质上仍是主线任务推进，不应阻塞编排。
    */
+  /**
+   * 检测小游戏 session 是否已经结束（finished/aborted）
+   * 用途：编排通道结束后，正确清除面板
+   */
+  function isMiniGameSessionFinished(runtimeState: Record<string, unknown> | null | undefined): boolean {
+    const root = asMiniRecord(asMiniRecord(runtimeState).miniGame);
+    const miniGameSession = asMiniRecord(root.session);
+    const status = scalarText(miniGameSession.status);
+    return status === "finished" || status === "aborted";
+  }
+
   function hasActiveMiniGameInSessionResult(result: SessionNarrativeResult | null | undefined): boolean {
     return hasActiveMiniGameInRuntimeState(
       mergeVisibleMiniGameState(
@@ -6419,6 +6430,7 @@ function createToonflowStore() {
         };
         syncRuntimeChatTrace();
       }
+      WebDebugLogUtil.log("[aiGame][miniGame] 用户发送了信息：", { content });
       const result = await api.addMessage({
         sessionId: state.currentSessionId,
         roleType: "player",
@@ -6435,9 +6447,19 @@ function createToonflowStore() {
       applySessionNarrativeResult(result, {
         forceClearMiniGame: shouldCloseMiniGamePanel,
       });
-      // 这里必须读取“已经合并进当前会话”的小游戏状态。
-      // 某些中间响应会临时漏掉 miniGame，如果继续只看 result.state，
-      // 前端会误以为小游戏结束，从而错误触发主线 storyInfo / orchestration。
+      // 检测是否有小游戏编排计划，有则直接走编排通道
+      const hasMiniGamePlan = result.narrativePlan
+        && result.narrativePlan.eventType
+        && result.narrativePlan.eventType.startsWith("on_mini_game");
+      if (hasMiniGamePlan) {
+        // 有编排计划：先走编排，面板保持显示
+        WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，保持面板", {
+          eventType: result.narrativePlan?.eventType,
+        });
+        await streamSessionPlan(result.narrativePlan);
+        return;  // 不清除面板，不继续常规流程
+      }
+      // 没有编排计划：正常处理
       if (hasActiveMiniGameInCurrentSession()) {
         void refreshSessionListState();
         return;
@@ -6457,6 +6479,20 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
   ) {
     if (!state.currentSessionId || !orchestration.plan) return;
+    const plan = orchestration.plan;
+    // 根据 eventType 打 tag
+    const eventType = String(plan.eventType || "").trim();
+    if (eventType.startsWith("on_mini_game")) {
+      if (eventType === "on_mini_game_finish") {
+        WebDebugLogUtil.log("[aiGame][miniGame] 退出小游戏", { eventType });
+      } else {
+        WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-编排", { eventType });
+      }
+    } else if (eventType.includes("enemy")) {
+      WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-编排", { eventType });
+    } else {
+      WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-编排", { eventType });
+    }
     const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
     let accumulated = "";
     let finalMessage: Record<string, unknown> | null = null;
@@ -6483,11 +6519,21 @@ function createToonflowStore() {
           const eventData = (event.data || {}) as Record<string, unknown>;
           finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
+          const eventType = String(finalMessage?.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT).trim();
+          const roleType = String(finalMessage?.roleType || streamingMessage.roleType || "narrator").trim();
+          // 打 tag：台词生成完成
+          if (roleType === "narrator" && eventType.startsWith("on_mini_game")) {
+            WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-台词", { eventType });
+          } else if (roleType !== "player" && eventType.startsWith("on_mini_game")) {
+            WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-台词", { eventType });
+          } else if (eventType.includes("陪练")) {
+            WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-台词", { eventType });
+          }
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessage?.role || message.role || ""),
-            roleType: String(finalMessage?.roleType || message.roleType || ""),
-            eventType: String(finalMessage?.eventType || message.eventType || RUNTIME_STREAM_EVENT),
+            roleType,
+            eventType,
             content: finalContent,
             meta: buildRuntimeStreamMeta(message.meta, {
               streaming: false,

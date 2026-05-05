@@ -2538,6 +2538,15 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
       if (!audioUrl) {
         throw new Error("未返回试听音频");
       }
+      // 判断 roleType 打 tag
+      const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
+      const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
+      const voiceTag = isNarratorVoice
+        ? "[aiGame][miniGame] 旁白播报-台词-语音播放"
+        : (isEnemyVoice
+          ? "[aiGame][miniGame] 敌方回合-语音播放"
+          : "[aiGame][miniGame] 陪练角色回合-语音播放");
+      WebDebugLogUtil.log(voiceTag, { roleId: playableBinding.roleId, text: text.slice(0, 60) });
       setLimitedCacheValue(runtimeVoicePreviewCache, cacheKey, audioUrl);
       return audioUrl;
     })
