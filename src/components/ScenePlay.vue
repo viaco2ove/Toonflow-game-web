@@ -2508,7 +2508,7 @@ async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<Vo
   return task;
 }
 
-async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string): Promise<string> {
+async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string,  source: "common" | "warmVoiceBinding" = "common"): Promise<string> {
   const playableBinding = await ensureRuntimeCloneBinding(binding);
   const cacheKey = runtimeVoicePreviewKey(playableBinding, text);
   const cached = runtimeVoicePreviewCache.get(cacheKey);
@@ -2538,15 +2538,17 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string):
       if (!audioUrl) {
         throw new Error("未返回试听音频");
       }
-      // 判断 roleType 打 tag
-      const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
-      const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
-      const voiceTag = isNarratorVoice
-        ? "[aiGame][miniGame] 旁白播报-台词-语音播放"
-        : (isEnemyVoice
-          ? "[aiGame][miniGame] 敌方回合-语音播放"
-          : "[aiGame][miniGame] 陪练角色回合-语音播放");
-      WebDebugLogUtil.log(voiceTag, { roleId: playableBinding.roleId, text: text.slice(0, 60) });
+      // 判断 roleType 打 tag（只在小游戏模式中打印）
+      if (activeMiniGame.value) {
+        const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
+        const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
+        const voiceTag = isNarratorVoice
+          ? "[aiGame][miniGame] 旁白播报-台词-语音播放"
+          : (isEnemyVoice
+            ? "[aiGame][miniGame] 敌方回合-语音播放"
+            : "[aiGame][miniGame] 陪练角色回合-语音播放");
+        WebDebugLogUtil.log(voiceTag, { roleId: playableBinding.roleId, text: text.slice(0, 60) , source});
+      }
       setLimitedCacheValue(runtimeVoicePreviewCache, cacheKey, audioUrl);
       return audioUrl;
     })
@@ -2563,7 +2565,7 @@ async function warmVoiceBinding(binding: VoiceBindingDraft) {
   if (runtimeVoiceWarmCache.has(bindingKey)) return;
   runtimeVoiceWarmCache.add(bindingKey);
   try {
-    await resolveRuntimeVoiceUrl(binding, "恭喜，已成功复刻或生成了属于角色的声音！");
+    await resolveRuntimeVoiceUrl(binding, "恭喜，已成功复刻或生成了属于角色的声音！","warmVoiceBinding");
   } catch {
     // 保持静默，预热失败不影响正式播放
   }

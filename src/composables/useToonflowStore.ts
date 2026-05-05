@@ -6430,7 +6430,9 @@ function createToonflowStore() {
         };
         syncRuntimeChatTrace();
       }
-      WebDebugLogUtil.log("[aiGame][miniGame] 用户发送了信息：", { content });
+      if (hasActiveMiniGameInCurrentSession()) {
+        WebDebugLogUtil.log("[aiGame][miniGame] 用户发送了信息：", { content });
+      }
       const result = await api.addMessage({
         sessionId: state.currentSessionId,
         roleType: "player",
@@ -6453,9 +6455,11 @@ function createToonflowStore() {
         && result.narrativePlan.eventType.startsWith("on_mini_game");
       if (hasMiniGamePlan) {
         // 有编排计划：先走编排，面板保持显示
-        WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，保持面板", {
-          eventType: result.narrativePlan?.eventType,
-        });
+        if (hasActiveMiniGameInCurrentSession()) {
+          WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，保持面板", {
+            eventType: result.narrativePlan?.eventType,narrativePlan: result.narrativePlan
+          });
+        }
         await streamSessionPlan(result.narrativePlan);
         return;  // 不清除面板，不继续常规流程
       }
@@ -6478,20 +6482,27 @@ function createToonflowStore() {
     orchestration: SessionOrchestrationResult,
     historyMessages: MessageItem[],
   ) {
+    if (hasActiveMiniGameInCurrentSession()) {
+      WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，streamSessionPlan check",orchestration.plan);
+      WebDebugLogUtil.log("[aiGame][miniGame] 处于小游戏模式中");
+    }
+    // orchestration.plan 编排计划，那么为什么为空呢？或者说怎么样才不为空
     if (!state.currentSessionId || !orchestration.plan) return;
     const plan = orchestration.plan;
-    // 根据 eventType 打 tag
+    // 根据 eventType 打 tag（只在小游戏模式中打印）
     const eventType = String(plan.eventType || "").trim();
-    if (eventType.startsWith("on_mini_game")) {
-      if (eventType === "on_mini_game_finish") {
-        WebDebugLogUtil.log("[aiGame][miniGame] 退出小游戏", { eventType });
+    if (hasActiveMiniGameInCurrentSession()) {
+      if (eventType.startsWith("on_mini_game")) {
+        if (eventType === "on_mini_game_finish") {
+          WebDebugLogUtil.log("[aiGame][miniGame] 退出小游戏", { eventType });
+        } else {
+          WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-编排", { eventType });
+        }
+      } else if (eventType.includes("enemy")) {
+        WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-编排", { eventType });
       } else {
-        WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-编排", { eventType });
+        WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-编排", { eventType });
       }
-    } else if (eventType.includes("enemy")) {
-      WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-编排", { eventType });
-    } else {
-      WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-编排", { eventType });
     }
     const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
     let accumulated = "";
@@ -6521,13 +6532,15 @@ function createToonflowStore() {
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
           const eventType = String(finalMessage?.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT).trim();
           const roleType = String(finalMessage?.roleType || streamingMessage.roleType || "narrator").trim();
-          // 打 tag：台词生成完成
-          if (roleType === "narrator" && eventType.startsWith("on_mini_game")) {
-            WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-台词", { eventType });
-          } else if (roleType !== "player" && eventType.startsWith("on_mini_game")) {
-            WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-台词", { eventType });
-          } else if (eventType.includes("陪练")) {
-            WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-台词", { eventType });
+          // 打 tag：台词生成完成（只在小游戏模式中打印）
+          if (hasActiveMiniGameInCurrentSession()) {
+            if (roleType === "narrator" && eventType.startsWith("on_mini_game")) {
+              WebDebugLogUtil.log("[aiGame][miniGame] 旁白播报-台词", { eventType });
+            } else if (roleType !== "player" && eventType.startsWith("on_mini_game")) {
+              WebDebugLogUtil.log("[aiGame][miniGame] 敌方回合-台词", { eventType });
+            } else if (eventType.includes("陪练")) {
+              WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-台词", { eventType });
+            }
           }
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
