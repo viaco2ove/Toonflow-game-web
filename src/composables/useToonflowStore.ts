@@ -6864,7 +6864,7 @@ function createToonflowStore() {
       if (isBenignRuntimeCancellation(error)) {
         return false;
       }
-      WebDebugLogUtil.log("[aiGame][miniGame] 继续剧情失败", {
+      WebDebugLogUtil.log("[aiGame][runtimeStatus] 继续剧情失败", {
         error: error,
       });
       showRuntimeRetryMessage(
