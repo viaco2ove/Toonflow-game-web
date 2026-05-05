@@ -2688,11 +2688,19 @@ async function playMessageAudioWithBinding(
       try {
         setRuntimeVoiceIndicator(message, "loading");
         const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
+       if(WebDebugLogUtil.isEnabled()){
+          console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
+        }
         if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
         const blob = await fetchRuntimeVoiceBlob(audioUrl);
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
           setRuntimeVoiceIndicator(message, "playing");
         });
+        if (activeMiniGame.value) {
+          WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
+        }else {
+          WebDebugLogUtil.log("[aiGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
+        }
         if (segmentPlayed) break;
         lastError = new Error("朗读失败");
       } catch (error: any) {

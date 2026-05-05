@@ -1492,6 +1492,20 @@ function createToonflowStore() {
     return normalizeSessionOrchestrationResult(result);
   }
 
+  /**
+   * 小游戏编排专用接口：调用 /game/orchestration/minigame 获取下一个 plan。
+   * 返回完整 plan（含 eventType、presetContent 等），不走 buildMinimalOrchestrationResponse 的裁剪。
+   */
+  async function resolveMinigameOrchestration(): Promise<SessionOrchestrationResult> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) {
+      throw new Error("当前没有活跃会话");
+    }
+    const result = await api.orchestrateMinigameSession(sessionId);
+    WebDebugLogUtil.log("[orchestrateMinigame] resolveMinigameOrchestration result", result);
+    return normalizeSessionOrchestrationResult(result);
+  }
+
 
   let editorAutoPersistTimer: number | null = null;
   let editorPersistMuted = false;
@@ -6479,19 +6493,22 @@ function createToonflowStore() {
       applySessionNarrativeResult(result, {
         forceClearMiniGame: shouldCloseMiniGamePanel,
       });
-      // 检测是否有小游戏编排计划，有则直接走编排通道
+      // 小游戏编排计划不再直接走 streamSessionPlan，而是走 /game/orchestration/minigame 接口，
+      // 每条消息串行处理（编排 → streamlines → 语音播放 → 编排），避免链式中断语音。
+      // 检测是否有小游戏编排计划，有则走 continueSessionNarrative 让它调用 minigame 编排
       const hasMiniGamePlan = result.narrativePlan
         && result.narrativePlan.eventType
         && result.narrativePlan.eventType.startsWith("on_mini_game");
       if (hasMiniGamePlan) {
-        // 有编排计划：先走编排，面板保持显示
         if (hasActiveMiniGameInCurrentSession()) {
-          WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，保持面板", {
-            eventType: result.narrativePlan?.eventType,narrativePlan: result.narrativePlan
+          WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，走 minigame 编排接口", {
+            eventType: result.narrativePlan?.eventType,
           });
         }
-        await streamSessionPlan(result.narrativePlan as DebugNarrativePlan, [...state.messages]);
-        return;  // 不清除面板，不继续常规流程
+        await refreshSessionStoryInfo();
+        void refreshSessionListState();
+        await continueSessionNarrative();
+        return;
       }
       // 没有编排计划：正常处理
       if (hasActiveMiniGameInCurrentSession()) {
@@ -6647,16 +6664,9 @@ function createToonflowStore() {
         applySessionNarrativeResult(committed);
       }
       await refreshSessionStoryInfo();
+      // 小游戏模式不再链式调用 streamSessionPlan，改为返回让 continueSessionNarrative
+      // 走 /game/orchestration/minigame 接口串行处理下一条，避免语音被链式中断。
       if (hasActiveMiniGameInCurrentSession()) {
-        const chainedMiniGamePlan = getPendingMiniGameNarrativePlan();
-        if (chainedMiniGamePlan) {
-          WebDebugLogUtil.log("[aiGame][miniGame] refresh 后续到敌方回合", {
-            eventType: chainedMiniGamePlan.eventType,
-            plan: chainedMiniGamePlan,
-          });
-          await streamSessionPlan(chainedMiniGamePlan, conversationMessages());
-          return;
-        }
         clearPendingSessionOrchestrationPrefetch();
         return;
       }
@@ -6802,7 +6812,8 @@ function createToonflowStore() {
 
   async function performContinueSessionNarrative() {
     if (!state.currentSessionId) return;
-    if (hasActiveMiniGameInCurrentSession()) return;
+    // 不再因小游戏活跃就提前退出：小游戏编排走独立的 /game/orchestration/minigame 接口，
+    // 每条消息串行处理（编排 → streamlines → 语音播放 → 编排），避免链式中断语音。
     state.sessionRuntimeStage = "继续编排下一轮剧情";
     if(WebDebugLogUtil.isEnabled()){
        console.log("继续编排下一轮剧情")
@@ -6811,36 +6822,37 @@ function createToonflowStore() {
     try {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
-        if (hasActiveMiniGameInCurrentSession()) {
-          advanced = true;
-          break;
-        }
-        const beforeCount = conversationMessages().length;
-        const history = conversationMessages();
-        const latestHistoryMessage = history.slice(-1)[0] || null;
-        const orchestration = await resolveSessionOrchestration(Number(latestHistoryMessage?.id || 0));
+        const isMiniGameActive = hasActiveMiniGameInCurrentSession();
+
+        // 小游戏模式下走专用编排接口，获取完整的 plan（含 eventType、presetContent 等）；
+        // 普通模式走标准编排接口。
+        const orchestration = isMiniGameActive
+          ? await resolveMinigameOrchestration()
+          : await resolveSessionOrchestration(Number(conversationMessages().slice(-1)[0]?.id || 0));
+
         clearRuntimeRetryState();
         try {
           // 编排接口已经成功返回时，前端状态合并也必须显式兜底，
-          // 避免响应成功但本地应用阶段抛错后，界面继续停在“处理中”。
+          // 避免响应成功但本地应用阶段抛错后，界面继续停在"处理中"。
           applySessionOrchestrationResult(orchestration);
         } catch (error) {
           throw new Error(`前端应用编排结果失败：${asUiErrorMessage(error)}`);
         }
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         await refreshSessionStoryInfo();
-        if (hasActiveMiniGameInCurrentSession()) {
-          advanced = true;
-          break;
-        }
         if (shouldStreamPlan) {
-          await streamSessionPlan(orchestration.plan as DebugNarrativePlan, history);
+          await streamSessionPlan(orchestration.plan as DebugNarrativePlan, conversationMessages());
         }
-        const afterCount = conversationMessages().length;
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
         const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
+        if (canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
+          advanced = true;
+          break;
+        }
+        // 小游戏模式下只处理一轮编排+发言，然后返回让前端等语音播放完成，
+        // 下次 continueSessionNarrative 再走下一轮。
+        if (hasActiveMiniGameInCurrentSession() && shouldStreamPlan) {
           advanced = true;
           break;
         }
@@ -6858,7 +6870,7 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
-    if (hasActiveMiniGameInCurrentSession()) return true;
+    // 小游戏模式下也允许继续编排，走 /game/orchestration/minigame 接口
     state.runtimeProcessingPending = true;
     try {
       await performContinueSessionNarrative();
