@@ -2283,6 +2283,11 @@ function createToonflowStore() {
 
   function shouldStreamSessionPlanFromPlan(plan: DebugNarrativePlan | null | undefined) {
     if (!plan) return false;
+    // 小游戏场景：eventType 包含 on_mini_game
+    const eventType = String(plan.eventType || "").trim();
+    if (eventType.includes("on_mini_game")) {
+      return true;
+    }
     const roleType = String(plan.roleType || "").trim().toLowerCase();
     return Boolean(String(plan.role || "").trim()) && roleType !== "player";
   }
@@ -6460,7 +6465,7 @@ function createToonflowStore() {
             eventType: result.narrativePlan?.eventType,narrativePlan: result.narrativePlan
           });
         }
-        await streamSessionPlan(result.narrativePlan);
+        await streamSessionPlan(result.narrativePlan, [...state.messages]);
         return;  // 不清除面板，不继续常规流程
       }
       // 没有编排计划：正常处理
@@ -6479,16 +6484,15 @@ function createToonflowStore() {
   }
 
   async function streamSessionPlan(
-    orchestration: SessionOrchestrationResult,
+    plan: DebugNarrativePlan,
     historyMessages: MessageItem[],
   ) {
     if (hasActiveMiniGameInCurrentSession()) {
-      WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，streamSessionPlan check",orchestration.plan);
+      WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，streamSessionPlan check",plan);
       WebDebugLogUtil.log("[aiGame][miniGame] 处于小游戏模式中");
     }
-    // orchestration.plan 编排计划，那么为什么为空呢？或者说怎么样才不为空
-    if (!state.currentSessionId || !orchestration.plan) return;
-    const plan = orchestration.plan;
+    // plan 编排计划，那么为什么为空呢？或者说怎么样才不为空
+    if (!state.currentSessionId || !plan) return;
     // 根据 eventType 打 tag（只在小游戏模式中打印）
     const eventType = String(plan.eventType || "").trim();
     if (hasActiveMiniGameInCurrentSession()) {
@@ -6504,7 +6508,7 @@ function createToonflowStore() {
         WebDebugLogUtil.log("[aiGame][miniGame] 陪练角色回合-编排", { eventType });
       }
     }
-    const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
+    const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
     let finalMessage: Record<string, unknown> | null = null;
     let done = false;
@@ -6513,7 +6517,7 @@ function createToonflowStore() {
     try {
       await api.streamDebugLines({
         sessionId: state.currentSessionId,
-        plan: orchestration.plan,
+        plan: plan,
       }, async (event) => {
         if (event.type === "delta") {
           const text = String(event.data?.text || "");
@@ -6654,8 +6658,8 @@ function createToonflowStore() {
     orchestration: SessionOrchestrationResult,
     historyMessages: MessageItem[],
   ) {
-    if (!state.currentSessionId || !orchestration.plan) return;
-    const streamingMessage = createStreamingMessage(orchestration.plan, historyMessages.length + 1);
+    if (!state.currentSessionId || !plan) return;
+    const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
     let finalMessage: Record<string, unknown> | null = null;
     let done = false;
@@ -6664,7 +6668,7 @@ function createToonflowStore() {
     try {
       await api.streamIntroductionLines({
         sessionId: state.currentSessionId,
-        plan: orchestration.plan,
+        plan: plan,
       }, async (event) => {
         if (event.type === "delta") {
           const text = String(event.data?.text || "");
@@ -6725,7 +6729,7 @@ function createToonflowStore() {
       const committedCreateTime = Number((finalMessage as Record<string, unknown> | null)?.["createTime"] || Date.now());
       const committedRole = String((finalMessage as Record<string, unknown> | null)?.["role"] || streamingMessage.role || "旁白");
       const committedRoleType = String((finalMessage as Record<string, unknown> | null)?.["roleType"] || streamingMessage.roleType || "narrator");
-      const committedEventType = String((finalMessage as Record<string, unknown> | null)?.["eventType"] || orchestration.plan.eventType || "on_opening");
+      const committedEventType = String((finalMessage as Record<string, unknown> | null)?.["eventType"] || plan.eventType || "on_opening");
       const committed = await api.commitNarrativeTurn({
         sessionId: state.currentSessionId,
         role: committedRole,
@@ -6765,6 +6769,10 @@ function createToonflowStore() {
     if (!state.currentSessionId) return;
     if (hasActiveMiniGameInCurrentSession()) return;
     state.sessionRuntimeStage = "继续编排下一轮剧情";
+    if(WebDebugLogUtil.isEnabled()){
+       console.log("继续编排下一轮剧情")
+    }
+
     try {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
@@ -6784,8 +6792,7 @@ function createToonflowStore() {
         } catch (error) {
           throw new Error(`前端应用编排结果失败：${asUiErrorMessage(error)}`);
         }
-        const plan = orchestration.plan || null;
-        const shouldStreamPlan = shouldStreamSessionPlanFromPlan(plan);
+        const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         await refreshSessionStoryInfo();
         if (hasActiveMiniGameInCurrentSession()) {
           advanced = true;
@@ -6825,6 +6832,9 @@ function createToonflowStore() {
       if (isBenignRuntimeCancellation(error)) {
         return false;
       }
+      WebDebugLogUtil.log("[aiGame][miniGame] 继续剧情失败", {
+        error: error,
+      });
       showRuntimeRetryMessage(
         `继续剧情失败：${asUiErrorMessage(error)}`,
         createRuntimeRetryRunner(performContinueSessionNarrative, {

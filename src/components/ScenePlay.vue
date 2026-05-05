@@ -2509,11 +2509,17 @@ async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<Vo
 }
 
 async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string,  source: "common" | "warmVoiceBinding" = "common"): Promise<string> {
+  if(WebDebugLogUtil.isEnabled()){
+    console.log("resolveRuntimeVoiceUrl");
+  }
+
   const playableBinding = await ensureRuntimeCloneBinding(binding);
   const cacheKey = runtimeVoicePreviewKey(playableBinding, text);
   const cached = runtimeVoicePreviewCache.get(cacheKey);
+  WebDebugLogUtil.log("resolveRuntimeVoiceUrl cached",cached);
   if (cached) return cached;
   const inflight = runtimeVoicePreviewInflight.get(cacheKey);
+  WebDebugLogUtil.log("resolveRuntimeVoiceUrl inflight",inflight);
   if (inflight) return inflight;
   const task = withTimeout(
     store.streamVoice(
@@ -2535,9 +2541,11 @@ async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string, 
     "语音生成超时",
   )
     .then((audioUrl) => {
+       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { audioUrl:audioUrl});
       if (!audioUrl) {
         throw new Error("未返回试听音频");
       }
+       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { activeMiniGame: activeMiniGame.value});
       // 判断 roleType 打 tag（只在小游戏模式中打印）
       if (activeMiniGame.value) {
         const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
