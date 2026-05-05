@@ -6529,6 +6529,9 @@ function createToonflowStore() {
     plan: DebugNarrativePlan,
     historyMessages: MessageItem[],
   ) {
+    if(WebDebugLogUtil.isEnabled()){
+      console.log("[aiGame][streamSessionPlan]", { plan });
+    }
     if (hasActiveMiniGameInCurrentSession()) {
       WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，streamSessionPlan check",plan);
       WebDebugLogUtil.log("[aiGame][miniGame] 处于小游戏模式中");
@@ -6666,7 +6669,9 @@ function createToonflowStore() {
       await refreshSessionStoryInfo();
       // 小游戏模式不再链式调用 streamSessionPlan，改为返回让 continueSessionNarrative
       // 走 /game/orchestration/minigame 接口串行处理下一条，避免语音被链式中断。
+
       if (hasActiveMiniGameInCurrentSession()) {
+        WebDebugLogUtil.log("[aiGame][miniGame]clearPendingSessionOrchestrationPrefetch");
         clearPendingSessionOrchestrationPrefetch();
         return;
       }
