@@ -2178,14 +2178,13 @@ function createToonflowStore() {
    */
   function applySessionStoryInfoResult(result: StoryInfoResult) {
     const existingDetail = state.sessionDetail || null;
-    const shouldForceClearMiniGame = shouldForceClearMiniGameStateFromMessages(state.messages);
     let nextState = cloneDebugSnapshotState(
       mergeVisibleMiniGameState(
         (result.state || null) as Record<string, unknown> | null,
         (existingDetail?.state || null) as Record<string, unknown> | null,
       ),
     ) as Record<string, unknown>;
-    if (shouldForceClearMiniGame) {
+    if (isMiniGameSessionFinished(nextState)) {
       nextState = clearVisibleMiniGameState(nextState);
     }
     if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
@@ -2456,6 +2455,8 @@ function createToonflowStore() {
     ].filter(Boolean) as MessageItem[];
     const shouldForceClearMiniGame = options?.forceClearMiniGame === true || shouldForceClearMiniGameStateFromMessages(incoming);
     if (shouldForceClearMiniGame) {
+      nextState = clearVisibleMiniGameState(nextState);
+    } else if (isMiniGameSessionFinished(nextState)) {
       nextState = clearVisibleMiniGameState(nextState);
     }
     const existingMessages = conversationMessages();
@@ -6465,7 +6466,7 @@ function createToonflowStore() {
             eventType: result.narrativePlan?.eventType,narrativePlan: result.narrativePlan
           });
         }
-        await streamSessionPlan(result.narrativePlan, [...state.messages]);
+        await streamSessionPlan(result.narrativePlan as DebugNarrativePlan, [...state.messages]);
         return;  // 不清除面板，不继续常规流程
       }
       // 没有编排计划：正常处理
@@ -6658,6 +6659,7 @@ function createToonflowStore() {
     orchestration: SessionOrchestrationResult,
     historyMessages: MessageItem[],
   ) {
+    const plan = orchestration.plan;
     if (!state.currentSessionId || !plan) return;
     const streamingMessage = createStreamingMessage(plan, historyMessages.length + 1);
     let accumulated = "";
@@ -6799,13 +6801,13 @@ function createToonflowStore() {
           break;
         }
         if (shouldStreamPlan) {
-          await streamSessionPlan(orchestration, history);
+          await streamSessionPlan(orchestration.plan as DebugNarrativePlan, history);
         }
         const afterCount = conversationMessages().length;
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
         const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
-        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !plan) {
+        if (afterCount > beforeCount || canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
           advanced = true;
           break;
         }
