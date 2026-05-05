@@ -2185,6 +2185,7 @@ function createToonflowStore() {
       ),
     ) as Record<string, unknown>;
     if (isMiniGameSessionFinished(nextState)) {
+       WebDebugLogUtil.log("[aiGame][miniGame] applySessionStoryInfoResult MiniGameSessionFinished");
       nextState = clearVisibleMiniGameState(nextState);
     }
     if (state.sessionAwaitUserPending && state.sessionAwaitUserSessionId === String(state.currentSessionId || "").trim()) {
@@ -2455,8 +2456,10 @@ function createToonflowStore() {
     ].filter(Boolean) as MessageItem[];
     const shouldForceClearMiniGame = options?.forceClearMiniGame === true || shouldForceClearMiniGameStateFromMessages(incoming);
     if (shouldForceClearMiniGame) {
+      WebDebugLogUtil.log("[aiGame][miniGame] shouldForceClearMiniGame");
       nextState = clearVisibleMiniGameState(nextState);
     } else if (isMiniGameSessionFinished(nextState)) {
+      WebDebugLogUtil.log("[aiGame][miniGame] isMiniGameSessionFinished");
       nextState = clearVisibleMiniGameState(nextState);
     }
     const existingMessages = conversationMessages();
