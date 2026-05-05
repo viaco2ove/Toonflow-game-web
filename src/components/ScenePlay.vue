@@ -1779,18 +1779,23 @@ watch(
     }
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
     let status = runtimeMessageStatus(latest);
+    // 小游戏模式下，即使 canPlayerSpeak 为 true，也不应该阻止自动推进，
+    // 因为战斗中旁白/敌方回合后还需要继续编排下一轮。
+    const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+    const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
+    const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
     if (latest.roleType === "player" && (canPlayerSpeak.value || status !== "waiting_next")) {
       return;
     }
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
     if (!debugAutoAdvancing.value && status === "auto_advancing") {
-      status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
+      status = (canPlayerSpeak.value && !miniGameShouldContinue) ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
-    if (canPlayerSpeak.value) {
+    if (canPlayerSpeak.value && !miniGameShouldContinue) {
       return;
     }
     if (status !== "waiting_next") {
@@ -1886,7 +1891,11 @@ watch(
     }
     const status = runtimeMessageStatus(latest);
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 小游戏模式下，旁白/敌方回合的消息不应被 canPlayerSpeak 强制覆盖为 waiting_player
+    const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+    const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
+    const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
@@ -2217,13 +2226,18 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
     await sleep(180);
     return;
   }
+  // 小游戏模式下，旁白/敌方回合应保持 waiting_next 以触发自动推进
+  const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+  const isMiniGameMsg = String(currentMessage.eventType || "").includes("on_mini_game") && String(currentMessage.eventType || "") !== "on_mini_game_finish";
+  const miniGameContinue = isMiniGameActive && isMiniGameMsg;
+  const nextStatusAfterVoice = (canPlayerSpeak.value && !miniGameContinue) ? "waiting_player" : "waiting_next";
   if (!autoVoice.value) {
-    store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     await sleep(estimateRevealDelayMs(messageDisplayContent(currentMessage)));
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
-    store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     await sleep(260);
     return;
   }
@@ -2231,7 +2245,7 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
   store.setRuntimeMessageStatus(currentMessage.id, "voicing");
   const played = await playMessageAudio(currentMessage, false, true);
   if (isCancelled()) return;
-  store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+  store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
   await sleep(played ? 260 : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
 }
 

@@ -1865,7 +1865,11 @@ function createToonflowStore() {
     if (isStreamingRuntimeMessage(latest)) return;
     const turnState = runtimeTurnStateRecord();
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false || isRuntimeReplyPromptMessage(latest);
-    const nextStatus: RuntimeLineStatus = canPlayerSpeakNow ? "waiting_player" : "waiting_next";
+    // 小游戏模式下，旁白/敌方回合的消息即使 canPlayerSpeak 为 true，也应保持 waiting_next，
+    // 确保自动推进能继续触发下一轮编排（敌方回合等）。
+    const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
+    const miniGameShouldContinue = hasActiveMiniGameInCurrentSession() && isMiniGameMessage;
+    const nextStatus: RuntimeLineStatus = (canPlayerSpeakNow && !miniGameShouldContinue) ? "waiting_player" : "waiting_next";
     if (state.sessionDetail?.state && typeof state.sessionDetail.state === "object" && !Array.isArray(state.sessionDetail.state)) {
       const sessionState = state.sessionDetail.state as Record<string, unknown>;
       const nextTurnState = asMiniRecord(sessionState.turnState);
@@ -7095,6 +7099,7 @@ function createToonflowStore() {
     continueDebugNarrative,
     continueSessionNarrative,
     sessionCanPlayerSpeak,
+    hasActiveMiniGameInCurrentSession,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
     retryFailedPlayerMessage,
