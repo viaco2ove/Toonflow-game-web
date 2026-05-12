@@ -4855,6 +4855,19 @@ textarea::-webkit-scrollbar-thumb {
   font-weight: 800;
 }
 
+.play-mini-game-panel__summary {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+
+.play-mini-game-panel__summary-item {
+  color: rgba(213, 235, 255, 0.78);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .play-mini-game-panel__state {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

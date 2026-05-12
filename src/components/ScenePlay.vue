@@ -1207,10 +1207,9 @@ const battleEnemies = computed(() => {
   if (!game || game.gameType !== "battle") return [];
   return battleEnemiesFromMiniGame(game.publicState);
 });
-watch(() => activeMiniGame.value?.gameType || "", (gameType) => {
-  // 战斗等强状态小游戏仍默认展开。
-  // 修炼和任务都会先给出文字说明或等待用户输入，默认收起能避免面板一出现就遮住关键对话。
-  miniGamePanelExpanded.value = Boolean(gameType) && gameType !== "cultivation" && gameType !== "task";
+watch(() => activeMiniGame.value?.gameType || "", () => {
+  // 小游戏面板默认折叠，用户手动点击"展开"才显示。
+  miniGamePanelExpanded.value = false;
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
@@ -2246,7 +2245,11 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
   const played = await playMessageAudio(currentMessage, false, true);
   if (isCancelled()) return;
   store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
-  await sleep(played ? 260 : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
+  // 小游戏模式下，旁白语音播放完后需要额外等待一段时间，
+  // 确保语音完全播放完后再触发下一轮编排，避免旁白和陪练回合打架。
+  // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
+  const miniGameExtraWait = 260;
+  await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
 }
 
 function stopRuntimeVoicePlayback() {
@@ -3889,6 +3892,11 @@ onBeforeUnmount(() => {
           <button type="button" class="play-mini-game-panel__status" @click="miniGamePanelExpanded = !miniGamePanelExpanded">
             {{ miniGamePanelExpanded ? "收起" : "展开" }}
           </button>
+        </div>
+        <div v-if="miniGameSummaryItems.length" class="play-mini-game-panel__summary">
+          <span v-for="(item, idx) in miniGameSummaryItems.slice(0, 2)" :key="item.key" class="play-mini-game-panel__summary-item">
+            {{ item.key }}: {{ item.value }}
+          </span>
         </div>
         <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
         <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">

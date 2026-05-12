@@ -1021,6 +1021,10 @@ function createToonflowStore() {
     debugLoading: false,
     debugLoadingStage: "",
     messageReactions: safeJsonParse(storageGet("toonflow.messageReactions", "{}"), {} as Record<string, string>),
+    // 小游戏模式语音等待：记录上一句台词落库时间戳，用于等待语音播放完成后再继续编排
+    miniGameVoiceWaitEnd: 0 as number,
+    // 小游戏模式最小语音等待时间（秒），从后端 storyInfo 获取，默认3秒
+    miniGameAudioProxyMinSec: 3 as number,
   });
   let runtimeRetryTask: RuntimeRetryTask | null = null;
   let runtimeRetrySeed = 0;
@@ -2242,6 +2246,13 @@ function createToonflowStore() {
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
     };
+    // 从 storyInfo 提取小游戏配置（语音等待时间等）
+    // 后端返回 audioProxyMinSec，默认3秒
+    const miniGameAudioProxyMinSec = Number(result.miniGameConfig?.audioProxyMinSec || 3);
+    if (state.miniGameAudioProxyMinSec !== miniGameAudioProxyMinSec) {
+      state.miniGameAudioProxyMinSec = miniGameAudioProxyMinSec;
+      WebDebugLogUtil.log("[aiGame][miniGame] 更新语音等待配置", { miniGameAudioProxyMinSec });
+    }
     state.sessionEndDialog = nextEndDialog;
     state.sessionEndDialogDetail = nextEndDialogDetail;
     if (nextChapter) {
@@ -6677,6 +6688,18 @@ function createToonflowStore() {
       if (hasActiveMiniGameInCurrentSession()) {
         WebDebugLogUtil.log("[aiGame][miniGame]clearPendingSessionOrchestrationPrefetch");
         clearPendingSessionOrchestrationPrefetch();
+        // 设置小游戏语音等待时间，确保旁白语音播放完（或最小等待时间）后再获取下一句台词
+        // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
+        //       没开语音-》台词获取完（最小等待时间3s）-》获取当前台词
+        // 使用后端配置的 audioProxyMinSec（默认3秒）
+        const waitSec = state.miniGameAudioProxyMinSec || 3;
+        const waitMs = waitSec * 1000;
+        state.miniGameVoiceWaitEnd = Date.now() + waitMs;
+        WebDebugLogUtil.log("[aiGame][miniGame] 设置语音等待时间", {
+          waitEnd: state.miniGameVoiceWaitEnd,
+          waitSec,
+          waitMs,
+        });
         return;
       }
       const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
@@ -6879,6 +6902,27 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
+    // 小游戏模式下需要等待语音播放完成（或最小等待时间）后再继续编排
+    // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
+    //       没开语音-》台词获取完（最小等待时间3s）-》获取当前台词
+    if (hasActiveMiniGameInCurrentSession()) {
+      const waitEndTime = state.miniGameVoiceWaitEnd;
+      if (waitEndTime > 0) {
+        const now = Date.now();
+        const remainingMs = waitEndTime - now;
+        // 使用后端配置的 audioProxyMinSec（默认3秒）
+        const waitSec = state.miniGameAudioProxyMinSec || 3;
+        if (remainingMs > 0) {
+          WebDebugLogUtil.log("[aiGame][miniGame] 等待语音播放完成", {
+            waitRemainingMs: remainingMs,
+            waitSec,
+          });
+          await sleep(remainingMs);
+        }
+        // 等待完成后清除标记
+        state.miniGameVoiceWaitEnd = 0;
+      }
+    }
     // 小游戏模式下也允许继续编排，走 /game/orchestration/minigame 接口
     state.runtimeProcessingPending = true;
     try {

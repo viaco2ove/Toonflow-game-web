@@ -381,6 +381,9 @@ export interface StoryInfoResult {
   eventDigestWindowText?: string;
   endDialog?: string | null;
   endDialogDetail?: string | null;
+  miniGameConfig?: {
+    audioProxyMinSec?: number;
+  };
 }
 
 export interface AiTokenUsageLogItem {
