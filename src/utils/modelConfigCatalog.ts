@@ -100,6 +100,12 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     defaults: {},
   },
   {
+    value: "local_modnet",
+    label: "MODNet 本地",
+    website: "https://github.com/ZhengPeng7/BiRefNet",
+    defaults: {},
+  },
+  {
     value: "t8star",
     label: "t8star",
     defaults: {
@@ -229,6 +235,9 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "image" && manufacturer === "local_birefnet") {
     return "birefnet-portrait";
   }
+  if (type === "image" && manufacturer === "local_modnet") {
+    return "modnet-photographic-portrait";
+  }
   if (type === "voice" && manufacturer === "aliyun") {
     return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
   }
@@ -242,6 +251,7 @@ export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind)
   if (type === "voice" && manufacturer === "ai_voice_tts") return false;
   if (type === "text" && manufacturer === "lmstudio") return false;
   if (type === "image" && manufacturer === "local_birefnet") return false;
+  if (type === "image" && manufacturer === "local_modnet") return false;
   return true;
 }
 

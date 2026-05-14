@@ -26,6 +26,12 @@ const confirmNewPassword = ref("");
 const promptDrafts = reactive<Record<string, string>>({});
 const showModelManager = ref(false);
 const activeModelKey = ref<string>("");
+const showMiniGamePrompts = ref(false);
+const showTokenUsageDialog = ref(false);
+const tokenUsageStartTime = ref("");
+const tokenUsageEndTime = ref("");
+const tokenUsageType = ref("");
+const tokenUsageGranularity = ref<"hour" | "day" | "month">("day");
 
 const modelRows = computed(() =>
   store.GAME_MODEL_SLOTS.map((slot) => {
@@ -37,25 +43,54 @@ const modelRows = computed(() =>
       binding,
       recommendation,
       advisory,
+      payloadMode: slot.key === "storyOrchestratorModel" ? store.storyOrchestratorPayloadMode() : null,
       options: store.settingsConfigOptions(slot.configType),
     };
   }),
 );
 
 const storyPrompts = computed(() => store.state.storyPrompts);
+const activeOrchestratorPromptCode = computed(() => (
+  store.storyOrchestratorPayloadMode() === "advanced"
+    ? "story-orchestrator-advanced"
+    : "story-orchestrator-compact"
+));
 const storyPromptRows = computed(() =>
   store.state.storyPrompts.map((prompt) => {
     const meta = storyPromptMeta(prompt.code);
     const isCustom = String(prompt.customValue || "").trim().length > 0;
+    const isCurrentOrchestratorPrompt = prompt.code === activeOrchestratorPromptCode.value;
+    const inactiveOrchestratorPrompt = (
+      prompt.code === "story-orchestrator-compact" || prompt.code === "story-orchestrator-advanced"
+    ) && !isCurrentOrchestratorPrompt;
     return {
       ...prompt,
       meta,
       isCustom,
+      isCurrentOrchestratorPrompt,
+      inactiveOrchestratorPrompt,
       statusLabel: isCustom ? "自定义" : "默认值",
-      tipText: isCustom ? "*当前使用自定义提示词，点击重置将恢复默认值" : "*当前使用默认提示词，编辑后将保存为自定义值",
+      tipText: inactiveOrchestratorPrompt
+        ? "*当前未生效；切换编排师运行模式后才会使用这条提示词"
+        : isCustom
+          ? "*当前使用自定义提示词，点击重置将恢复默认值"
+          : "*当前使用默认值，编辑后将保存为自定义值",
     };
   }),
 );
+const miniGamePromptCodes = new Set([
+  "story-mini-game",
+  "story-mini-game-battle",
+  "story-mini-game-fishing",
+  "story-mini-game-werewolf",
+  "story-mini-game-cultivation",
+  "story-mini-game-mining",
+  "story-mini-game-research-skill",
+  "story-mini-game-alchemy",
+  "story-mini-game-upgrade-equipment",
+]);
+const baseStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => !miniGamePromptCodes.has(prompt.code)));
+const miniGameStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => miniGamePromptCodes.has(prompt.code)));
 const isAdmin = computed(() => store.isAdminAccount());
 
 function syncPromptDrafts() {
@@ -122,6 +157,10 @@ async function applyRecommendedModel(key: string) {
   await store.bindRecommendedGameModel(key);
 }
 
+async function changeStoryOrchestratorPayloadMode(value: string) {
+  await store.saveStoryOrchestratorPayloadMode(value === "advanced" ? "advanced" : "compact");
+}
+
 function onModelManagerConfirmed() {
   activeModelKey.value = "";
 }
@@ -137,6 +176,51 @@ async function resetPrompt(code: string) {
 
 function checkUpdate() {
   store.state.notice = "当前为开发版，暂未接入在线更新";
+}
+
+function formatTokenUsageTime(input: number | string | undefined) {
+  if (typeof input === "number" && Number.isFinite(input) && input > 0) {
+    return new Date(input).toLocaleString();
+  }
+  return String(input || "").trim() || "-";
+}
+
+function formatTokenUsageAmount(amount: number | undefined, currency?: string) {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value) || value <= 0) return `${currency || "CNY"} 0`;
+  return `${currency || "CNY"} ${value.toFixed(6).replace(/\.?0+$/, "")}`;
+}
+
+function stringifyTokenUsageMeta(input: unknown) {
+  if (!input || typeof input !== "object") return "";
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input || "");
+  }
+}
+
+function tokenUsageMetaValue(row: { meta?: Record<string, unknown> | null }, path: string[]) {
+  let current: unknown = row.meta || null;
+  for (const key of path) {
+    if (!current || typeof current !== "object") return "";
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : "";
+}
+
+async function loadTokenUsagePanel() {
+  await store.loadAiTokenUsagePanel({
+    startTime: tokenUsageStartTime.value,
+    endTime: tokenUsageEndTime.value,
+    type: tokenUsageType.value,
+    granularity: tokenUsageGranularity.value,
+  });
+}
+
+async function openTokenUsageDialog() {
+  showTokenUsageDialog.value = true;
+  await loadTokenUsagePanel();
 }
 
 onMounted(async () => {
@@ -191,6 +275,22 @@ watch(
           <div class="settings-model-copy">
             <div class="settings-model-label">{{ row.label }}</div>
             <div class="settings-model-meta">{{ row.binding?.manufacturer || '未绑定' }} {{ row.binding?.model || '' }}</div>
+            <div v-if="row.key === 'storyOrchestratorModel'" class="settings-model-inline-option">
+              <span class="settings-model-inline-label">运行模式</span>
+              <select
+                class="input settings-model-inline-select"
+                :value="row.payloadMode || 'compact'"
+                @change="changeStoryOrchestratorPayloadMode(String(($event.target as HTMLSelectElement | null)?.value || 'compact'))"
+              >
+                <option
+                  v-for="item in store.STORY_ORCHESTRATOR_PAYLOAD_OPTIONS"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
             <div
               v-if="row.recommendation"
               class="settings-model-recommend"
@@ -224,12 +324,24 @@ watch(
 
     <section v-if="store.state.token && isAdmin" class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">提示词配置</div>
+      <div class="settings-action-row settings-mini-game-agent-row">
+        <button class="button settings-outline-btn" type="button" @click="showMiniGamePrompts = !showMiniGamePrompts">
+          小游戏Agent
+        </button>
+      </div>
       <div class="settings-prompt-list">
-        <div v-for="prompt in storyPromptRows" :key="prompt.code" class="settings-prompt-card">
+        <div v-for="prompt in baseStoryPromptRows" :key="prompt.code" class="settings-prompt-card">
           <div class="settings-prompt-head">
             <div class="settings-prompt-heading">
               <div class="settings-prompt-title">{{ prompt.name || prompt.code }}</div>
               <span class="settings-prompt-status" :class="{ custom: prompt.isCustom }">{{ prompt.statusLabel }}</span>
+              <span
+                v-if="prompt.code === 'story-orchestrator-compact' || prompt.code === 'story-orchestrator-advanced'"
+                class="settings-prompt-status"
+                :class="{ custom: prompt.isCurrentOrchestratorPrompt }"
+              >
+                {{ prompt.isCurrentOrchestratorPrompt ? '当前生效' : '未生效' }}
+              </span>
             </div>
             <div class="settings-prompt-actions">
               <button class="button small settings-prompt-secondary-btn" type="button" @click="resetPrompt(prompt.code)">重置提示词</button>
@@ -250,6 +362,34 @@ watch(
           />
           <div class="settings-prompt-tip">{{ prompt.tipText }}</div>
         </div>
+        <div v-if="showMiniGamePrompts" class="settings-mini-game-prompt-group">
+          <div class="settings-mini-game-prompt-title">小游戏Agent 提示词</div>
+          <div v-for="prompt in miniGameStoryPromptRows" :key="prompt.code" class="settings-prompt-card">
+            <div class="settings-prompt-head">
+              <div class="settings-prompt-heading">
+                <div class="settings-prompt-title">{{ prompt.name || prompt.code }}</div>
+                <span class="settings-prompt-status" :class="{ custom: prompt.isCustom }">{{ prompt.statusLabel }}</span>
+              </div>
+              <div class="settings-prompt-actions">
+                <button class="button small settings-prompt-secondary-btn" type="button" @click="resetPrompt(prompt.code)">重置提示词</button>
+                <button class="button small settings-solid-btn settings-prompt-save-btn" type="button" @click="savePrompt(prompt.code)">保存</button>
+              </div>
+            </div>
+            <div class="settings-prompt-inline-meta">
+              <span class="settings-prompt-pill settings-prompt-pill--label">Agent</span>
+              <span class="settings-prompt-pill settings-prompt-pill--value">{{ prompt.meta.agentLabel }}</span>
+              <span class="settings-prompt-pill settings-prompt-pill--label">TS</span>
+              <span class="settings-prompt-pill settings-prompt-pill--value settings-prompt-pill--path">{{ prompt.meta.tsLabel }}</span>
+            </div>
+            <textarea
+              v-model="promptDrafts[prompt.code]"
+              class="input settings-prompt-textarea"
+              rows="6"
+              :placeholder="prompt.defaultValue || '请输入提示词'"
+            />
+            <div class="settings-prompt-tip">{{ prompt.tipText }}</div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -261,6 +401,7 @@ watch(
     <section class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">其他</div>
       <div class="settings-action-row">
+        <button v-if="store.state.token" class="button settings-outline-btn" type="button" @click="openTokenUsageDialog">token消耗</button>
         <button class="button settings-outline-btn" type="button" @click="checkUpdate">检查更新</button>
       </div>
     </section>
@@ -341,7 +482,7 @@ watch(
         </template>
       </div>
       <div class="modal-footer">
-        <button class="button primary settings-solid-btn" type="button" @click="submitAccountDialog">
+        <button class="button primary settings-solid-btn settings-solid-btn-login" type="button" @click="submitAccountDialog">
           {{ accountDialogMode === 'login' ? '登录' : accountDialogMode === 'register' ? '注册' : '确认修改' }}
         </button>
       </div>
@@ -357,4 +498,82 @@ watch(
     :selected-id="store.settingsModelBinding(activeModelKey)?.configId || null"
     @confirmed="onModelManagerConfirmed"
   />
+
+  <div v-if="showTokenUsageDialog" class="modal-backdrop" @click.self="showTokenUsageDialog = false">
+    <section class="modal-panel settings-account-modal">
+      <div class="modal-header settings-modal-header">
+        <div class="modal-title">token消耗</div>
+        <button class="icon-btn settings-close-x" type="button" aria-label="关闭" @click="showTokenUsageDialog = false">×</button>
+      </div>
+      <div class="modal-body settings-account-body">
+        <div class="field">
+          <label>开始时间</label>
+          <input v-model="tokenUsageStartTime" class="input" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label>结束时间</label>
+          <input v-model="tokenUsageEndTime" class="input" type="datetime-local" />
+        </div>
+        <div class="field">
+          <label>业务类型</label>
+          <input v-model="tokenUsageType" class="input" type="text" placeholder="如：编排师 / 角色发言 / 记忆管理" />
+        </div>
+        <div class="field">
+          <label>统计类型</label>
+          <select v-model="tokenUsageGranularity" class="input">
+            <option value="hour">按时</option>
+            <option value="day">按日</option>
+            <option value="month">按月</option>
+          </select>
+        </div>
+        <div class="settings-action-row">
+          <button class="button primary settings-solid-btn" type="button" @click="loadTokenUsagePanel">
+            {{ store.state.settingsTokenUsageLoading ? '加载中...' : '查询' }}
+          </button>
+        </div>
+        <div class="section-title settings-section-title">日志明细</div>
+        <div class="subtle" v-if="!store.state.settingsTokenUsageLogs.length">暂无 token 消耗日志</div>
+        <div v-for="row in store.state.settingsTokenUsageLogs" :key="row.id" class="surface section-block settings-card settings-card--plain">
+          <div><strong>时间：</strong>{{ formatTokenUsageTime(row.createTime) }}</div>
+          <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
+          <div><strong>模型：</strong>{{ row.model || '-' }}</div>
+          <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
+          <div><strong>输入 tokens：</strong>{{ row.inputTokens || 0 }}</div>
+          <div><strong>输出 tokens：</strong>{{ row.outputTokens || 0 }}</div>
+          <div><strong>推理 tokens：</strong>{{ row.reasoningTokens || 0 }}</div>
+          <div><strong>缓存读取 tokens：</strong>{{ row.cacheReadTokens || 0 }}</div>
+          <div><strong>总 tokens：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
+          <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
+          <div><strong>推理强度：</strong>{{ tokenUsageMetaValue(row, ['reasoningEffort']) || '-' }}</div>
+          <div><strong>阶段：</strong>{{ tokenUsageMetaValue(row, ['stage']) || '-' }}</div>
+          <details v-if="row.meta" class="settings-token-meta">
+            <summary>查看调用审计</summary>
+            <div class="subtle">这里包含请求提示词快照、返回内容快照和 usage 拆分。</div>
+            <pre class="settings-token-meta-pre">{{ stringifyTokenUsageMeta(row.meta) }}</pre>
+          </details>
+        </div>
+        <div class="section-title settings-section-title">统计</div>
+        <div class="subtle" v-if="!store.state.settingsTokenUsageStats.length">暂无 token 统计数据</div>
+        <div
+          v-for="row in store.state.settingsTokenUsageStats"
+          :key="`${row.bucketTime}-${row.type}-${row.model}-${row.channel}`"
+          class="surface section-block settings-card settings-card--plain"
+        >
+          <div><strong>时间：</strong>{{ formatTokenUsageTime(row.bucketTime) }}</div>
+          <div><strong>业务类型：</strong>{{ row.type || '-' }}</div>
+          <div><strong>模型：</strong>{{ row.model || '-' }}</div>
+          <div><strong>渠道：</strong>{{ row.channel || row.manufacturer || '-' }}</div>
+          <div><strong>输入 tokens：</strong>{{ row.inputTokens || 0 }}</div>
+          <div><strong>输出 tokens：</strong>{{ row.outputTokens || 0 }}</div>
+          <div><strong>推理 tokens：</strong>{{ row.reasoningTokens || 0 }}</div>
+          <div><strong>缓存读取 tokens：</strong>{{ row.cacheReadTokens || 0 }}</div>
+          <div><strong>总 tokens：</strong>{{ row.totalTokens || 0 }}</div>
+          <div><strong>调用次数：</strong>{{ row.callCount || 0 }}</div>
+          <div><strong>金额：</strong>{{ formatTokenUsageAmount(row.amount, row.currency) }}</div>
+          <div><strong>备注：</strong>{{ row.remark || '-' }}</div>
+        </div>
+      </div>
+    </section>
+  </div>
 </template>

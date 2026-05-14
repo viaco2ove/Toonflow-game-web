@@ -11,14 +11,9 @@ const store = useToonflowStore();
 
 const drafts = computed(() => store.draftWorldsForSelectedProject());
 const published = computed(() => store.publishedWorldsForSelectedProject());
-const projectNameSet = computed(() => {
-  const names = store.state.projects.map((item) => String(item.name || "").trim()).filter(Boolean);
-  const cached = String(store.state.selectedProjectNameCache || "").trim();
-  if (cached) names.push(cached);
-  return new Set(names);
-});
-const visibleDrafts = computed(() => drafts.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
-const visiblePublished = computed(() => published.value.filter((world) => !projectNameSet.value.has(String(world.name || "").trim())));
+// “我的”页应该展示真实存在的草稿/已发布故事，不能因为名称刚好与项目名重复就被隐藏。
+const visibleDrafts = computed(() => drafts.value);
+const visiblePublished = computed(() => published.value);
 const latestDraft = computed(() => visibleDrafts.value[0] || null);
 const worksCount = computed(() => visiblePublished.value.length);
 const likeCount = computed(() => visiblePublished.value.reduce((sum, world) => sum + Number(world.sessionCount || 0), 0));
@@ -35,6 +30,7 @@ const draftMenuWorld = ref<WorldItem | null>(null);
 const accountDialogTitle = computed(() => "创建角色");
 const accountDialogPrompt = computed(() => (store.state.userName ? `${store.state.userName} 的账号头像` : "账号头像"));
 const accountAvatarProcessing = computed(() => store.isAvatarProcessing("account"));
+const accountAvatarProcessingText = computed(() => store.avatarProcessingMessage("account") || "头像处理中...");
 
 async function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -123,6 +119,14 @@ async function editDraft(world: WorldItem) {
   await store.openWorldForEdit(world);
 }
 
+/**
+ * 复制发布故事为新的草稿副本，并关闭弹层保持页面聚焦到编辑态。
+ */
+async function copyPublishedWorld(world: WorldItem) {
+  closeDraftMenu();
+  await store.copyWorldAsDraft(world);
+}
+
 function openDraftMenu(world: WorldItem) {
   draftMenuWorld.value = world;
 }
@@ -195,6 +199,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
       <input ref="avatarVideoInput" type="file" accept="video/mp4" hidden @change="onAvatarVideoFile" />
       <div class="my-profile-meta">
         <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>
+        <div v-if="accountAvatarProcessing" class="my-avatar-processing-text">{{ accountAvatarProcessingText }}</div>
         <div class="subtle">用户ID：{{ store.state.userId || 0 }}</div>
         <div class="my-profile-stats">
           <div class="my-stat">
@@ -266,8 +271,9 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
               {{ store.worldPublishStatusLabel(world) }}
             </span>
           </div>
-          <div class="my-work-actions one">
+          <div class="my-work-actions">
             <button class="button small" type="button" @click="store.reopenPublishedWorldAsDraft(world)">编辑</button>
+            <button class="button small" type="button" @click="copyPublishedWorld(world)">复制</button>
           </div>
         </div>
       </article>

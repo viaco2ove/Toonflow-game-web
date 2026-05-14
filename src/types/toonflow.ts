@@ -16,6 +16,8 @@ export interface RoleParameterCard {
   gender?: string;
   age?: number | null;
   level?: number | null;
+  exp?: number | null;
+  next_level_exp?: number | null;
   level_desc?: string;
   personality?: string;
   appearance?: string;
@@ -27,6 +29,16 @@ export interface RoleParameterCard {
   mp?: number;
   money?: number;
   other?: string[];
+  executing_task?: {
+    title?: string;
+    category?: string;
+    objective?: string;
+    process?: string[];
+    successConditions?: string[];
+    failureConditions?: string[];
+    status?: string;
+    summary?: string;
+  } | null;
 }
 
 export interface VoiceMixItem {
@@ -57,6 +69,7 @@ export interface StoryRole {
 export interface VoiceBindingDraft {
   label: string;
   configId?: number | null;
+  roleId?: string;
   presetId: string;
   mode: string;
   referenceAudioPath?: string;
@@ -66,6 +79,26 @@ export interface VoiceBindingDraft {
   mixVoices?: VoiceMixItem[];
 }
 
+export interface ImportableRoleListItem {
+  sourceWorldId: number;
+  sourceWorldName: string;
+  sourceWorldCoverPath?: string;
+  role: StoryRole;
+}
+
+export interface ImportableRoleListResult {
+  items: ImportableRoleListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface ImportWorldRoleResult {
+  role: StoryRole;
+  sourceWorldId: number;
+  sourceWorldName: string;
+}
+
 export interface ChapterExtra {
   chapterId?: number | null;
   sort?: number;
@@ -73,6 +106,7 @@ export interface ChapterExtra {
   openingLine?: string;
   background?: string;
   music?: string;
+  musicAutoPlay?: boolean;
   conditionVisible?: boolean;
 }
 
@@ -124,7 +158,9 @@ export interface ChapterItem {
   openingRole?: string;
   openingText?: string;
   bgmPath?: string;
+  bgmAutoPlay?: boolean;
   showCompletionCondition?: boolean;
+  runtimeOutline?: unknown;
 }
 
 export interface MessageItem {
@@ -135,6 +171,22 @@ export interface MessageItem {
   content: string;
   createTime?: number;
   meta?: unknown;
+  revisitData?: unknown;
+}
+
+export interface RuntimeEventDigestItem {
+  eventIndex?: number;
+  eventKind?: string;
+  eventFlowType?: string;
+  eventSummary?: string;
+  eventFacts?: string[];
+  eventStatus?: string;
+  summarySource?: string;
+  memorySummary?: string;
+  memoryFacts?: string[];
+  updateTime?: number;
+  allowedRoles?: string[];
+  userNodeId?: string;
 }
 
 export interface RuntimeRetryMessageMeta {
@@ -157,18 +209,26 @@ export interface SessionItem {
   status?: string;
   updateTime?: number;
   latestMessage?: MessageItem | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionDetail {
   sessionId?: string;
   title?: string;
   status?: string;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
   chapterId?: number | null;
   state?: Record<string, unknown> | null;
   world?: WorldItem | null;
   chapter?: ChapterItem | null;
   messages?: MessageItem[];
   latestSnapshot?: { state?: Record<string, unknown> | null } | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionNarrativeResult {
@@ -184,15 +244,37 @@ export interface SessionNarrativeResult {
   narrativePlan?: DebugNarrativePlan | null;
   snapshotSaved?: boolean;
   snapshotReason?: string;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface SessionOrchestrationResult {
+  role?: string;
+  roleType?: string;
+  motive?: string;
   sessionId: string;
   status: string;
   chapterId?: number | null;
   expectedRole?: string;
   expectedRoleType?: string;
   plan?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface InitChapterResult {
+  sessionId: string;
+  status: string;
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  chapter?: ChapterItem | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
 }
 
 export interface DebugStepResult {
@@ -200,7 +282,20 @@ export interface DebugStepResult {
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
+  endDialogDetail?: string | null;
   messages?: MessageItem[];
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface OrchestratorRuntimeMeta {
+  modelKey?: string;
+  manufacturer?: string;
+  model?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
+  payloadMode?: "compact" | "advanced";
+  payloadModeSource?: "explicit" | "inferred";
 }
 
 export interface DebugNarrativePlan {
@@ -210,20 +305,123 @@ export interface DebugNarrativePlan {
   awaitUser?: boolean;
   nextRole?: string;
   nextRoleType?: string;
-  chapterOutcome?: "continue" | "success" | "failed";
-  nextChapterId?: number | null;
   source?: "ai" | "fallback";
+  planSource?: string;
   triggerMemoryAgent?: boolean;
   eventType?: string;
   presetContent?: string | null;
+  orchestratorRuntime?: OrchestratorRuntimeMeta | null;
 }
 
 export interface DebugOrchestrationResult {
+  role?: string;
+  roleType?: string;
+  motive?: string;
   chapterId: number | null;
   chapterTitle?: string;
   state?: Record<string, unknown> | null;
   endDialog?: string | null;
+  endDialogDetail?: string | null;
   plan?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface DebugInitResult {
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+export interface DebugRevisitResult {
+  state?: Record<string, unknown> | null;
+  messages?: MessageItem[];
+  round?: number;
+  chapterId?: number | null;
+  messageCount?: number;
+}
+
+export interface StoryInitResult {
+  sessionId: string;
+  worldId: number;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  opening?: DebugNarrativePlan | null;
+  firstChapter?: DebugNarrativePlan | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+}
+
+/**
+ * 故事运行信息接口的统一返回。
+ *
+ * 用途：
+ * - 承载“故事设定 / 当前章节事件 / 调试锚点”等非台词数据；
+ * - 让 orchestration 和 streamlines 回到各自职责，不再夹带整份运行态。
+ */
+export interface StoryInfoResult {
+  worldId: number;
+  status?: string;
+  chapterId: number | null;
+  chapterTitle?: string;
+  state?: Record<string, unknown> | null;
+  world?: WorldItem | null;
+  chapter?: ChapterItem | null;
+  currentEventDigest?: RuntimeEventDigestItem | null;
+  eventDigestWindow?: RuntimeEventDigestItem[];
+  eventDigestWindowText?: string;
+  endDialog?: string | null;
+  endDialogDetail?: string | null;
+  miniGameConfig?: {
+    audioProxyMinSec?: number;
+  };
+}
+
+export interface AiTokenUsageLogItem {
+  id: number;
+  createTime: number;
+  type: string;
+  manufacturer?: string;
+  model?: string;
+  channel?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  totalTokens?: number;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  amount?: number;
+  currency?: string;
+  remark?: string;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface AiTokenUsageStatsItem {
+  bucketTime: string;
+  type: string;
+  manufacturer?: string;
+  model?: string;
+  channel?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cacheReadTokens?: number;
+  totalTokens?: number;
+  amount?: number;
+  currency?: string;
+  callCount?: number;
+  remark?: string;
 }
 
 export interface StreamLinesEvent {
@@ -241,18 +439,22 @@ export interface SeparatedRoleImageResult {
   foregroundFilePath?: string;
   backgroundPath?: string;
   backgroundFilePath?: string;
+  foregroundExt?: string;
 }
 
 export interface RoleAvatarTaskResult {
   taskId: number;
+  jobId?: number;
   status: string;
   progress?: number;
+  queuePosition?: number;
   message?: string;
   errorMessage?: string;
   foregroundPath?: string;
   foregroundFilePath?: string;
   backgroundPath?: string;
   backgroundFilePath?: string;
+  foregroundExt?: string;
 }
 
 export interface VoiceModelConfig {
@@ -263,6 +465,10 @@ export interface VoiceModelConfig {
   manufacturer?: string;
   baseUrl?: string;
   apiKey?: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
   modes?: string[];
   createTime?: number;
 }
@@ -288,6 +494,11 @@ export interface ModelConfigItem {
   manufacturer?: string;
   baseUrl?: string;
   apiKey?: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
   createTime?: number;
 }
 
@@ -299,6 +510,11 @@ export interface ModelConfigPayload {
   manufacturer: string;
   baseUrl: string;
   apiKey: string;
+  inputPricePer1M?: number;
+  outputPricePer1M?: number;
+  cacheReadPricePer1M?: number;
+  currency?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 
 export interface ModelTestResult {
@@ -322,6 +538,7 @@ export interface AiModelMapItem {
   configId?: number | null;
   model?: string | null;
   manufacturer?: string | null;
+  payloadMode?: "compact" | "advanced" | null;
 }
 
 export interface AiModelOptionItem {
@@ -330,6 +547,10 @@ export interface AiModelOptionItem {
 }
 
 export type AiModelListMap = Record<string, AiModelOptionItem[]>;
+
+export interface StoryRuntimeConfig {
+  storyOrchestratorPayloadMode: "compact" | "advanced";
+}
 
 export interface PromptItem {
   id: number;
@@ -436,6 +657,8 @@ export function createEmptyChapter(sort = 1): ChapterItem {
     openingRole: "旁白",
     openingText: "",
     bgmPath: "",
+    bgmAutoPlay: true,
     showCompletionCondition: true,
+    runtimeOutline: null,
   };
 }

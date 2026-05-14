@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, RoleParameterCard, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
+import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
 const store = useToonflowStore();
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
@@ -11,7 +12,11 @@ const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
 const RUNTIME_VOICE_CACHE_LIMIT = 60;
 const RUNTIME_CHAT_STORAGE_KEY = "toonflow.chat";
 const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
+const statePreviewExpanded = ref(false);
+const runtimeEventWindowExpanded = ref(false);
+const miniGamePanelExpanded = ref(false);
 const messages = computed(() => store.state.messages);
+const pendingDotTick = ref(0);
 const session = computed(() => store.state.sessionDetail);
 const currentWorld = computed(() => session.value?.world || null);
 const debugChapterIndex = computed(() => store.getDebugChapterIndex());
@@ -30,14 +35,30 @@ const currentChapter = computed(() => {
   }
   const activeChapterId = runtimeChapterId.value;
   const sessionChapter = session.value?.chapter || null;
+  const matchedChapter = activeChapterId
+    ? store.state.chapters.find((item) => Number(item.id || 0) === activeChapterId) || null
+    : null;
   if (activeChapterId && Number(sessionChapter?.id || 0) === activeChapterId) {
-    return sessionChapter;
+    return matchedChapter
+      ? {
+        ...matchedChapter,
+        ...sessionChapter,
+        completionCondition: sessionChapter.completionCondition ?? matchedChapter.completionCondition,
+        showCompletionCondition: sessionChapter.showCompletionCondition ?? matchedChapter.showCompletionCondition,
+        runtimeOutline: sessionChapter.runtimeOutline ?? matchedChapter.runtimeOutline,
+      }
+      : sessionChapter;
   }
   if (activeChapterId) {
-    const matched = store.state.chapters.find((item) => Number(item.id || 0) === activeChapterId);
-    if (matched) return matched;
+    if (matchedChapter) return matchedChapter;
   }
   return sessionChapter;
+});
+// 章节背景音乐独立于角色发言语音，只有作者显式勾选自动播放时才会按当前章节的 bgmPath 循环播放。
+const currentChapterBgmUrl = computed(() => {
+  if (currentChapter.value?.bgmAutoPlay === false) return "";
+  const bgmPath = scalarText(currentChapter.value?.bgmPath || "");
+  return bgmPath ? store.resolveMediaPath(bgmPath) : "";
 });
 const debugChapter = computed(() => store.state.chapters[debugChapterIndex.value] || null);
 
@@ -51,6 +72,20 @@ type RuntimeChatTraceRow = {
   nextRole: string;
   nextRoleType: string;
   updateTime: number;
+};
+
+type RuntimeBattleEnemyView = {
+  enemyId: string;
+  name: string;
+  description: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  avatarPath: string;
+  avatarBgPath: string;
+  isRoleEnemy: boolean;
 };
 function asMiniRecord(input: unknown): Record<string, unknown> {
   if (typeof input === "object" && input !== null && !Array.isArray(input)) {
@@ -69,6 +104,120 @@ function scalarText(input: unknown): string {
   return text;
 }
 
+function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | null {
+  const raw = asMiniRecord(input);
+  if (!Object.keys(raw).length) return null;
+  const eventFacts = asMiniArray(raw.eventFacts).map((item) => scalarText(item)).filter(Boolean);
+  const memoryFacts = asMiniArray(raw.memoryFacts).map((item) => scalarText(item)).filter(Boolean);
+  const allowedRoles = asMiniArray(raw.allowedRoles).map((item) => scalarText(item)).filter(Boolean);
+  return {
+    eventIndex: Number(raw.eventIndex || 0) || 0,
+    eventKind: scalarText(raw.eventKind),
+    eventFlowType: scalarText(raw.eventFlowType),
+    eventSummary: scalarText(raw.eventSummary),
+    eventFacts,
+    eventStatus: scalarText(raw.eventStatus),
+    summarySource: scalarText(raw.summarySource),
+    memorySummary: scalarText(raw.memorySummary),
+    memoryFacts,
+    updateTime: Number(raw.updateTime || 0) || 0,
+    allowedRoles,
+    userNodeId: scalarText(raw.userNodeId),
+  };
+}
+
+function runtimeEventStatusLabel(input: unknown): string {
+  const status = scalarText(input);
+  if (status === "completed") return "已完成";
+  if (status === "waiting_input") return "等待用户";
+  if (status === "active") return "进行中";
+  if (status === "idle") return "未开始";
+  return status || "未开始";
+}
+
+function runtimeEventKindLabel(input: unknown): string {
+  const kind = scalarText(input);
+  if (kind === "opening") return "开场";
+  if (kind === "user") return "用户互动";
+  if (kind === "fixed") return "固定事件";
+  if (kind === "scene") return "场景事件";
+  if (kind === "ending") return "结束事件";
+  return kind || "事件";
+}
+
+function runtimeEventFlowLabel(item: RuntimeEventDigestItem | null | undefined): string {
+  const flowType = scalarText(item?.eventFlowType).toLowerCase();
+  if (flowType === "introduction") return "开场白";
+  if (flowType === "chapter_ending_check") return "结束条件检查";
+  if (flowType === "free_runtime") return "自由剧情";
+  if (flowType === "chapter_content") return "章节内容";
+  const kind = scalarText(item?.eventKind).toLowerCase();
+  if (kind === "opening") return "开场白";
+  if (kind === "ending") return "结束条件检查";
+  if (kind === "fixed") return "固定条件";
+  if (kind === "scene" || kind === "user") return "章节内容";
+  return "章节事件";
+}
+
+function isChapterEventItem(item: RuntimeEventDigestItem | null | undefined): boolean {
+  const flowType = scalarText(item?.eventFlowType).toLowerCase();
+  const kind = scalarText(item?.eventKind).toLowerCase();
+  return flowType !== "introduction" && kind !== "opening";
+}
+
+function splitCompletionConditionText(input: unknown): { successText: string; failureText: string } {
+  const rawText = scalarText(input);
+  if (!rawText) {
+    return { successText: "", failureText: "" };
+  }
+  const matched = rawText.match(/^(.*?)[（(]\s*([^()（）]+?)\s*[)）]\s*$/);
+  if (!matched) {
+    return { successText: rawText, failureText: "" };
+  }
+  const successText = scalarText(matched[1]);
+  const failureText = scalarText(matched[2]);
+  if (!successText || !failureText || !/失败|fail|failed|failure/i.test(failureText)) {
+    return { successText: rawText, failureText: "" };
+  }
+  return { successText, failureText };
+}
+
+function buildEndingOutlineSummary(input: {
+  completionCondition: unknown;
+  fixedEvents: Array<Record<string, unknown>>;
+}): string {
+  const completionText = scalarText(input.completionCondition);
+  if (completionText) {
+    return `结束条件：${completionText}`;
+  }
+  const labels = input.fixedEvents.map((item) => scalarText(item.label)).filter(Boolean);
+  return labels.length ? `结束条件：${labels.join("；")}` : "结束条件检查";
+}
+
+function buildEndingOutlineFacts(fixedEvents: Array<Record<string, unknown>>): string[] {
+  const labels = fixedEvents.map((item) => scalarText(item.label)).filter(Boolean);
+  if (!labels.length) return [];
+  return labels.map((label, index) => `${index === 0 ? "成功条件" : "失败条件"}：${label}`);
+}
+
+function normalizeOrchestratorRuntime(input: unknown): OrchestratorRuntimeMeta | null {
+  const raw = asMiniRecord(input);
+  if (!Object.keys(raw).length) return null;
+  const payloadMode = scalarText(raw.payloadMode).toLowerCase();
+  const payloadModeSource = scalarText(raw.payloadModeSource).toLowerCase();
+  const reasoningEffort = scalarText(raw.reasoningEffort).toLowerCase();
+  return {
+    modelKey: scalarText(raw.modelKey),
+    manufacturer: scalarText(raw.manufacturer),
+    model: scalarText(raw.model),
+    reasoningEffort: reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
+      ? reasoningEffort
+      : "",
+    payloadMode: payloadMode === "advanced" ? "advanced" : "compact",
+    payloadModeSource: payloadModeSource === "explicit" ? "explicit" : "inferred",
+  };
+}
+
 function readPlayAutoVoicePreference(): boolean {
   if (typeof window === "undefined") return true;
   return window.localStorage.getItem(PLAY_AUTO_VOICE_STORAGE_KEY) !== "0";
@@ -79,6 +228,20 @@ const failedSessionStatuses = new Set(["failed", "dead", "lose", "loss"]);
 
 function sessionStatusKey(input: unknown): string {
   return scalarText(input).toLowerCase();
+}
+
+/**
+ * 切换“故事设定”里的原始状态快照展开状态。
+ */
+function toggleStatePreview(): void {
+  statePreviewExpanded.value = !statePreviewExpanded.value;
+}
+
+/**
+ * 切换“当前章节事件”里兜底原始事件窗口文本的展开状态。
+ */
+function toggleRuntimeEventWindowPreview(): void {
+  runtimeEventWindowExpanded.value = !runtimeEventWindowExpanded.value;
 }
 
 function isRuntimeRetryMessage(message: MessageItem | null | undefined): message is MessageItem & { meta: RuntimeRetryMessageMeta } {
@@ -144,7 +307,7 @@ function isLocalFailedPlayerMessage(message: MessageItem | null | undefined): bo
 
 function playerMessagePendingText(message: MessageItem | null | undefined): string {
   if (!isLocalPendingPlayerMessage(message)) return "";
-  return isLocalFailedPlayerMessage(message) ? "发送失败" : "发送中...";
+  return isLocalFailedPlayerMessage(message) ? "发送失败" : "处理中...";
 }
 
 function runtimeRetryLabel(message: MessageItem | null | undefined): string {
@@ -167,9 +330,6 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
       .map((item) => asMiniRecord(item))
       .map((item) => {
         const currentStatus = scalarText(item.currentStatus);
-        const rawNextRole = scalarText(item.nextRole);
-        const rawNextRoleType = scalarText(item.nextRoleType);
-        const waitingPlayer = currentStatus === "waiting_player" || rawNextRoleType === "player";
         return {
           conversationId: scalarText(item.conversationId),
           messageId: Number(item.messageId || 0),
@@ -177,8 +337,9 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          nextRole: waitingPlayer ? "用户" : rawNextRole,
-          nextRoleType: waitingPlayer ? "player" : rawNextRoleType,
+          // 禁止把旧缓存里的“下一位是谁”回放到 UI。
+          nextRole: "",
+          nextRoleType: "",
           updateTime: Number(item.updateTime || 0),
         };
       })
@@ -327,18 +488,39 @@ const chapterBackgroundPath = computed(() =>
   ),
 );
 const chapterEntryText = computed(() => formatConditionText(currentChapter.value?.entryCondition));
+
+function resolveVisibleChapterGoalText(): string {
+  const configuredGoal = (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition).trim();
+  if (configuredGoal) return configuredGoal;
+  // 底部目标只展示章节结束条件；事件目标统一放到编排信息面板。
+  return "";
+}
+
 const chapterCompletionText = computed(() => {
   if (currentChapter.value?.showCompletionCondition === false) return "对用户隐藏";
-  return formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "无";
+  return resolveVisibleChapterGoalText() || "自由剧情";
 });
+// 底部目标 chip 只展示章节结束条件，避免把当前事件摘要和结束条件混在一起。
 const chapterObjectiveText = computed(() => {
-  if (currentChapter.value?.showCompletionCondition === false) return "";
-  return (formatConditionText(currentChapter.value?.completionCondition) || store.state.chapterCondition || "").trim();
+  // 结束条件为空时仍要展示稳定目标，避免底部目标 chip 直接消失。
+  return resolveVisibleChapterGoalText() || "自由剧情";
 });
 const chapterObjectivePreview = computed(() => {
   const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   return normalized.length > 20 ? `${normalized.slice(0, 20)}...` : normalized;
+});
+// 编排信息面板单独展示当前事件目标，优先使用当前事件摘要；没有时才回退到章节结束条件。
+const currentEventTargetText = computed(() => {
+  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
+  if (currentEventSummary && currentEventSummary !== "当前事件摘要待生成") {
+    return currentEventSummary;
+  }
+  const nextSummary = eventDigestWindowItems.value.map((item) => scalarText(item.eventSummary)).find(Boolean);
+  if (nextSummary && nextSummary !== "当前事件摘要待生成") {
+    return nextSummary;
+  }
+  return chapterObjectiveText.value;
 });
 const chapterStatusItems = computed(() => [
   { label: "章节状态", value: currentChapter.value?.status || "draft" },
@@ -377,6 +559,157 @@ const runtimeState = computed<Record<string, unknown>>(() => {
   if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
   return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
 });
+const runtimeEventViewRecord = computed(() =>
+  store.state.debugMode
+    ? asMiniRecord(store.state.debugRuntimeState)
+    : asMiniRecord(session.value),
+);
+const currentEventDigest = computed<RuntimeEventDigestItem | null>(() =>
+  normalizeRuntimeEventDigest(runtimeEventViewRecord.value.currentEventDigest || runtimeState.value.currentEventDigest),
+);
+const eventDigestWindowItems = computed<RuntimeEventDigestItem[]>(() => {
+  const source = asMiniArray(runtimeEventViewRecord.value.eventDigestWindow || runtimeState.value.eventDigestWindow);
+  return source
+    .map((item) => normalizeRuntimeEventDigest(item))
+    .filter((item): item is RuntimeEventDigestItem => Boolean(item));
+});
+const runtimeEventWindowText = computed(() =>
+  scalarText(runtimeEventViewRecord.value.eventDigestWindowText || runtimeState.value.eventDigestWindowText),
+);
+const debugOrchestratorRuntime = computed<OrchestratorRuntimeMeta | null>(() =>
+  store.state.debugMode ? normalizeOrchestratorRuntime(store.state.debugLatestPlan?.orchestratorRuntime) : null,
+);
+const debugOrchestratorRuntimeText = computed(() => {
+  const runtime = debugOrchestratorRuntime.value;
+  const planSource = scalarText(store.state.debugLatestPlan?.planSource);
+  const planSourceLabel = planSource === "opening_preset"
+    ? "开场白预设"
+    : planSource === "ai_orchestrator"
+      ? "正式编排"
+      : planSource === "rule_orchestrator"
+        ? "规则编排"
+        : planSource === "fallback_orchestrator"
+          ? "兜底编排"
+          : planSource === "preset"
+            ? "预设流程"
+            : "";
+  if (!runtime && !planSourceLabel) return "";
+  const modeLabel = runtime?.payloadMode === "advanced" ? "高级版" : "精简版";
+  const modeSourceLabel = runtime?.payloadModeSource === "explicit" ? "显式" : "推断";
+  const modelLabel = runtime ? [runtime.manufacturer, runtime.model].filter(Boolean).join(" / ") : "";
+  const reasoningLabel = runtime?.reasoningEffort || "未指定";
+  return [
+    planSourceLabel ? `流程：${planSourceLabel}` : "",
+    runtime ? `编排运行：${modeLabel}（${modeSourceLabel}）` : "",
+    runtime ? `推理强度：${reasoningLabel}` : "",
+    modelLabel,
+  ].filter(Boolean).join(" · ");
+});
+const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
+  const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
+  const phases = asMiniArray<Record<string, unknown>>(outline.phases);
+  const fixedEvents = asMiniArray<Record<string, unknown>>(outline.fixedEvents);
+  const completionBranches = splitCompletionConditionText(currentChapter.value?.completionCondition);
+  const syntheticFixedEvents = fixedEvents.length
+    ? []
+    : [completionBranches.successText, completionBranches.failureText]
+      .filter(Boolean)
+      .map((label, index) => ({
+        id: `synthetic_fixed_event_${index + 1}`,
+        label,
+      }));
+  const allFixedEvents = fixedEvents.length ? fixedEvents : syntheticFixedEvents;
+  if (!phases.length && !allFixedEvents.length) return [];
+  const progress = runtimeChapterProgressRecord.value;
+  const currentPhaseId = scalarText(progress.phaseId);
+  const currentEventStatus = scalarText(progress.eventStatus) || "idle";
+  const currentEventKind = scalarText(progress.eventKind) || scalarText(currentEventDigest.value?.eventKind);
+  const currentEventFlowType = scalarText(currentEventDigest.value?.eventFlowType);
+  const currentEventSummary = scalarText(currentEventDigest.value?.eventSummary);
+  const completedEvents = new Set(
+    asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean),
+  );
+  const items: RuntimeEventDigestItem[] = [];
+
+  phases.forEach((phase) => {
+    const phaseId = scalarText(phase.id);
+    const phaseKind = scalarText(phase.kind) || "scene";
+    const eventIndex = items.length + 1;
+    const eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+    let eventStatus = "idle";
+    if (phaseId && completedEvents.has(`phase:${phaseId}`)) {
+      eventStatus = "completed";
+    } else if (phaseId && currentPhaseId && phaseId === currentPhaseId) {
+      eventStatus = currentEventStatus || "active";
+    } else if (currentEventKind && currentEventKind !== "opening" && phaseId && currentPhaseId && phaseId !== currentPhaseId) {
+      const currentPhaseIndex = phases.findIndex((item) => scalarText(item.id) === currentPhaseId);
+      const phaseIndex = phases.findIndex((item) => scalarText(item.id) === phaseId);
+      if (currentPhaseIndex >= 0 && phaseIndex >= 0 && phaseIndex < currentPhaseIndex) {
+        eventStatus = "completed";
+      }
+    } else if (!currentPhaseId && currentEventKind === phaseKind && currentEventSummary && currentEventSummary === eventSummary) {
+      eventStatus = currentEventStatus || "active";
+    } else if (!currentPhaseId && currentEventKind && currentEventKind !== "opening" && items.length > 0) {
+      eventStatus = "completed";
+    }
+    items.push({
+      eventIndex,
+      eventKind: phaseKind,
+      eventFlowType: "chapter_content",
+      eventSummary,
+      eventFacts: [],
+      eventStatus,
+      summarySource: "outline",
+      memorySummary: "",
+      memoryFacts: [],
+      updateTime: 0,
+      allowedRoles: asMiniArray(phase.allowedSpeakers).map((item) => scalarText(item)).filter(Boolean),
+      userNodeId: scalarText(phase.userNodeId),
+    });
+  });
+
+  if (allFixedEvents.length) {
+    const anyCompleted = allFixedEvents.some((event) => {
+      const eventId = scalarText(event.id);
+      return eventId && completedEvents.has(eventId);
+    });
+    let eventStatus = "idle";
+    if (currentEventFlowType === "chapter_ending_check" || currentEventKind === "fixed" || currentEventKind === "ending") {
+      eventStatus = currentEventStatus || "waiting_input";
+    } else if (anyCompleted) {
+      eventStatus = "completed";
+    }
+    items.push({
+      eventIndex: items.length + 1,
+      eventKind: "fixed",
+      eventFlowType: "chapter_ending_check",
+      eventSummary: buildEndingOutlineSummary({
+        completionCondition: currentChapter.value?.completionCondition,
+        fixedEvents: allFixedEvents,
+      }),
+      eventFacts: buildEndingOutlineFacts(allFixedEvents),
+      eventStatus,
+      summarySource: "outline",
+      memorySummary: "",
+      memoryFacts: [],
+      updateTime: 0,
+      allowedRoles: [],
+      userNodeId: "",
+    });
+  }
+
+  return items;
+});
+const visibleEventItems = computed<RuntimeEventDigestItem[]>(() => {
+  const runtimeItems = eventDigestWindowItems.value.filter((item) => isChapterEventItem(item));
+  const outlineItems = chapterOutlineEventItems.value;
+  const runtimeLooksReady = runtimeItems.length > 1
+    || runtimeItems.some((item) => scalarText(item.eventSummary))
+    || runtimeItems.some((item) => (item.eventFacts || []).length > 0);
+  if (!outlineItems.length) return runtimeItems;
+  if (outlineItems.length > runtimeItems.length) return outlineItems;
+  return runtimeLooksReady ? runtimeItems : outlineItems;
+});
 function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const raw = asMiniRecord(input);
   if (!Object.keys(raw).length) return null;
@@ -384,6 +717,8 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const ageValue = ageText && /^\d+$/.test(ageText) ? Number(ageText) : null;
   const levelText = scalarText(raw.level);
   const levelValue = levelText && /^\d+$/.test(levelText) ? Number(levelText) : null;
+  const expValue = Number(raw.exp);
+  const nextLevelExpValue = Number(raw.next_level_exp ?? raw.nextLevelExp);
   const hpValue = Number(raw.hp);
   const mpValue = Number(raw.mp);
   const moneyValue = Number(raw.money);
@@ -393,6 +728,10 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     gender: scalarText(raw.gender),
     age: ageValue != null && Number.isFinite(ageValue) ? ageValue : null,
     level: levelValue != null && Number.isFinite(levelValue) ? levelValue : 1,
+    // 参数卡里的经验值字段来自运行时 JSON，不在这里显式解析的话，
+    // 详情面板就会把已有数字误判成“未设定”。
+    exp: Number.isFinite(expValue) ? expValue : 0,
+    next_level_exp: Number.isFinite(nextLevelExpValue) ? nextLevelExpValue : 100,
     level_desc: scalarText(raw.level_desc || raw.levelDesc) || "初入此界",
     personality: scalarText(raw.personality),
     appearance: scalarText(raw.appearance),
@@ -568,7 +907,9 @@ const roleCards = computed(() => {
   });
 });
 const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnState));
-const canPlayerSpeak = computed(() => runtimeTurnState.value.canPlayerSpeak !== false);
+// 正式会话优先认 store 里的 awaitUser 本地兜底态，
+// 避免 orchestration 已经交还用户输入，但 storyInfo 旧 turnState 还没追上时短暂锁住输入框。
+const canPlayerSpeak = computed(() => store.sessionCanPlayerSpeak());
 const playSessionStatus = computed(() => scalarText(session.value?.status));
 const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
 const latestConversationMessage = computed(() => {
@@ -578,9 +919,15 @@ const latestConversationMessage = computed(() => {
 const currentRuntimeInputStatus = computed(() => {
   if (store.state.sessionOpening) return "session_opening";
   if (store.state.sessionOpenError) return "session_error";
-  if (activeMiniGame.value?.acceptsTextInput) return "waiting_player";
   const latestStatus = runtimeMessageStatus(latestConversationMessage.value);
+  if (latestStatus === "waiting_player" && canPlayerSpeak.value) return "waiting_player";
+  if (latestStatus === "waiting_next" && !canPlayerSpeak.value) return "waiting_next";
+  if (store.state.sendPending || store.state.runtimeProcessingPending) return "sending";
+  if (activeMiniGame.value) return "waiting_player";
   if (latestStatus === "sending") return "sending";
+  if (canPlayerSpeak.value && latestStatus === "auto_advancing") {
+    return "waiting_player";
+  }
   if (latestStatus === "orchestrated") {
     return canPlayerSpeak.value ? "waiting_player" : "waiting_next";
   }
@@ -597,10 +944,13 @@ const currentRuntimeInputStatus = computed(() => {
 const canPlayerInput = computed(() => {
   if (store.state.sessionOpening) return false;
   if (store.state.sessionOpenError) return false;
+  if (activeMiniGame.value) return true;
+  if (canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player") return true;
+  if (store.state.sendPending || store.state.runtimeProcessingPending) return false;
   if (sessionRuntimeStageText.value) return false;
-  if (activeMiniGame.value?.acceptsTextInput) return true;
   return canPlayerSpeak.value && currentRuntimeInputStatus.value === "waiting_player";
 });
+const processingDots = computed(() => ".".repeat((pendingDotTick.value % 3) + 1));
 const sessionOpeningStageText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpeningStage) || "正在进入故事...");
 const sessionOpenErrorText = computed(() => scalarText((store.state as Record<string, unknown>).sessionOpenError) || "");
 const playOpenOverlayVisible = computed(() => (
@@ -620,41 +970,47 @@ const emptySessionHint = computed(() => {
 const playInputPlaceholder = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return "打开会话失败，请重试";
-  if (activeMiniGame.value?.acceptsTextInput) {
-    return activeMiniGame.value.inputHint || "直接输入方案";
+  if (activeMiniGame.value) {
+    return miniGameInputPlaceholder(activeMiniGame.value, inputMode.value === "text");
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
-  if (runtimeStatus === "sending") {
-    return "发送中...";
-  }
-  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
   if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
     return inputMode.value === "text" ? "输入一句话继续故事" : "按住说话";
   }
+  if (runtimeStatus === "sending") {
+    return `处理中${processingDots.value}`;
+  }
+  if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成";
   }
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败";
   }
-  return `当前轮到${expectedSpeaker.value}发言`;
+  // 正式会话不再消费“下一位是谁”的预编排字段。
+  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成“下一位”，因此统一退回泛化提示。
+  return "当前还没轮到用户发言";
 });
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
-  if (activeMiniGame.value?.acceptsTextInput) {
-    return "小游戏进行中，直接输入方案即可。";
+  if (activeMiniGame.value) {
+    return miniGameTurnHint(activeMiniGame.value);
   }
   const runtimeStatus = currentRuntimeInputStatus.value;
   const status = sessionStatusKey(playSessionStatus.value);
+
+  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
+    return "";
+  }
   if (runtimeStatus === "sending") {
-    return "正在发送中...";
+    return `正在处理${processingDots.value}`;
   }
   if (runtimeStatus === "error") {
     return "发送失败，可重试或重新输入。";
   }
-  if (sessionRuntimeStageText.value) return sessionRuntimeStageText.value;
+  if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
     return "当前章节已完成，可刷新或返回历史继续查看。";
   }
@@ -664,17 +1020,66 @@ const playTurnHint = computed(() => {
   if (isLocalFailedPlayerMessage(latestConversationMessage.value)) {
     return "发送失败，可重试或重新输入。";
   }
-  if (runtimeStatus === "waiting_player" && canPlayerSpeak.value) {
-    return "";
-  }
   if (runtimeStatus === "voicing") {
     return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
   }
   if (runtimeStatus === "streaming" || runtimeStatus === "generated" || runtimeStatus === "revealing" || runtimeStatus === "auto_advancing" || runtimeStatus === "orchestrated") {
+       WebDebugLogUtil.log("[aiGame][runtimeStatus] status", {
+          status,
+          runtimeStatus,
+          canPlayerSpeak: canPlayerSpeak.value,
+          expectedSpeaker: expectedSpeaker.value,
+        });
     return "正在生成下一句内容...";
   }
-  return `当前还没轮到用户发言，等待${runtimeDebugNextRoleLabel.value}继续。`;
+  WebDebugLogUtil.log("[aiGame][runtimeStatus] status", {
+      status,
+      runtimeStatus,
+      canPlayerSpeak: canPlayerSpeak.value,
+      expectedSpeaker: expectedSpeaker.value,
+    });
+  // 正式会话的下一位角色名可能滞后于最新 turnState，同样不适合作为主提示直接展示。
+  // 这里统一改成泛化文案，避免出现“轮到某角色发言”但实际并非如此的误导状态。
+  return "当前还没轮到用户发言，等待剧情继续。";
 });
+
+
+/**
+ * 为小游戏输入区生成占位提示。
+ *
+ * 用途：
+ * - 小游戏模式下，长提示应放到底部 turn hint，不应塞进输入框；
+ * - 否则移动端和窄屏下输入框会被占位文本撑高，影响输入体验；
+ * - 因此文本输入统一返回空串，语音模式仅保留“按住说话”。
+ */
+function miniGameInputPlaceholder(
+  game: NonNullable<typeof activeMiniGame.value>,
+  textMode: boolean,
+) {
+  if (!textMode) {
+    return "按住说话";
+  }
+  return "";
+}
+
+/**
+ * 为小游戏模式生成底部状态提示。
+ *
+ * 用途：
+ * - 任务和修炼需要明确告诉用户当前处于特殊玩法中；
+ * - 普通小游戏若后端已经提供 `inputHint`，这里直接复用，减少前后端文案分叉。
+ */
+function miniGameTurnHint(game: NonNullable<typeof activeMiniGame.value>) {
+  const serverHint = game.inputHint.trim();
+  if (game.gameType === "task") {
+    return serverHint || "当前处于任务执行状态，直接输入行动推进任务；输入 #退出 视为放弃当前任务。";
+  }
+  if (game.gameType === "cultivation") {
+    return serverHint || "当前处于修炼状态，直接输入修炼动作或目标；输入 #退出 结束本轮修炼。";
+  }
+  return serverHint;
+}
+
 function miniGamePhaseLabel(gameType: string, phase: string, uiPhaseLabel: string) {
   if (uiPhaseLabel) return uiPhaseLabel;
   if (gameType === "fishing") {
@@ -712,17 +1117,53 @@ function miniGameStateItems(gameType: string, publicState: Record<string, unknow
     .slice(0, 10);
 }
 
+/**
+ * 将小游戏 public_state 里的敌人列表转换成设置面板可直接展示的结构。
+ * battle 规则本会把临时敌人的头像、数值和简介都落在 enemy_list 中，前端只做轻量归一化。
+ */
+function battleEnemiesFromMiniGame(publicState: Record<string, unknown>): RuntimeBattleEnemyView[] {
+  return asMiniArray<Record<string, unknown>>(publicState.enemy_list)
+    .map((item, index) => {
+      const hp = Number(item.hp || 0) || 0;
+      const maxHp = Math.max(Number(item.maxHp || item.max_hp || hp || 0) || 0, hp);
+      const mp = Number(item.mp || 0) || 0;
+      const maxMp = Math.max(Number(item.maxMp || item.max_mp || mp || 0) || 0, mp);
+      return {
+        enemyId: scalarText(item.enemyId || item.enemy_id) || `enemy_${index}`,
+        name: scalarText(item.name) || `敌人${index + 1}`,
+        description: scalarText(item.description) || "临时敌人",
+        level: Number(item.level || 1) || 1,
+        hp,
+        maxHp,
+        mp,
+        maxMp,
+        avatarPath: scalarText(item.avatarPath || item.avatar_path),
+        avatarBgPath: scalarText(item.avatarBgPath || item.avatar_bg_path),
+        isRoleEnemy: Boolean(item.isRoleEnemy || item.is_role_enemy),
+      };
+    })
+    .filter((item) => item.name);
+}
+
+/**
+ * 计算血量/蓝量进度条百分比，统一限制在 0 到 100 之间，避免异常数值撑坏 UI。
+ */
+function battleGaugePercent(current: number, max: number): number {
+  if (!(max > 0)) return 0;
+  return Math.max(0, Math.min(100, Math.round((current / max) * 100)));
+}
+
 const activeMiniGame = computed(() => {
   const root = asMiniRecord(runtimeState.value.miniGame);
   const sessionState = asMiniRecord(root.session);
   const ui = asMiniRecord(root.ui);
   const status = scalarText(sessionState.status);
   const gameType = scalarText(sessionState.game_type || sessionState.gameType);
-  const playerOptions = asMiniArray<Record<string, unknown>>(ui.player_options || sessionState.player_options);
   const uiStateItems = asMiniArray<Record<string, unknown>>(ui.state_items);
   const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
+  const pendingExit = Boolean(sessionState.pending_exit);
   if (!gameType) return null;
-  if (!visibleStatuses.has(status) && !playerOptions.length && !sessionState.pending_exit) return null;
+  if (!visibleStatuses.has(status) && !pendingExit) return null;
   return {
     gameType,
     displayName: scalarText(asMiniRecord(root.rulebook).displayName) || gameType,
@@ -730,12 +1171,12 @@ const activeMiniGame = computed(() => {
     phase: miniGamePhaseLabel(gameType, scalarText(sessionState.phase), scalarText(ui.phase_label)),
     round: Number(sessionState.round || 0),
     publicState: asMiniRecord(sessionState.public_state),
-    playerOptions,
     ruleSummary: scalarText(ui.rule_summary),
     narration: scalarText(ui.narration),
-    pendingExit: Boolean(sessionState.pending_exit),
+    pendingExit,
     stateItems: miniGameStateItems(gameType, asMiniRecord(sessionState.public_state), uiStateItems),
-    acceptsTextInput: Boolean(ui.accepts_text_input) || ["research_skill", "alchemy", "upgrade_equipment"].includes(gameType),
+    acceptsTextInput: Boolean(ui.accepts_text_input)
+      || ((status !== "finished" && status !== "aborted") && ["research_skill", "alchemy", "upgrade_equipment", "battle"].includes(gameType)),
     inputHint: scalarText(ui.input_hint),
   };
 });
@@ -743,22 +1184,32 @@ const miniGameSummaryItems = computed(() => {
   if (!activeMiniGame.value) return [];
   return activeMiniGame.value.stateItems || [];
 });
-const miniGameControlOptions = computed(() => {
+
+/**
+ * 监听小游戏面板视图变化，便于排查“为什么小游戏面板出现或消失”。
+ */
+watch(
+  activeMiniGame,
+  (game) => {
+    WebDebugLogUtil.log("[aiGame][miniGame] activeMiniGame changed", game ? {
+      gameType: game.gameType,
+      status: game.status,
+      phase: game.phase,
+      pendingExit: game.pendingExit,
+      acceptsTextInput: game.acceptsTextInput,
+    } : null);
+  },
+  { deep: true, immediate: true },
+);
+
+const battleEnemies = computed(() => {
   const game = activeMiniGame.value;
-  if (!game) return [];
-  if (game.gameType === "fishing") {
-    if (game.pendingExit) {
-      return ["继续钓鱼", "退出钓鱼"];
-    }
-    return ["退出钓鱼"];
-  }
-  if (game.status === "suspended") {
-    return ["恢复小游戏", "查看状态", "查看规则", "申请退出"];
-  }
-  if (game.pendingExit) {
-    return ["确认退出", "继续", "查看状态"];
-  }
-  return ["查看状态", "查看规则", "暂停", "申请退出"];
+  if (!game || game.gameType !== "battle") return [];
+  return battleEnemiesFromMiniGame(game.publicState);
+});
+watch(() => activeMiniGame.value?.gameType || "", () => {
+  // 小游戏面板默认折叠，用户手动点击"展开"才显示。
+  miniGamePanelExpanded.value = false;
 });
 
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
@@ -776,6 +1227,7 @@ const voiceHoldStartY = ref(0);
 const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
+const eventProgressOpen = ref(true);
 const roleDetailKey = ref("");
 const roleDetail = computed<StoryRole | null>(() => {
   if (!roleDetailKey.value) return null;
@@ -783,6 +1235,7 @@ const roleDetail = computed<StoryRole | null>(() => {
 });
 const roleParameterRawOpen = ref(false);
 const chapterDetailOpen = ref(true);
+const enemyStatusOpen = ref(false);
 const roleCopyHint = ref("");
 const menuOpen = ref(false);
 const menuMessage = ref<MessageItem | null>(null);
@@ -805,6 +1258,8 @@ let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let mediaChunks: Blob[] = [];
 let discardNextRecording = false;
+let chapterBgmPlayer: HTMLAudioElement | null = null;
+let currentChapterBgmObjectUrl = "";
 let runtimeVoicePlayer: HTMLAudioElement | null = null;
 let runtimeVoiceObjectUrl = "";
 let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
@@ -813,6 +1268,8 @@ const runtimeVoicePreviewCache = new Map<string, string>();
 const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
 const runtimeVoiceBlobCache = new Map<string, Blob>();
 const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
+const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
+const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
 const runtimeVoiceWarmCache = new Set<string>();
 const revealedMessages = ref<MessageItem[]>([]);
 
@@ -855,13 +1312,27 @@ const latestRevealedMessage = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 const playStageStyle = computed(() => {
-  const layers = ["linear-gradient(180deg, rgba(10, 21, 36, 0.12), rgba(10, 21, 36, 0.45) 55%, rgba(10, 21, 36, 0.86) 100%)"];
+  // 轻微的暗角效果（四个角有淡淡的阴影）
+  const vignette = "radial-gradient(circle at center, rgba(10, 21, 36, 0.05) 0%, rgba(10, 21, 36, 0.15) 70%, rgba(10, 21, 36, 0.2) 100%)";
+
+  const layers = [];
+
   if (chapterBackgroundPath.value) {
     layers.push(`url("${chapterBackgroundPath.value}")`);
   } else {
-    layers.push("linear-gradient(180deg, #132745 0%, #0e2038 100%)");
+    // 默认背景也使用轻微渐变
+    layers.push("linear-gradient(180deg, rgba(19, 39, 69, 0.9) 0%, rgba(14, 32, 56, 0.95) 100%)");
   }
-  return { backgroundImage: layers.join(",") };
+
+  // 暗角效果放在最上层
+  layers.unshift(vignette);
+
+  return {
+    backgroundImage: layers.join(","),
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat"
+  };
 });
 const playTitle = computed(() => currentWorld.value?.name || session.value?.title || store.state.debugSessionTitle || "当前故事");
 const playSubtitle = computed(() => {
@@ -884,6 +1355,18 @@ const statePreviewText = computed(() => {
   } catch {
     return String(state || "{}");
   }
+});
+const currentEventProgressText = computed(() => {
+  const currentEvent = currentEventDigest.value;
+  if (currentEvent && isChapterEventItem(currentEvent)) {
+    const summary = scalarText(currentEvent.eventSummary) || "当前事件摘要待生成";
+    return `事件 ${Number(currentEvent.eventIndex || 1)} · ${runtimeEventKindLabel(currentEvent.eventKind)} · ${runtimeEventStatusLabel(currentEvent.eventStatus)}：${summary}`;
+  }
+  const currentOutlineItem = visibleEventItems.value.find((item) => scalarText(item.eventStatus) === "active" || scalarText(item.eventStatus) === "waiting_input")
+    || visibleEventItems.value[0]
+    || null;
+  if (!currentOutlineItem) return "当前章节事件尚未生成";
+  return `事件 ${Number(currentOutlineItem.eventIndex || 1)} · ${runtimeEventKindLabel(currentOutlineItem.eventKind)} · ${runtimeEventStatusLabel(currentOutlineItem.eventStatus)}：${scalarText(currentOutlineItem.eventSummary) || "当前事件摘要待生成"}`;
 });
 const playbackMaxIndex = computed(() => Math.max(0, playbackMessages.value.length - 1));
 const playbackCurrentMessage = computed(() => playbackMessages.value[playbackCursor.value] || null);
@@ -934,25 +1417,65 @@ const runtimeDebugPanelOpen = ref(false);
 const latestRuntimeChatTrace = computed(() => {
   const rows = runtimeChatTraceRows.value;
   const currentConversationId = runtimeConversationLabel.value;
-  const scopedRows = currentConversationId
-    ? rows.filter((row) => row.conversationId === currentConversationId)
-    : rows;
-  const source = scopedRows.length ? scopedRows : rows;
-  return source.length ? source[source.length - 1] : null;
+  if (!currentConversationId) {
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+  const scopedRows = rows.filter((row) => row.conversationId === currentConversationId);
+  // 当前会话还没写入 trace 时，不能退回到“所有会话最后一条”，否则会把旧会话角色串进当前 UI。
+  return scopedRows.length ? scopedRows[scopedRows.length - 1] : null;
+});
+
+const runtimeStateRoot = computed(() => {
+  if (store.state.debugMode) return asMiniRecord(store.state.debugRuntimeState);
+  return asMiniRecord(session.value?.state || session.value?.latestSnapshot?.state || {});
+});
+
+/**
+ * 判断消息是否属于固定 opening。
+ *
+ * 用途：
+ * - opening 现在走独立 introduction 流；
+ * - 首条 opening 比普通正文更早落地，自动朗读 watcher 偶发会错过它；
+ * - 这里只挑出 `on_opening` 的非用户消息，给语音兜底逻辑使用。
+ */
+function isOpeningNarrativeMessage(message: MessageItem | null | undefined): boolean {
+  if (!message || message.roleType === "player") return false;
+  return String(message.eventType || "").trim().toLowerCase() === "on_opening";
+}
+const runtimeChapterProgressRecord = computed(() => asMiniRecord(runtimeStateRoot.value.chapterProgress));
+const runtimeChapterProgressDebug = computed(() => {
+  const progress = runtimeChapterProgressRecord.value;
+  const phaseId = scalarText(progress.phaseId);
+  const userNodeId = scalarText(progress.userNodeId);
+  const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
+  const phases = asMiniArray<Record<string, unknown>>(outline.phases);
+  const userNodes = asMiniArray<Record<string, unknown>>(outline.userNodes);
+  const phase = phases.find((item) => scalarText(item.id) === phaseId) || null;
+  const userNode = userNodes.find((item) => scalarText(item.id) === userNodeId) || null;
+  const completedEvents = asMiniArray(progress.completedEvents).map((item) => scalarText(item)).filter(Boolean);
+  return {
+    phaseLabel: scalarText(phase?.label),
+    phaseId,
+    pendingGoal: scalarText(progress.pendingGoal),
+    userNodeLabel: scalarText(userNode?.goal) || scalarText(userNode?.label),
+    completedEvents,
+  };
 });
 const runtimeDebugNextRoleLabel = computed(() => {
   if (store.state.sessionOpening) return "加载中";
   if (sessionOpenErrorText.value) return "--";
   const status = currentRuntimeInputStatus.value;
   if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
-  return scalarText(latestRuntimeChatTrace.value?.nextRole) || expectedSpeaker.value || "当前角色";
+  // 正式会话的 turnState.expectedRole 在部分链路里会滞后于最新台词。
+  // 这里继续展示具体角色名，只会把旧缓存误显示成“下一位纳兰嫣然”。
+  return "剧情继续";
 });
 const runtimeDebugStatusLabel = computed(() => {
-  const status = scalarText(latestRuntimeChatTrace.value?.currentStatus) || currentRuntimeInputStatus.value;
+  const status = currentRuntimeInputStatus.value || scalarText(latestRuntimeChatTrace.value?.currentStatus);
   if (!status && canPlayerSpeak.value) return "等待用户";
   if (!status) return store.state.sessionOpening ? "进入中" : "等待下一位";
   if (status === "session_error") return "打开失败";
-  if (status === "sending") return "发送中";
+  if (status === "sending") return "处理中";
   if (status === "orchestrated") return "已编排";
   if (status === "waiting_next") return "等待下一位";
   if (status === "waiting_player") return "等待用户";
@@ -1019,6 +1542,7 @@ watch(
     inputMode.value = "text";
     settingModePickerOpen.value = false;
     chapterDetailOpen.value = true;
+    eventProgressOpen.value = true;
     closeMenu();
     stopVoiceRecognition();
     stopRuntimeVoicePlayback();
@@ -1055,6 +1579,28 @@ watch(
   },
 );
 
+/**
+ * 把章节背景音乐的播放状态和当前“有声/静音”开关保持一致。
+ * 关闭时暂停但保留播放进度，恢复时从当前位置继续播放。
+ */
+function syncChapterBgmAudibility() {
+  if (!chapterBgmPlayer) return;
+  if (!autoVoice.value) {
+    chapterBgmPlayer.pause();
+    return;
+  }
+  chapterBgmPlayer.volume = 0.35;
+  void chapterBgmPlayer.play().catch(() => {});
+}
+
+/**
+ * 切换播放页统一声音开关。
+ * 这个开关同时控制运行时台词语音和章节背景音乐。
+ */
+function toggleAutoVoice() {
+  autoVoice.value = !autoVoice.value;
+}
+
 watch(autoVoice, (enabled) => {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(PLAY_AUTO_VOICE_STORAGE_KEY, enabled ? "1" : "0");
@@ -1062,6 +1608,11 @@ watch(autoVoice, (enabled) => {
   if (!enabled) {
     stopRuntimeVoicePlayback();
   }
+  if (enabled && !chapterBgmPlayer && currentChapterBgmUrl.value) {
+    void syncChapterBgmPlayback(currentChapterBgmUrl.value);
+    return;
+  }
+  syncChapterBgmAudibility();
 });
 
 watch(
@@ -1172,6 +1723,11 @@ watch(
     if (!newMessages.length) return;
     for (const message of newMessages) {
       if (cancelled) return;
+      // 流式台词在首个 delta 返回前，只是一个空占位。
+      // 这里先不把它塞进聊天框，避免“编排接口刚返回就先出现获取台词中气泡”的假象。
+      if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
+        continue;
+      }
       const messageKey = messageUiKey(message);
       revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
       await nextTick();
@@ -1203,25 +1759,42 @@ watch(
     if (
       playMode.value !== "live"
       || store.state.debugLoading
+      || store.state.runtimeProcessingPending
       || store.state.debugEndDialog
     ) {
       return;
     }
+    // 正式游玩必须绑定到有效 session；调试模式则必须显式开启 debugMode，防止两条链串线。
+    if (store.state.debugMode) {
+      if (!store.state.debugChapterId) {
+        return;
+      }
+    } else if (!store.state.currentSessionId) {
+      return;
+    }
     const latest = latestRevealedMessage.value;
-    if (!latest || latest.roleType === "player" || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
+    if (!latest || isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
       return;
     }
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
     let status = runtimeMessageStatus(latest);
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 小游戏模式下，即使 canPlayerSpeak 为 true，也不应该阻止自动推进，
+    // 因为战斗中旁白/敌方回合后还需要继续编排下一轮。
+    const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+    const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
+    const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
+    if (latest.roleType === "player" && (canPlayerSpeak.value || status !== "waiting_next")) {
+      return;
+    }
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
     if (!debugAutoAdvancing.value && status === "auto_advancing") {
-      status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
+      status = (canPlayerSpeak.value && !miniGameShouldContinue) ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
-    if (canPlayerSpeak.value) {
+    if (canPlayerSpeak.value && !miniGameShouldContinue) {
       return;
     }
     if (status !== "waiting_next") {
@@ -1250,6 +1823,55 @@ watch(
   () => [
     store.state.currentSessionId,
     playMode.value,
+    autoVoice.value,
+    store.state.debugMode,
+    store.state.debugLoading,
+    latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
+    latestRevealedMessage.value ? runtimeMessageStatus(latestRevealedMessage.value) : "",
+    latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
+    latestRevealedMessage.value ? messageDisplayContent(latestRevealedMessage.value) : "",
+    runtimeVoiceMessageKey.value,
+    runtimeVoicePhase.value,
+    canPlayerSpeak.value,
+  ],
+  async () => {
+    if (!autoVoice.value || playMode.value !== "live" || store.state.debugMode || store.state.debugLoading) {
+      return;
+    }
+    const latest = latestRevealedMessage.value;
+    if (!latest || !isOpeningNarrativeMessage(latest)) {
+      return;
+    }
+    if (isRuntimeRetryMessage(latest) || isStreamingRuntimeMessage(latest)) {
+      return;
+    }
+    const content = messageDisplayContent(latest).trim();
+    if (!content) {
+      return;
+    }
+    const status = runtimeMessageStatus(latest);
+    const messageKey = messageUiKey(latest);
+    if (!messageKey || status !== "generated") {
+      return;
+    }
+    if (runtimeVoiceMessageKey.value === messageKey || runtimeVoicePhase.value) {
+      return;
+    }
+    // opening 在启动链里偶发会跳过通用的 reveal->voice 流程。
+    // 这里补一次只针对 opening 的自动朗读，确保开场白在自动语音开启时一定会播。
+    store.setRuntimeMessageStatus(latest.id, "voicing");
+    const played = await playMessageAudio(latest, false, true);
+    store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    if (!played) {
+      await sleep(estimateRevealDelayMs(content));
+    }
+  },
+);
+
+watch(
+  () => [
+    store.state.currentSessionId,
+    playMode.value,
     store.state.debugMode,
     canPlayerSpeak.value,
     latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
@@ -1268,7 +1890,11 @@ watch(
     }
     const status = runtimeMessageStatus(latest);
     const sameVoiceTarget = runtimeVoiceMessageKey.value === messageUiKey(latest);
-    if ((canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 小游戏模式下，旁白/敌方回合的消息不应被 canPlayerSpeak 强制覆盖为 waiting_player
+    const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+    const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
+    const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
@@ -1296,7 +1922,7 @@ function openMenu(message: MessageItem, event: MouseEvent | PointerEvent) {
   const stage = document.querySelector<HTMLElement>(".play-stage");
   const bounds = stage?.getBoundingClientRect();
   const menuWidth = 248;
-  const menuHeight = 328;
+  const menuHeight = 372;
   const gap = 12;
   const minX = bounds ? bounds.left + gap : 12;
   const maxX = bounds ? Math.max(minX, bounds.right - menuWidth - gap) : Math.max(12, window.innerWidth - menuWidth - gap);
@@ -1329,6 +1955,62 @@ function handlePressStart(message: MessageItem, event: PointerEvent) {
 function handlePressEnd() {
   clearPressTimer();
 }
+
+let pendingDotsTimer: number | null = null;
+
+/**
+ * 停止并释放章节背景音乐播放器，避免章节切换后继续串音。
+ */
+function stopChapterBgmPlayback() {
+  if (chapterBgmPlayer) {
+    chapterBgmPlayer.pause();
+    chapterBgmPlayer.src = "";
+    chapterBgmPlayer.load();
+    chapterBgmPlayer = null;
+  }
+  if (currentChapterBgmObjectUrl) {
+    URL.revokeObjectURL(currentChapterBgmObjectUrl);
+    currentChapterBgmObjectUrl = "";
+  }
+}
+
+/**
+ * 按当前章节更新背景音乐；没有配置时立即停止，有配置时尝试循环播放。
+ */
+async function syncChapterBgmPlayback(audioUrl: string) {
+  stopChapterBgmPlayback();
+  if (!audioUrl) return;
+  try {
+    const response = await fetch(audioUrl);
+    if (!response.ok) {
+      throw new Error(`BGM 下载失败：${response.status}`);
+    }
+    const blob = await response.blob();
+    currentChapterBgmObjectUrl = URL.createObjectURL(blob);
+    const player = new Audio(currentChapterBgmObjectUrl);
+    player.loop = true;
+    player.preload = "auto";
+    player.volume = 0.35;
+    chapterBgmPlayer = player;
+    syncChapterBgmAudibility();
+  } catch {
+    stopChapterBgmPlayback();
+  }
+}
+
+onMounted(() => {
+  pendingDotsTimer = window.setInterval(() => {
+    pendingDotTick.value = (pendingDotTick.value + 1) % 3;
+  }, 420);
+});
+
+watch(
+  currentChapterBgmUrl,
+  (audioUrl) => {
+    void syncChapterBgmPlayback(audioUrl);
+  },
+  { immediate: true },
+);
 
 async function submit() {
   if (!canPlayerInput.value) {
@@ -1543,13 +2225,18 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
     await sleep(180);
     return;
   }
+  // 小游戏模式下，旁白/敌方回合应保持 waiting_next 以触发自动推进
+  const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
+  const isMiniGameMsg = String(currentMessage.eventType || "").includes("on_mini_game") && String(currentMessage.eventType || "") !== "on_mini_game_finish";
+  const miniGameContinue = isMiniGameActive && isMiniGameMsg;
+  const nextStatusAfterVoice = (canPlayerSpeak.value && !miniGameContinue) ? "waiting_player" : "waiting_next";
   if (!autoVoice.value) {
-    store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     await sleep(estimateRevealDelayMs(messageDisplayContent(currentMessage)));
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
-    store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
+    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     await sleep(260);
     return;
   }
@@ -1557,8 +2244,12 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
   store.setRuntimeMessageStatus(currentMessage.id, "voicing");
   const played = await playMessageAudio(currentMessage, false, true);
   if (isCancelled()) return;
-  store.setRuntimeMessageStatus(currentMessage.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
-  await sleep(played ? 260 : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
+  store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+  // 小游戏模式下，旁白语音播放完后需要额外等待一段时间，
+  // 确保语音完全播放完后再触发下一轮编排，避免旁白和陪练回合打架。
+  // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
+  const miniGameExtraWait = 260;
+  await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
 }
 
 function stopRuntimeVoicePlayback() {
@@ -1637,6 +2328,7 @@ function splitSpeechSegments(input: string): string[] {
 function createVoiceBindingDraft(source: {
   label?: string | null;
   configId?: number | null;
+  roleId?: string | null;
   presetId?: string | null;
   mode?: string | null;
   referenceAudioPath?: string | null;
@@ -1648,6 +2340,7 @@ function createVoiceBindingDraft(source: {
   const draft: VoiceBindingDraft = {
     label: String(source.label || "").trim(),
     configId: source.configId ?? null,
+    roleId: String(source.roleId || "").trim(),
     presetId: String(source.presetId || "").trim(),
     mode: String(source.mode || "text").trim() || "text",
     referenceAudioPath: String(source.referenceAudioPath || "").trim(),
@@ -1687,6 +2380,7 @@ function narratorVoiceBinding(): VoiceBindingDraft | null {
   return createVoiceBindingDraft({
     label: settings?.narratorVoice || narratorRole?.voice || store.state.narratorVoice || narratorRole?.name || store.state.narratorName || "旁白",
     configId: configId ?? null,
+    roleId: "narrator",
     presetId: !presetId && normalizedMode === "text" ? "story_narrator" : presetId,
     mode: normalizedMode,
     referenceAudioPath: settings?.narratorVoiceReferenceAudioPath || narratorRole?.voiceReferenceAudioPath || store.state.narratorVoiceReferenceAudioPath || "",
@@ -1705,6 +2399,7 @@ function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
   return createVoiceBindingDraft({
     label: role.voice || role.name,
     configId: configId ?? null,
+    roleId: role.id || "",
     presetId,
     mode,
     referenceAudioPath: role.voiceReferenceAudioPath || "",
@@ -1736,6 +2431,7 @@ function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: Voi
     return createVoiceBindingDraft({
       label: originalBinding?.label || store.state.narratorVoice || store.state.narratorName || "旁白",
       configId: originalBinding?.configId ?? narratorVoiceBinding()?.configId ?? null,
+      roleId: originalBinding?.roleId || "narrator",
       mode: "text",
       presetId: "story_narrator",
     });
@@ -1750,6 +2446,7 @@ function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: Voi
   return createVoiceBindingDraft({
     label: originalBinding?.label || role?.voice || roleName || "角色",
     configId: originalBinding?.configId ?? role?.voiceConfigId ?? null,
+    roleId: originalBinding?.roleId || role?.id || "",
     mode: "text",
     presetId: fallbackPresetId,
   });
@@ -1764,6 +2461,7 @@ function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
   const runtimeContextKey = binding.configId || currentWorld.value?.id || store.state.currentSessionId || "runtime";
   return [
     runtimeContextKey,
+    binding.roleId || "",
     binding.mode || "text",
     binding.presetId || "",
     binding.referenceAudioPath || "",
@@ -1777,33 +2475,104 @@ function runtimeVoicePreviewKey(binding: VoiceBindingDraft, text: string): strin
   return `${runtimeVoiceBindingKey(binding)}|${text}`;
 }
 
-async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string): Promise<string> {
-  const cacheKey = runtimeVoicePreviewKey(binding, text);
+/**
+ * 调试和正式游玩统一优先使用 clone 通道。
+ * 如果当前绑定还没有参考音频文件，就先按原模式生成一个稳定文件，再切回 clone。
+ */
+async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<VoiceBindingDraft> {
+  if (binding.mode === "clone" && binding.referenceAudioPath) {
+    return binding;
+  }
+  if (binding.referenceAudioPath) {
+    return {
+      ...binding,
+      mode: "clone",
+    };
+  }
+  const cacheKey = runtimeVoiceBindingKey(binding);
+  const cached = runtimeVoiceCloneBindingCache.get(cacheKey);
+  if (cached) return cached;
+  const inflight = runtimeVoiceCloneInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const task = store.generateVoiceBinding(
+    binding.configId,
+    binding.mode,
+    binding.presetId,
+    binding.referenceAudioPath,
+    binding.referenceText,
+    binding.promptText,
+    binding.mixVoices || [],
+    { roleId: binding.roleId || "" },
+  )
+    .then((generated) => {
+      if (!generated.audioPath) {
+        throw new Error("未生成可复用的参考音频");
+      }
+      const cloneBinding: VoiceBindingDraft = {
+        ...binding,
+        mode: "clone",
+        referenceAudioPath: generated.audioPath,
+        referenceAudioName: generated.audioName || binding.referenceAudioName || "",
+        referenceText: generated.referenceText || binding.referenceText || "",
+      };
+      setLimitedCacheValue(runtimeVoiceCloneBindingCache, cacheKey, cloneBinding);
+      return cloneBinding;
+    })
+    .finally(() => {
+      runtimeVoiceCloneInflight.delete(cacheKey);
+    });
+  runtimeVoiceCloneInflight.set(cacheKey, task);
+  return task;
+}
+
+async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string,  source: "common" | "warmVoiceBinding" = "common"): Promise<string> {
+  if(WebDebugLogUtil.isEnabled()){
+    console.log("resolveRuntimeVoiceUrl");
+  }
+
+  const playableBinding = await ensureRuntimeCloneBinding(binding);
+  const cacheKey = runtimeVoicePreviewKey(playableBinding, text);
   const cached = runtimeVoicePreviewCache.get(cacheKey);
+  WebDebugLogUtil.log("resolveRuntimeVoiceUrl cached",cached);
   if (cached) return cached;
   const inflight = runtimeVoicePreviewInflight.get(cacheKey);
+  WebDebugLogUtil.log("resolveRuntimeVoiceUrl inflight",inflight);
   if (inflight) return inflight;
   const task = withTimeout(
     store.streamVoice(
-      binding.configId,
+      playableBinding.configId,
       text,
-      binding.mode,
-      binding.presetId,
-      binding.referenceAudioPath,
-      binding.referenceText,
-      binding.promptText,
-      binding.mixVoices || [],
+      playableBinding.mode,
+      playableBinding.presetId,
+      playableBinding.referenceAudioPath,
+      playableBinding.referenceText,
+      playableBinding.promptText,
+      playableBinding.mixVoices || [],
       {
         format: RUNTIME_FAST_PREVIEW_FORMAT,
         sampleRate: RUNTIME_FAST_PREVIEW_SAMPLE_RATE,
+        roleId: playableBinding.roleId || "",
       },
     ),
     15000,
     "语音生成超时",
   )
     .then((audioUrl) => {
+       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { audioUrl:audioUrl});
       if (!audioUrl) {
         throw new Error("未返回试听音频");
+      }
+       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { activeMiniGame: activeMiniGame.value});
+      // 判断 roleType 打 tag（只在小游戏模式中打印）
+      if (activeMiniGame.value) {
+        const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
+        const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
+        const voiceTag = isNarratorVoice
+          ? "[aiGame][miniGame] 旁白播报-台词-语音播放-预热"
+          : (isEnemyVoice
+            ? "[aiGame][miniGame] 敌方回合-语音播放-预热"
+            : "[aiGame][miniGame] 陪练角色回合-语音播放-预热");
+        WebDebugLogUtil.log(voiceTag, { roleId: playableBinding.roleId, text: text.slice(0, 60) , source});
       }
       setLimitedCacheValue(runtimeVoicePreviewCache, cacheKey, audioUrl);
       return audioUrl;
@@ -1821,7 +2590,7 @@ async function warmVoiceBinding(binding: VoiceBindingDraft) {
   if (runtimeVoiceWarmCache.has(bindingKey)) return;
   runtimeVoiceWarmCache.add(bindingKey);
   try {
-    await resolveRuntimeVoiceUrl(binding, "你好啊，有什么可以帮到你");
+    await resolveRuntimeVoiceUrl(binding, "恭喜，已成功复刻或生成了属于角色的声音！","warmVoiceBinding");
   } catch {
     // 保持静默，预热失败不影响正式播放
   }
@@ -1848,6 +2617,13 @@ async function playRuntimeVoiceBlob(
   const player = new Audio(runtimeVoiceObjectUrl);
   player.preload = "auto";
   runtimeVoicePlayer = player;
+  WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 准备播放", {
+    waitForCompletion,
+    speakable: speakable.slice(0, 60),
+    blobSize: blob.size,
+    blobType: blob.type,
+    activeMiniGame: activeMiniGame.value,
+  });
   const completed = await new Promise<boolean>((resolve) => {
     runtimeVoiceResolve = resolve;
     let finished = false;
@@ -1867,15 +2643,39 @@ async function playRuntimeVoiceBlob(
       resolve(ok);
     };
     player.onplay = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 真正开始播放", {
+        waitForCompletion,
+        currentTime: player.currentTime,
+        duration: Number.isFinite(player.duration) ? player.duration : -1,
+        speakable: speakable.slice(0, 60),
+      });
       onPlay?.();
       if (manual) menuVisibleHint.value = "正在播放试听";
       if (!waitForCompletion) {
         finalize(true, "正在播放试听");
       }
     };
-    player.onended = () => finalize(true, "朗读完成");
-    player.onerror = () => finalize(false, "朗读失败");
-    void player.play().catch(() => finalize(false, "朗读失败"));
+    player.onended = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放结束", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(true, "朗读完成");
+    };
+    player.onerror = () => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放错误", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(false, "朗读失败");
+    };
+    void player.play().catch((error) => {
+      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob play() rejected", {
+        error: String((error as Error)?.message || error || ""),
+        speakable: speakable.slice(0, 60),
+      });
+      finalize(false, "朗读失败");
+    });
   });
   return completed;
 }
@@ -1905,11 +2705,19 @@ async function playMessageAudioWithBinding(
       try {
         setRuntimeVoiceIndicator(message, "loading");
         const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
+       if(WebDebugLogUtil.isEnabled()){
+          console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
+        }
         if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
         const blob = await fetchRuntimeVoiceBlob(audioUrl);
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
           setRuntimeVoiceIndicator(message, "playing");
         });
+        if (activeMiniGame.value) {
+          WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
+        }else {
+          WebDebugLogUtil.log("[aiGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
+        }
         if (segmentPlayed) break;
         lastError = new Error("朗读失败");
       } catch (error: any) {
@@ -2073,6 +2881,18 @@ function menuDelete() {
   closeMenu();
 }
 
+function menuRevisit() {
+  const message = menuMessage.value;
+  if (!message) return;
+  const action = store.state.debugMode
+    ? store.revisitDebugMessage(Number(message.id || 0))
+    : store.revisitSessionMessage(Number(message.id || 0));
+  void action.catch((error) => {
+    store.state.notice = `回溯失败：${error instanceof Error ? error.message : "未知错误"}`;
+  });
+  closeMenu();
+}
+
 function roleTypeLabel(role: StoryRole): string {
   if (role.roleType === "player") return "用户";
   if (role.roleType === "narrator") return "旁白";
@@ -2091,6 +2911,17 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
   if (!card) return [];
   const fallback = "未设定";
   const stringifyList = (items?: string[]) => items?.length ? items.join("、") : fallback;
+  const stringifyExecutingTask = () => {
+    const task = card.executing_task;
+    if (!task) return fallback;
+    return scalarText(task.summary)
+      || [
+        scalarText(task.title),
+        scalarText(task.objective) ? `目标：${scalarText(task.objective)}` : "",
+        scalarText(task.status) ? `状态：${scalarText(task.status)}` : "",
+      ].filter(Boolean).join("｜")
+      || fallback;
+  };
   const stringifyOther = () => {
     try {
       return JSON.stringify(card.other ?? [], null, 2);
@@ -2103,6 +2934,8 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "性别", value: scalarText(card.gender) || fallback },
     { label: "年龄", value: card.age != null ? String(card.age) : fallback },
     { label: "等级", value: card.level != null ? String(card.level) : fallback },
+    { label: "经验值", value: card.exp != null ? String(card.exp) : fallback },
+    { label: "下一级所需经验", value: card.next_level_exp != null ? String(card.next_level_exp) : fallback },
     { label: "等级称号", value: scalarText(card.level_desc) || fallback },
     { label: "性格", value: scalarText(card.personality) || fallback },
     { label: "外貌", value: scalarText(card.appearance) || fallback },
@@ -2113,6 +2946,7 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "血量", value: card.hp != null ? String(card.hp) : fallback },
     { label: "蓝量", value: card.mp != null ? String(card.mp) : fallback },
     { label: "金钱", value: card.money != null ? String(card.money) : fallback },
+    { label: "正在执行的任务", value: stringifyExecutingTask() },
     { label: "其他", value: stringifyOther() },
   ];
 }
@@ -2198,13 +3032,24 @@ function toggleChapterDetail() {
   chapterDetailOpen.value = !chapterDetailOpen.value;
 }
 
+function toggleEventProgress() {
+  eventProgressOpen.value = !eventProgressOpen.value;
+}
+
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
+  store.state.debugEndDialogDetail = "";
+}
+
+function closeSessionEndDialog() {
+  store.state.sessionEndDialog = null;
+  store.state.sessionEndDialogDetail = "";
 }
 
 function exitDebugMode() {
   stopVoiceRecognition();
   store.state.debugEndDialog = null;
+  store.state.debugEndDialogDetail = "";
   store.state.debugMode = false;
   store.setTab("create");
 }
@@ -2233,6 +3078,7 @@ function stopPlaybackSequence() {
 
 function openChapterObjective() {
   chapterDetailOpen.value = true;
+  eventProgressOpen.value = true;
   playMode.value = "setting";
 }
 
@@ -2603,6 +3449,11 @@ function pickTip(option: string) {
 }
 
 onBeforeUnmount(() => {
+  if (pendingDotsTimer !== null) {
+    window.clearInterval(pendingDotsTimer);
+    pendingDotsTimer = null;
+  }
+  stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
   stopRuntimeVoicePlayback();
@@ -2634,7 +3485,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="play-head__actions">
-          <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="autoVoice = !autoVoice">
+          <button type="button" class="play-circle-btn" :aria-label="autoVoice ? '静音' : '开启语音'" @click="toggleAutoVoice">
             <svg v-if="autoVoice" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 10v4h4l5 4V6l-5 4H5z"></path>
               <path d="M18 9a4 4 0 010 6"></path>
@@ -2650,14 +3501,13 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="play-ai-mark">内容由 AI 生成</div>
-      <div v-if="!autoVoice" class="play-entry-toast">静音进入</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">{{ isSessionPlaybackMode ? "剧情回放" : "历史模式" }}</div>
       <div
         v-if="playMode !== 'history' && currentLiveFigureFgPath"
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})` }"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
@@ -2908,6 +3758,49 @@ onBeforeUnmount(() => {
           <button type="button" class="play-link-text" @click="openRoleDetail(settingSelectedRole)">查看角色详情</button>
         </div>
 
+        <button type="button" class="play-link-row" @click="enemyStatusOpen = !enemyStatusOpen">
+          <span>敌人状态{{ battleEnemies.length ? `（${battleEnemies.length}）` : "" }}</span>
+          <span>{{ enemyStatusOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="enemyStatusOpen" class="play-inline-card">
+          <template v-if="battleEnemies.length">
+            <div class="play-enemy-list">
+              <div
+                v-for="enemy in battleEnemies"
+                :key="enemy.enemyId"
+                class="play-enemy-card"
+              >
+                <div class="play-enemy-card__head">
+                  <div class="play-enemy-card__avatar">
+                    <LayeredAvatar
+                      :foreground-path="enemy.avatarPath || null"
+                      :background-path="enemy.avatarBgPath || null"
+                      :alt="enemy.name"
+                    >
+                      <span>{{ enemy.name.slice(0, 1) || "敌" }}</span>
+                    </LayeredAvatar>
+                  </div>
+                  <div class="play-enemy-card__body">
+                    <div class="play-enemy-card__name">
+                      <span>{{ enemy.name }}</span>
+                      <span class="play-enemy-card__tag">{{ enemy.isRoleEnemy ? "角色敌人" : "临时敌人" }}</span>
+                    </div>
+                    <div class="play-inline-card__text">简介：{{ enemy.description || "暂无简介" }}</div>
+                    <div class="play-enemy-card__meta">等级 {{ enemy.level }} · HP {{ enemy.hp }}/{{ enemy.maxHp }} · MP {{ enemy.mp }}/{{ enemy.maxMp }}</div>
+                  </div>
+                </div>
+                <div class="play-enemy-card__bar">
+                  <div class="play-enemy-card__bar-fill" :style="{ width: `${battleGaugePercent(enemy.hp, enemy.maxHp)}%` }"></div>
+                </div>
+                <div class="play-enemy-card__bar play-enemy-card__bar--mana">
+                  <div class="play-enemy-card__bar-fill play-enemy-card__bar-fill--mana" :style="{ width: `${battleGaugePercent(enemy.mp, enemy.maxMp)}%` }"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div v-else class="play-inline-card__text">当前没有敌人。</div>
+        </div>
+
         <button type="button" class="play-link-row" @click="toggleChapterDetail">
           <span>故事设定</span>
           <span>{{ chapterDetailOpen ? "收起 >" : ">" }}</span>
@@ -2919,7 +3812,59 @@ onBeforeUnmount(() => {
           <div class="play-inline-card__text">章节编排：仅供编排师内部使用，游玩时不直接展示。</div>
           <div class="play-inline-card__text">章节进入条件：{{ chapterEntryText || "无" }}</div>
           <div class="play-inline-card__text">章节完成条件：{{ chapterCompletionText }}</div>
-          <pre class="play-state-pre">{{ statePreviewText }}</pre>
+          <button type="button" class="play-inline-toggle" @click="toggleStatePreview">
+            <span>运行状态快照</span>
+            <span>{{ statePreviewExpanded ? "收起 >" : "展开 >" }}</span>
+          </button>
+          <pre v-if="statePreviewExpanded" class="play-state-pre">{{ statePreviewText }}</pre>
+        </div>
+
+        <button type="button" class="play-link-row" @click="toggleEventProgress">
+          <span>当前章节事件</span>
+          <span>{{ eventProgressOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="eventProgressOpen" class="play-inline-card">
+          <div class="play-inline-card__title">当前事件进度</div>
+          <div v-if="currentEventTargetText" class="play-inline-card__text">
+            当前事件目标：{{ currentEventTargetText }}
+          </div>
+          <div class="play-inline-card__text">{{ currentEventProgressText }}</div>
+          <div v-if="debugOrchestratorRuntimeText" class="play-inline-card__text">
+            {{ debugOrchestratorRuntimeText }}
+          </div>
+          <div v-if="currentEventDigest?.eventFacts?.length" class="play-inline-card__text">
+            当前事件事实：{{ currentEventDigest.eventFacts.join(" / ") }}
+          </div>
+          <div v-if="currentEventDigest?.memorySummary" class="play-inline-card__text">
+            事件记忆：{{ currentEventDigest.memorySummary }}
+          </div>
+          <div v-if="visibleEventItems.length" class="play-event-list">
+            <div
+              v-for="item in visibleEventItems"
+              :key="`${item.eventIndex || 0}_${item.eventKind || 'scene'}`"
+              class="play-event-item"
+            >
+              <div class="play-event-item__head">
+                <span class="play-event-item__index">事件 {{ item.eventIndex || 1 }}</span>
+                <span class="play-event-item__meta">{{ runtimeEventFlowLabel(item) }} · {{ runtimeEventKindLabel(item.eventKind) }} · {{ runtimeEventStatusLabel(item.eventStatus) }}</span>
+              </div>
+              <div class="play-event-item__summary">{{ item.eventSummary || "当前事件摘要待生成" }}</div>
+              <div v-if="item.eventFacts?.length" class="play-event-item__facts">
+                事实：{{ item.eventFacts.join(" / ") }}
+              </div>
+              <div v-if="item.memorySummary" class="play-event-item__memory">
+                记忆：{{ item.memorySummary }}
+              </div>
+            </div>
+          </div>
+          <template v-else-if="runtimeEventWindowText">
+            <button type="button" class="play-inline-toggle" @click="toggleRuntimeEventWindowPreview">
+              <span>原始事件窗口</span>
+              <span>{{ runtimeEventWindowExpanded ? "收起 >" : "展开 >" }}</span>
+            </button>
+            <pre v-if="runtimeEventWindowExpanded" class="play-state-pre">{{ runtimeEventWindowText }}</pre>
+          </template>
+          <div v-else class="play-inline-card__text">当前章节事件尚未生成。</div>
         </div>
 
         <button type="button" class="play-link-row" @click="settingModePickerOpen = !settingModePickerOpen">
@@ -2944,10 +3889,17 @@ onBeforeUnmount(() => {
             <div class="play-mini-game-panel__title">{{ activeMiniGame.displayName }}</div>
             <div class="play-mini-game-panel__meta">第 {{ activeMiniGame.round || 1 }} 轮 · {{ activeMiniGame.phase || "进行中" }}</div>
           </div>
-          <div class="play-mini-game-panel__status">{{ activeMiniGame.status || "active" }}</div>
+          <button type="button" class="play-mini-game-panel__status" @click="miniGamePanelExpanded = !miniGamePanelExpanded">
+            {{ miniGamePanelExpanded ? "收起" : "展开" }}
+          </button>
         </div>
-        <div v-if="activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
-        <div v-if="miniGameSummaryItems.length" class="play-mini-game-panel__state">
+        <div v-if="miniGameSummaryItems.length" class="play-mini-game-panel__summary">
+          <span v-for="(item, idx) in miniGameSummaryItems.slice(0, 2)" :key="item.key" class="play-mini-game-panel__summary-item">
+            {{ item.key }}: {{ item.value }}
+          </span>
+        </div>
+        <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
+        <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">
           <div
             v-for="item in miniGameSummaryItems"
             :key="item.key"
@@ -2957,32 +3909,12 @@ onBeforeUnmount(() => {
             <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
           </div>
         </div>
-        <div v-if="!activeMiniGame.pendingExit" class="play-mini-game-panel__actions">
-          <button
-            v-for="option in activeMiniGame.playerOptions"
-            :key="String(option.action_id || option.label || option.desc || '')"
-            type="button"
-            class="play-mini-game-panel__action"
-            @click="submitMiniGameAction(String(option.label || option.action_id || ''))"
-          >
-            {{ option.label || option.action_id }}
-          </button>
-        </div>
-        <div class="play-mini-game-panel__controls">
-          <button
-            v-for="action in miniGameControlOptions"
-            :key="action"
-            type="button"
-            class="play-mini-game-panel__control"
-            @click="submitMiniGameAction(action)"
-          >
-            {{ action }}
-          </button>
-        </div>
       </section>
 
       <div class="play-story-footer">
         <div class="play-story-main">
+<!--          {{ chapterObjectivePreview }}{{ playMode }}-->
+
           <button
             v-if="chapterObjectivePreview && playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
             type="button"
@@ -3067,6 +3999,18 @@ onBeforeUnmount(() => {
             <span class="play-debug-badge">{{ latestRuntimeChatTrace.currentRole || "未知角色" }}</span>
             <span class="play-debug-badge">状态 {{ runtimeDebugStatusLabel }}</span>
             <span class="play-debug-badge">下一位 {{ runtimeDebugNextRoleLabel }}</span>
+            <span v-if="runtimeChapterProgressDebug.phaseLabel || runtimeChapterProgressDebug.phaseId" class="play-debug-badge">
+              阶段 {{ runtimeChapterProgressDebug.phaseLabel || runtimeChapterProgressDebug.phaseId }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.userNodeLabel" class="play-debug-badge">
+              用户节点 {{ runtimeChapterProgressDebug.userNodeLabel }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.pendingGoal" class="play-debug-badge">
+              目标 {{ runtimeChapterProgressDebug.pendingGoal }}
+            </span>
+            <span v-if="runtimeChapterProgressDebug.completedEvents.length" class="play-debug-badge">
+              已完成 {{ runtimeChapterProgressDebug.completedEvents.join(" / ") }}
+            </span>
           </div>
         </div>
         <div v-if="playMode === 'history' && isSessionPlaybackMode" class="playback-panel">
@@ -3100,10 +4044,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div v-else-if="runtimeProgressHint" class="play-turn-hint" :class="{ 'play-turn-hint--loading': debugAutoAdvancing }">{{ runtimeProgressHint }}</div>
-        <div v-if="activeMiniGame && !activeMiniGame.acceptsTextInput && playMode !== 'setting' && playMode !== 'tips'" class="play-mini-game-input-lock">
-          小游戏进行中，请使用上方面板操作。
-        </div>
-        <template v-else-if="playMode === 'history' && isSessionPlaybackMode">
+        <template v-if="playMode === 'history' && isSessionPlaybackMode">
           <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
         </template>
         <template v-else-if="inputMode === 'text'">
@@ -3140,7 +4081,7 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
             <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">
-              {{ currentRuntimeInputStatus === "sending" ? "发送中..." : sessionRuntimeStageText ? "处理中..." : "发送" }}
+              {{ currentRuntimeInputStatus === "sending" || sessionRuntimeStageText ? `处理中${processingDots}` : "发送" }}
             </button>
           </div>
           <div v-if="voiceRecordingStatusText" class="play-voice-status">{{ voiceRecordingStatusText }}</div>
@@ -3182,6 +4123,14 @@ onBeforeUnmount(() => {
         <div class="tiny" style="margin-bottom:8px; color:#c0cee3;">{{ menuVisibleHint || "请选择操作" }}</div>
         <button class="button block" type="button" @click="menuCopy">复制</button>
         <button class="button block" type="button" @click="menuReplay">重听</button>
+        <button
+          v-if="menuMessage && (store.canRevisitDebugMessage(menuMessage) || store.canRevisitSessionMessage(menuMessage))"
+          class="button block"
+          type="button"
+          @click="menuRevisit"
+        >
+          回溯到这句
+        </button>
         <button class="button block" type="button" @click="menuLike">点赞</button>
         <button class="button block" type="button" @click="menuDislike">点踩</button>
         <button class="button block" type="button" @click="menuReset">取消评价</button>
@@ -3190,24 +4139,50 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="store.state.debugEndDialog" class="modal-backdrop" @click.self="closeDebugDialog">
-      <div class="modal-panel" style="width:min(100%,420px);">
+    <div v-if="store.state.debugEndDialog" class="modal-backdrop play-debug-end-backdrop" @click.self="closeDebugDialog">
+      <div class="modal-panel play-debug-end-panel" style="width:min(100%,420px);">
         <div class="modal-header">
           <button class="button small" type="button" @click="closeDebugDialog">继续查看</button>
           <div style="font-weight:900;">章节调试结束</div>
-          <span class="tiny">{{ store.state.debugEndDialog }}</span>
+          <span class="tiny">{{ store.state.debugEndDialog === '已失败' ? '章节失败' : store.state.debugEndDialog }}</span>
         </div>
         <div class="modal-body">
           <div class="surface section-block surface-soft">
-            <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog }}</div>
+            <div style="font-weight:900; font-size:18px;">{{ store.state.debugEndDialog === '已失败' ? '章节失败' : store.state.debugEndDialog }}</div>
             <div class="subtle" style="margin-top:8px;">
-              {{ store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : store.state.debugEndDialog === '进入自由剧情' ? '当前章节已完成。继续查看后将进入自由剧情，编排师会继续推进故事。' : '当前调试已结束。' }}
+              {{ store.state.debugEndDialogDetail || (store.state.debugEndDialog === '已完结' ? '已没有下一个章节。可返回编辑继续补章节。' : store.state.debugEndDialog === '进入自由剧情' ? '当前章节已完成。继续查看后将进入自由剧情，编排师会继续推进故事。' : '当前调试已结束。') }}
             </div>
           </div>
         </div>
         <div class="modal-actions">
           <button class="button" type="button" @click="closeDebugDialog">继续查看</button>
           <button class="button primary" type="button" @click="exitDebugMode">返回编辑</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="store.state.sessionEndDialog && !store.state.debugMode"
+      class="modal-backdrop play-debug-end-backdrop"
+      @click.self="closeSessionEndDialog"
+    >
+      <div class="modal-panel play-debug-end-panel" style="width:min(100%,420px);">
+        <div class="modal-header">
+          <button class="button small" type="button" @click="closeSessionEndDialog">继续查看</button>
+          <div style="font-weight:900;">章节失败</div>
+          <span class="tiny">{{ store.state.sessionEndDialog }}</span>
+        </div>
+        <div class="modal-body">
+          <div class="surface section-block surface-soft">
+            <div style="font-weight:900; font-size:18px;">章节失败</div>
+            <div class="subtle" style="margin-top:8px;">
+              {{ store.state.sessionEndDialogDetail || "当前章节结束条件失败。可继续查看当前记录，或返回历史重新开始。" }}
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="button" type="button" @click="closeSessionEndDialog">继续查看</button>
+          <button class="button primary" type="button" @click="toggleHistoryMode">返回历史</button>
         </div>
       </div>
     </div>
@@ -3301,3 +4276,129 @@ onBeforeUnmount(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.play-enemy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.play-enemy-card {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.play-enemy-card__head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.play-enemy-card__avatar {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+
+.play-enemy-card__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.play-enemy-card__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #f4f7ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.play-enemy-card__tag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(147, 197, 253, 0.18);
+  color: rgba(223, 233, 255, 0.88);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.play-enemy-card__meta {
+  color: rgba(223, 233, 255, 0.74);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.play-enemy-card__bar {
+  margin-top: 8px;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.play-enemy-card__bar--mana {
+  margin-top: 6px;
+}
+
+.play-enemy-card__bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff7f6f, #ffb36f);
+}
+
+.play-enemy-card__bar-fill--mana {
+  background: linear-gradient(90deg, #63b8ff, #7ee0ff);
+}
+
+.play-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.play-event-item {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.play-event-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: rgba(223, 233, 255, 0.78);
+}
+
+.play-event-item__index {
+  font-weight: 700;
+  color: #f4f7ff;
+}
+
+.play-event-item__summary {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #f4f7ff;
+}
+
+.play-event-item__facts,
+.play-event-item__memory {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(223, 233, 255, 0.74);
+}
+</style>

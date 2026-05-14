@@ -3,10 +3,18 @@ import type {
   ApiEnvelope,
   AiModelListMap,
   AiModelMapItem,
+  AiTokenUsageLogItem,
+  AiTokenUsageStatsItem,
   ChapterItem,
+  DebugInitResult,
+  DebugRevisitResult,
+  DebugNarrativePlan,
   DebugOrchestrationResult,
   DebugStepResult,
   GeneratedImageResult,
+  ImportableRoleListResult,
+  ImportWorldRoleResult,
+  InitChapterResult,
   LocalAvatarMattingStatus,
   MessageItem,
   ModelConfigItem,
@@ -18,6 +26,9 @@ import type {
   SessionDetail,
   SessionNarrativeResult,
   SessionOrchestrationResult,
+  StoryRuntimeConfig,
+  StoryInitResult,
+  StoryInfoResult,
   SessionItem,
   StoryRole,
   UploadedVoiceAudioResult,
@@ -76,6 +87,30 @@ export class ToonflowApi {
         throw new Error(envelope?.message || "请求失败");
       }
       return envelope.data;
+    } catch (err) {
+      throw new Error(this.requestErrorMessage(err));
+    }
+  }
+
+  /**
+   * 兼容旧接口直接返回裸对象的 POST 请求。
+   * 当前主要给章节调试回溯使用，避免后端仍返回 `{ state, messages }`
+   * 这种旧格式时，被统一信封校验误判为“请求失败”。
+   */
+  private async postAcceptEnvelopeOrRaw<T>(path: string, body?: unknown): Promise<T> {
+    try {
+      const response = await axios.post<ApiEnvelope<T> | T>(this.url(path), body ?? {}, {
+        headers: this.headers(),
+      });
+      const payload = response.data as ApiEnvelope<T> | T;
+      if (typeof (payload as ApiEnvelope<T>)?.code === "number") {
+        const envelope = payload as ApiEnvelope<T>;
+        if (envelope.code !== 200) {
+          throw new Error(envelope.message || "请求失败");
+        }
+        return envelope.data;
+      }
+      return payload as T;
     } catch (err) {
       throw new Error(this.requestErrorMessage(err));
     }
@@ -142,6 +177,36 @@ export class ToonflowApi {
     return this.post<WorldItem>("/game/saveWorld", payload);
   }
 
+  /**
+   * 复制一个现有故事为全新的草稿副本。
+   * 后端会连同封面、章节资源一起复制，返回的新世界与原故事完全独立。
+   */
+  copyWorld(worldId: number) {
+    return this.post<WorldItem>("/game/copyWorld", { worldId });
+  }
+
+  /**
+   * 查询“其他故事角色”分页列表。
+   * 创建页导入角色时只需要服务端过滤和排序好的 NPC 列表。
+   */
+  listImportableRoles(payload: {
+    excludeWorldId?: number;
+    worldName?: string;
+    roleName?: string;
+    page?: number;
+    pageSize?: number;
+  }) {
+    return this.post<ImportableRoleListResult>("/game/listImportableRoles", payload);
+  }
+
+  /**
+   * 从其他故事导入一个独立角色副本。
+   * 后端会复制角色资源文件并返回新的角色对象。
+   */
+  importWorldRole(sourceWorldId: number, roleId: string) {
+    return this.post<ImportWorldRoleResult>("/game/importWorldRole", { sourceWorldId, roleId });
+  }
+
   deleteWorld(worldId: number) {
     return this.post<boolean>("/game/deleteWorld", { worldId });
   }
@@ -152,6 +217,18 @@ export class ToonflowApi {
 
   saveChapter(payload: Record<string, unknown>) {
     return this.post<ChapterItem>("/game/saveChapter", payload);
+  }
+
+  /**
+   * 删除一个已保存章节。
+   * 后端会校验当前账号是否拥有该故事，并清理章节关联的调试会话。
+   */
+  deleteChapter(chapterId: number) {
+    return this.post<boolean>("/game/deleteChapter", { chapterId });
+  }
+
+  previewRuntimeOutline(payload: Record<string, unknown>) {
+    return this.post<Record<string, unknown>>("/game/previewRuntimeOutline", payload);
   }
 
   startSession(payload: Record<string, unknown>) {
@@ -186,6 +263,13 @@ export class ToonflowApi {
     });
   }
 
+  revisitMessage(sessionId: string, messageId: number) {
+    return this.post<boolean>("/game/revisitMessage", {
+      sessionId,
+      messageId,
+    });
+  }
+
   getMessages(sessionId: string) {
     return this.post<MessageItem[]>("/game/getMessage", {
       sessionId,
@@ -201,6 +285,24 @@ export class ToonflowApi {
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
   }
 
+  /**
+   * 小游戏编排专用接口，返回完整的 plan（含 eventType、presetContent 等）。
+   * 流程：编排 → streamlines → 语音预热 → 语音播放，每条消息串行处理。
+   */
+  orchestrateMinigameSession(sessionId: string) {
+    return this.post<SessionOrchestrationResult>("/game/orchestration/minigame", { sessionId });
+  }
+
+  /**
+   * 显式初始化正式会话的下一章节运行态。
+   */
+  initChapter(sessionId: string, chapterId?: number | null) {
+    return this.post<InitChapterResult>("/game/initchapter", {
+      sessionId,
+      chapterId: chapterId || undefined,
+    });
+  }
+
   commitNarrativeTurn(payload: Record<string, unknown>) {
     return this.post<SessionNarrativeResult>("/game/commitNarrativeTurn", payload);
   }
@@ -213,8 +315,130 @@ export class ToonflowApi {
     return this.post<DebugStepResult>("/game/debugStep", payload);
   }
 
+  introduceDebug(payload: Record<string, unknown>) {
+    return this.post<DebugOrchestrationResult>("/game/introduction", payload);
+  }
+
   orchestrateDebug(payload: Record<string, unknown>) {
     return this.post<DebugOrchestrationResult>("/game/orchestration", payload);
+  }
+
+  initDebug(payload: Record<string, unknown>) {
+    return this.post<DebugInitResult>("/game/initDebug", payload);
+  }
+
+  debugRevisitMessage(debugRuntimeKey: string, messageCount: number) {
+    return this.postAcceptEnvelopeOrRaw<DebugRevisitResult>("/game/debugRuntimeShared/revisit", {
+      debugRuntimeKey,
+      messageCount,
+    });
+  }
+
+  /**
+   * 统一的游玩模式初始化接口
+   * 合并了 startSession + orchestration 两个接口，减少前端请求次数
+   */
+  initStory(payload: Record<string, unknown>) {
+    return this.post<StoryInitResult>("/game/initStory", payload);
+  }
+
+  /**
+   * 正式游玩开场白独立请求，避免把开场白计划继续塞回 initStory。
+   */
+  introduceStory(sessionId: string) {
+    return this.post<SessionOrchestrationResult>("/game/introduction", { sessionId });
+  }
+
+  /**
+   * 开场白专用流接口。
+   *
+   * 用途：
+   * - opening 是章节写死文案，不能再走普通 streamlines 的 speaker 改写链；
+   * - 这里直接消费后端 `/game/streamlines/introduction` 返回的 preset 分片事件。
+   */
+  async streamIntroductionLines(
+    payload: Record<string, unknown>,
+    onEvent: (event: StreamLinesEvent) => void | Promise<void>,
+  ): Promise<void> {
+    const controller = new AbortController();
+    let idleTimer = 0;
+    let timedOut = false;
+    const resetIdleTimer = () => {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+      idleTimer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 15000);
+    };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    const authHeaders = this.headers();
+    if (authHeaders.Authorization) {
+      headers.Authorization = authHeaders.Authorization;
+    }
+    try {
+      const response = await fetch(this.url("/game/streamlines/introduction"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload || {}),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        let message = `HTTP ${response.status}`;
+        try {
+          message = (await response.text()) || message;
+        } catch {
+          // noop
+        }
+        throw new Error(message);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      resetIdleTimer();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        resetIdleTimer();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const text = line.trim();
+          if (!text) continue;
+          const event = JSON.parse(text) as StreamLinesEvent;
+          await onEvent(event);
+        }
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        const event = JSON.parse(tail) as StreamLinesEvent;
+        await onEvent(event);
+      }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error("开场白流空闲超时");
+      }
+      throw error;
+    } finally {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+    }
+  }
+
+  /**
+   * 统一读取故事运行信息。
+   *
+   * 用途：
+   * - 正式会话和章节调试都通过它拿故事设定、当前章节事件和调试锚点；
+   * - 避免继续从 orchestration/streamlines 里读取大杂烩状态。
+   */
+  storyInfo(payload: Record<string, unknown>) {
+    return this.post<StoryInfoResult>("/game/storyInfo", payload);
   }
 
   async streamDebugLines(
@@ -300,7 +524,11 @@ export class ToonflowApi {
   }
 
   convertAvatarVideoToGif(payload: Record<string, unknown>) {
-    return this.post<SeparatedRoleImageResult>("/game/convertAvatarVideoToGif", payload);
+    return this.post<RoleAvatarTaskResult>("/game/convertAvatarVideoToGif", payload);
+  }
+
+  getAvatarVideoToGifTask(taskId: number) {
+    return this.post<RoleAvatarTaskResult>("/game/convertAvatarVideoToGif/status", { taskId });
   }
 
   separateRoleAvatar(payload: Record<string, unknown>) {
@@ -357,8 +585,20 @@ export class ToonflowApi {
     return this.post<AiModelListMap>("/setting/getAiModelList", { type });
   }
 
+  getAiTokenUsageLog(payload: Record<string, unknown>) {
+    return this.post<AiTokenUsageLogItem[]>("/setting/getAiTokenUsageLog", payload);
+  }
+
+  getAiTokenUsageStats(payload: Record<string, unknown>) {
+    return this.post<AiTokenUsageStatsItem[]>("/setting/getAiTokenUsageStats", payload);
+  }
+
   bindModelConfig(id: number, configId: number) {
     return this.post<string>("/setting/configurationModel", { id, configId });
+  }
+
+  saveStoryRuntimeConfig(payload: StoryRuntimeConfig) {
+    return this.post<StoryRuntimeConfig>("/setting/saveStoryRuntimeConfig", payload);
   }
 
   getPrompts() {
@@ -404,6 +644,19 @@ export class ToonflowApi {
     return this.post<{ audioUrl: string; data: unknown }>("/voice/preview", payload);
   }
 
+  generateVoiceBinding(payload: Record<string, unknown>) {
+    return this.post<{
+      audioPath: string;
+      audioName: string;
+      audioUrl: string;
+      referenceText: string;
+      customVoiceId?: string;
+      customVoiceMode?: string;
+      requestModel?: string;
+      targetModel?: string;
+    }>("/voice/generateBindingVoice", payload);
+  }
+
   streamVoice(payload: Record<string, unknown>) {
     return this.post<{ audioUrl: string; data: unknown }>("/game/streamvoice", payload);
   }
@@ -412,15 +665,25 @@ export class ToonflowApi {
     return this.post<{ text: string; segments?: unknown[]; confidence?: number | null }>("/voice/transcribe", payload);
   }
 
-  polishVoicePrompt(text: string, style = "") {
-    return this.post<{ prompt: string }>("/voice/polishPrompt", { text, style });
+  polishVoicePrompt(payload: {
+    text: string;
+    configId?: number | null;
+    mode?: string;
+    provider?: string;
+  }) {
+    return this.post<{ prompt: string }>("/voice/polishPrompt", {
+      text: payload.text,
+      configId: payload.configId || undefined,
+      mode: payload.mode || undefined,
+      provider: payload.provider || undefined,
+    });
   }
 
   polishPrompt(prompt: string) {
     return this.post<{ prompt: string; text: string }>("/assets/polishPrompt", { prompt });
   }
 
-  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" }) {
     return this.post<string>("/other/testAI", payload);
   }
 
