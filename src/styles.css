@@ -4174,6 +4174,7 @@ textarea::-webkit-scrollbar-thumb {
   display: grid;
   gap: 0;
   padding-right: 38px;
+  opacity: 0.6;
 }
 
 .play-objective-chip {
