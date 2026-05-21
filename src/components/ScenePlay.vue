@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
@@ -110,6 +110,24 @@ function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | n
   const eventFacts = asMiniArray(raw.eventFacts).map((item) => scalarText(item)).filter(Boolean);
   const memoryFacts = asMiniArray(raw.memoryFacts).map((item) => scalarText(item)).filter(Boolean);
   const allowedRoles = asMiniArray(raw.allowedRoles).map((item) => scalarText(item)).filter(Boolean);
+  // 解析 stageProgress
+  const stageProgressRaw = raw.stageProgress;
+  let stageProgress: StageProgress | null = null;
+  if (stageProgressRaw && typeof stageProgressRaw === "object") {
+    const sp = stageProgressRaw as Record<string, unknown>;
+    const stages = Array.isArray(sp.stages)
+      ? sp.stages.map((s: any, idx: number) => ({
+          index: Number(s?.index ?? idx),
+          label: String(s?.label || ""),
+          status: (["", "i", "s", "f"].includes(s?.status) ? s.status : "") as StageProgressStatus,
+        }))
+      : [];
+    stageProgress = {
+      phaseId: String(sp.phaseId || ""),
+      phaseLabel: String(sp.phaseLabel || ""),
+      stages,
+    };
+  }
   return {
     eventIndex: Number(raw.eventIndex || 0) || 0,
     eventKind: scalarText(raw.eventKind),
@@ -123,6 +141,7 @@ function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | n
     updateTime: Number(raw.updateTime || 0) || 0,
     allowedRoles,
     userNodeId: scalarText(raw.userNodeId),
+    stageProgress,
   };
 }
 
@@ -576,6 +595,42 @@ const eventDigestWindowItems = computed<RuntimeEventDigestItem[]>(() => {
 const runtimeEventWindowText = computed(() =>
   scalarText(runtimeEventViewRecord.value.eventDigestWindowText || runtimeState.value.eventDigestWindowText),
 );
+
+// Stage 进度列表（用于 UI 显示事件链进度）
+const allEventStageProgress = computed(() => {
+  // 调试模式：从 debugRuntimeState 读取
+  if (store.state.debugMode) {
+    const fromDebug = (store.state.debugRuntimeState as any)?.allEventStageProgress;
+    console.log("[ScenePlay][debug] allEventStageProgress from debugRuntimeState:", fromDebug);
+    return (fromDebug || []) as StageProgress[];
+  }
+  // 正式模式：从 sessionDetail 读取
+  const fromSession = (session.value as any)?.allEventStageProgress;
+  console.log("[ScenePlay][session] allEventStageProgress:", fromSession, "session keys:", Object.keys(session.value || {}));
+  if (fromSession) return fromSession as StageProgress[];
+  return [] as StageProgress[];
+});
+
+// 当前 stage 进度（用于 UI 显示当前 phase 的 stage 进度）
+const currentStageProgress = computed(() => {
+  const progress = runtimeChapterProgressRecord.value;
+  const currentPhaseId = scalarText(progress.phaseId);
+  return allEventStageProgress.value.find(p => p.phaseId === currentPhaseId) || null;
+});
+
+// 当前 phase 的 stage 进度（用于内嵌到事件项显示）
+const currentPhaseStageProgress = computed(() => currentStageProgress.value);
+
+// Stage 进度状态标签
+const stageStatusLabel = (status: StageProgressStatus): string => {
+  switch (status) {
+    case "s": return "完成";
+    case "i": return "进行中";
+    case "f": return "失败";
+    default: return "未开始";
+  }
+};
+
 const debugOrchestratorRuntime = computed<OrchestratorRuntimeMeta | null>(() =>
   store.state.debugMode ? normalizeOrchestratorRuntime(store.state.debugLatestPlan?.orchestratorRuntime) : null,
 );
@@ -631,11 +686,50 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
   );
   const items: RuntimeEventDigestItem[] = [];
 
-  phases.forEach((phase) => {
+  phases.forEach((phase, phaseIdx) => {
     const phaseId = scalarText(phase.id);
     const phaseKind = scalarText(phase.kind) || "scene";
     const eventIndex = items.length + 1;
-    const eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+
+    // 生成带状态的 summary
+    const stages = asMiniArray(phase.stages);
+    const currentStageIndex = Number(progress.stageIndex) || 0;
+    let eventSummary: string;
+
+    if (stages.length > 0) {
+      // 根据 stage 状态生成 summary
+      const isPhaseCompleted = phaseId && completedEvents.has(`phase:${phaseId}`);
+      const isCurrentPhase = phaseId && currentPhaseId && phaseId === currentPhaseId;
+
+      const stageParts = stages.map((stage, stageIdx) => {
+        const stageLabel = scalarText(stage.label) || `阶段${stageIdx + 1}`;
+        let status = "";
+        if (isPhaseCompleted) {
+          status = "s";
+        } else if (isCurrentPhase) {
+          if (stageIdx < currentStageIndex) {
+            status = "s";
+          } else if (stageIdx === currentStageIndex) {
+            status = (currentEventStatus === "waiting_input" || currentEventStatus === "active") ? "i" : "s";
+          } else {
+            status = "";
+          }
+        } else {
+          // 非当前 phase：根据 phaseIndex 判断
+          const currentPhaseIndex = phases.findIndex((item) => scalarText(item.id) === currentPhaseId);
+          if (currentPhaseIndex >= 0 && phaseIdx < currentPhaseIndex) {
+            status = "s";
+          } else {
+            status = "";
+          }
+        }
+        return `[${status}]${stageLabel}`;
+      });
+      eventSummary = stageParts.join(" → ");
+    } else {
+      eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+    }
+
     let eventStatus = "idle";
     if (phaseId && completedEvents.has(`phase:${phaseId}`)) {
       eventStatus = "completed";
@@ -4400,5 +4494,52 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.5;
   color: rgba(223, 233, 255, 0.74);
+}
+
+.play-event-item__stages {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(223, 233, 255, 0.7);
+}
+
+.play-event-item__phase-label {
+  font-weight: 600;
+  color: rgba(223, 233, 255, 0.85);
+  margin-right: 4px;
+}
+
+.play-event-item__stage-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.play-event-item__stage-node {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.play-event-item__stage-node--done {
+  color: #4ade80;
+}
+
+.play-event-item__stage-node--active {
+  color: #facc15;
+  font-weight: 600;
+}
+
+.play-event-item__stage-node--failed {
+  color: #f87171;
+}
+
+.play-event-item__stage-arrow {
+  color: rgba(223, 233, 255, 0.4);
+  font-size: 10px;
 }
 </style>

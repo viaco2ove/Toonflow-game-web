@@ -2258,6 +2258,15 @@ a {
   word-break: break-all;
 }
 
+.settings-manager-remark {
+  max-width: 200px;
+  color: #586d8a;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .settings-manager-key {
   display: flex;
   align-items: center;
@@ -5509,4 +5518,61 @@ textarea::-webkit-scrollbar-thumb {
   .settings-manager-count {
     justify-self: start;
   }
+}
+
+/* Stage 进度显示 */
+.play-stage-progress {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.play-stage-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.play-stage-phase__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.play-stage-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.play-stage-node {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.play-stage-node--done {
+  background: rgba(29, 143, 93, 0.1);
+  color: #1d8f5d;
+}
+
+.play-stage-node--active {
+  background: rgba(36, 88, 216, 0.1);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.play-stage-node--failed {
+  background: rgba(203, 77, 77, 0.1);
+  color: var(--danger);
+}
+
+.play-stage-arrow {
+  color: var(--muted);
+  font-size: 12px;
 }

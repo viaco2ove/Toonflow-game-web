@@ -191,6 +191,7 @@ const form = reactive({
   cacheReadPricePer1M: 0,
   currency: "CNY",
   reasoningEffort: "minimal" as "minimal" | "low" | "medium" | "high",
+  remark: "",
 });
 
 const testResult = reactive({
@@ -500,6 +501,7 @@ function openCreate() {
   form.cacheReadPricePer1M = 0;
   form.currency = "CNY";
   form.reasoningEffort = "minimal";
+  form.remark = "";
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -523,6 +525,7 @@ function openEdit(row: ModelConfigItem) {
   form.cacheReadPricePer1M = normalizePriceInput(row.cacheReadPricePer1M);
   form.currency = String(row.currency || "CNY").trim().toUpperCase() || "CNY";
   form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high";
+  form.remark = String(row.remark || "").trim();
   localAvatarMattingStatus.value = null;
   syncAutodlModelPreset(form.model);
   showEditor.value = true;
@@ -558,6 +561,7 @@ async function submitEditor() {
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
         reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
+        remark: form.remark.trim() || undefined,
       });
     } else {
       await store.addManagedModelConfig({
@@ -572,6 +576,7 @@ async function submitEditor() {
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
         reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
+        remark: form.remark.trim() || undefined,
       });
     }
     showEditor.value = false;
@@ -684,6 +689,7 @@ async function confirmBinding() {
               <tr>
                 <th>选中</th>
                 <th>厂商</th>
+                <th>备注</th>
                 <th>类型</th>
                 <th>模型名称</th>
                 <th>Base URL</th>
@@ -701,6 +707,7 @@ async function confirmBinding() {
                 <td>
                   <span class="settings-manager-tag">{{ manufacturerLabel(row.manufacturer || "") }}</span>
                 </td>
+                <td class="settings-manager-remark">{{ row.remark || "-" }}</td>
                 <td>
                   <span class="settings-manager-type">{{ displayKindLabel(row.type || configType) }}</span>
                   <span v-if="shouldShowModelType" class="settings-manager-model-type">{{ displayModelTypeLabel(row.modelType || defaultModelTypeFor(configType)) }}</span>
@@ -731,7 +738,7 @@ async function confirmBinding() {
                 </td>
               </tr>
               <tr v-if="!rows.length">
-                <td class="settings-manager-empty" :colspan="configType === 'text' ? 9 : 8">暂无模型配置</td>
+                <td class="settings-manager-empty" :colspan="configType === 'text' ? 10 : 9">暂无模型配置</td>
               </tr>
             </tbody>
           </table>
@@ -862,6 +869,15 @@ async function confirmBinding() {
             <div class="settings-field-hint">默认 minimal。仅文本模型生效，用于支持 reasoning_effort 的兼容接口。</div>
           </div>
         </template>
+        <div class="field">
+          <label>备注</label>
+          <textarea
+            v-model="form.remark"
+            class="textarea"
+            rows="3"
+            placeholder="可选，填写该模型的备注信息"
+          />
+        </div>
       </div>
       <div class="modal-actions">
         <button class="button settings-outline-btn" type="button" @click="showEditor = false">取消</button>

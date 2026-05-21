@@ -2245,6 +2245,8 @@ function createToonflowStore() {
       eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : (existingDetail?.eventDigestWindow || []),
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
+      // 从 storyInfo 同步 stage 进度数据
+      allEventStageProgress: result.allEventStageProgress || existingDetail?.allEventStageProgress || null,
     };
     // 从 storyInfo 提取小游戏配置（语音等待时间等）
     // 后端返回 audioProxyMinSec，默认3秒
@@ -5724,6 +5726,8 @@ function createToonflowStore() {
       currentEventDigest: eventView.currentEventDigest,
       eventDigestWindow: eventView.eventDigestWindow,
       eventDigestWindowText: eventView.eventDigestWindowText,
+      // 从 storyInfo 同步 stage 进度数据
+      allEventStageProgress: result.allEventStageProgress || null,
     };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
