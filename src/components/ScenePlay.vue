@@ -3418,6 +3418,31 @@ function handleVoicePrimary() {
   startVoiceRecognition();
 }
 
+// 移动端语音输入面板事件处理
+function onMobileVoiceSend(text: string, mode: "dialogue" | "action") {
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
+    return;
+  }
+  store.state.sendText = text;
+  void submit();
+}
+
+function onMobileVoiceStart() {
+  // 如果不是原生语音，使用 Web 录音
+  if (!hasNativeVoice.value && browserSpeechSupported.value) {
+    startVoiceRecognition();
+  }
+}
+
+function onMobileVoiceCancel() {
+  stopVoiceRecognition();
+}
+
+function onMobileVoiceModeChange(mode: "dialogue" | "action") {
+  mobileVoiceMode.value = mode;
+}
+
 function beginVoiceHoldInteraction(target: EventTarget | null, startY: number, pointerId: number | null) {
   if (!canPlayerInput.value) {
     store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
