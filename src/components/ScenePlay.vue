@@ -294,6 +294,19 @@ function runtimeMessageLoadingText(message: MessageItem | null | undefined): str
   return `${speaker} 正在生成内容...`;
 }
 
+/**
+ * 判断是否应该在加载状态下显示重试按钮（用户可能卡住了）。
+ * 条件：消息正在加载中，且不是玩家消息
+ */
+function showRuntimeRetryButton(message: MessageItem | null | undefined): boolean {
+  if (!message) return false;
+  // 只对系统消息（旁白/NPC）显示重试按钮
+  const roleType = String(message.roleType || "").trim().toLowerCase();
+  if (roleType === "player") return false;
+  // 消息正在加载中
+  return showRuntimeMessageLoading(message);
+}
+
 function runtimeStreamSentences(message: MessageItem | null | undefined): string[] {
   if (!message) return [];
   const meta = asMiniRecord(message.meta);
@@ -2120,6 +2133,11 @@ async function retryRuntimeMessage() {
   await store.retryRuntimeFailure();
 }
 
+async function retryContinueSession() {
+  playMode.value = "live";
+  await store.retryContinueSessionNarrative();
+}
+
 async function submitMiniGameAction(text: string) {
   store.state.sendText = text;
   playMode.value = "live";
@@ -3652,6 +3670,14 @@ onBeforeUnmount(() => {
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
+                      <button
+                        v-if="showRuntimeRetryButton(message)"
+                        type="button"
+                        class="play-bubble-status__action"
+                        @click.stop="retryContinueSession"
+                      >
+                        重试
+                      </button>
                     </span>
                   </template>
                   <span v-else>{{ messageDisplayContent(message) || "（空消息）" }}</span>
@@ -3733,6 +3759,14 @@ onBeforeUnmount(() => {
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
+                      <button
+                        v-if="showRuntimeRetryButton(currentLiveMessage)"
+                        type="button"
+                        class="play-bubble-status__action"
+                        @click.stop="retryContinueSession"
+                      >
+                        重试
+                      </button>
                     </span>
                   </template>
                   <span v-else>{{ messageDisplayContent(currentLiveMessage) || "（空消息）" }}</span>

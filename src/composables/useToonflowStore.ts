@@ -6904,6 +6904,21 @@ function createToonflowStore() {
     }
   }
 
+  /**
+   * 强制重试继续剧情（用于用户在"正在生成"状态下点击重试按钮）。
+   *
+   * 与 retryRuntimeFailure 的区别：
+   * - retryRuntimeFailure：用于运行时重试消息（如编排失败），基于 runtimeRetryTask
+   * - retryContinueSessionNarrative：用于正在生成下一句时用户强制重试，清除编排锁后重新触发
+   */
+  async function retryContinueSessionNarrative() {
+    // 清除编排锁和重试任务
+    continueSessionNarrativePromise = null;
+    clearRuntimeRetryState();
+    // 重新触发编排
+    await scheduleContinueSessionNarrative();
+  }
+
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
     // 小游戏模式下需要等待语音播放完成（或最小等待时间）后再继续编排
@@ -7150,6 +7165,7 @@ function createToonflowStore() {
     hasActiveMiniGameInCurrentSession,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
+    retryContinueSessionNarrative,
     retryFailedPlayerMessage,
     restoreFailedPlayerMessageForRewrite,
     canRevisitDebugMessage,
