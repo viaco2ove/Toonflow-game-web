@@ -1695,7 +1695,8 @@ function cancelRemoveCurrentNpc() {
 随机 遇见各种npc,也就是随机编排以下角色进行发言: @薰儿（萧薰儿|古薰儿） @纳兰嫣然 @海波东（冰皇） @美杜莎  @路人甲（扮演 闪人，旅人等）
 聊天5轮对话后进入下个事件，也就是用户发言5次.
 需要判断用户是否说了5次话。不够5次就随机编排npc 说话来引发用户发言.
-
+### 记忆管理
+@记忆管理 标记用户选择的阵营到用户的角色卡的“其他”字段里
             </pre>
           <div class="create-help-section-title">示例:自由章节</div>
           <pre class="create-help-pre">
