@@ -39,8 +39,10 @@ function updateAndroidInsets() {
     const dpr = window.devicePixelRatio || 1;
     const top = Math.round(insets.top / dpr);
     const bottom = Math.round(insets.bottom / dpr);
+    const ime = Math.round((insets.ime || 0) / dpr);
     document.documentElement.style.setProperty("--android-inset-top", `${top}px`);
     document.documentElement.style.setProperty("--android-inset-bottom", `${bottom}px`);
+    document.documentElement.style.setProperty("--android-ime-height", `${ime}px`);
   }
 }
 

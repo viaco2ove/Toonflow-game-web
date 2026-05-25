@@ -5686,8 +5686,12 @@ textarea::-webkit-scrollbar-thumb {
 body.android-device {
   padding-top: 0px;
 }
-body.android-device .home-stage,body.android-device .my-page,
+body.android-device .my-page,
 body.android-device .main-view > section {
+  margin-top: var(--android-inset-top);
+}
+body.android-device .home-stage,body.android-device .play-page {
+   margin-top: 0px!important;
   padding-top: var(--android-inset-top);
 }
 

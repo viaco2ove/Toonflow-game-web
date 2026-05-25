@@ -250,14 +250,14 @@ function sessionStatusKey(input: unknown): string {
 }
 
 /**
- * 切换“故事设定”里的原始状态快照展开状态。
+ * 切换"故事设定"里的原始状态快照展开状态。
  */
 function toggleStatePreview(): void {
   statePreviewExpanded.value = !statePreviewExpanded.value;
 }
 
 /**
- * 切换“当前章节事件”里兜底原始事件窗口文本的展开状态。
+ * 切换"当前章节事件"里兜底原始事件窗口文本的展开状态。
  */
 function toggleRuntimeEventWindowPreview(): void {
   runtimeEventWindowExpanded.value = !runtimeEventWindowExpanded.value;
@@ -369,7 +369,7 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          // 禁止把旧缓存里的“下一位是谁”回放到 UI。
+          // 禁止把旧缓存里的"下一位是谁"回放到 UI。
           nextRole: "",
           nextRoleType: "",
           updateTime: Number(item.updateTime || 0),
@@ -444,7 +444,7 @@ function normalizePlayableSpeechText(input: unknown): string {
   const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
   if (!text) return "";
   const compact = text.replace(/\s+/g, "");
-  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
+  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
   return meaningful ? text : "";
 }
 
@@ -453,7 +453,7 @@ function speakableUnitCount(input: unknown): number {
   if (!text) return 0;
   return text
     .replace(/\s+/g, "")
-    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
+    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
     .length;
 }
 
@@ -836,7 +836,7 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     age: ageValue != null && Number.isFinite(ageValue) ? ageValue : null,
     level: levelValue != null && Number.isFinite(levelValue) ? levelValue : 1,
     // 参数卡里的经验值字段来自运行时 JSON，不在这里显式解析的话，
-    // 详情面板就会把已有数字误判成“未设定”。
+    // 详情面板就会把已有数字误判成"未设定"。
     exp: Number.isFinite(expValue) ? expValue : 0,
     next_level_exp: Number.isFinite(nextLevelExpValue) ? nextLevelExpValue : 100,
     level_desc: scalarText(raw.level_desc || raw.levelDesc) || "初入此界",
@@ -1095,8 +1095,8 @@ const playInputPlaceholder = computed(() => {
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败";
   }
-  // 正式会话不再消费“下一位是谁”的预编排字段。
-  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成“下一位”，因此统一退回泛化提示。
+  // 正式会话不再消费"下一位是谁"的预编排字段。
+  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成"下一位"，因此统一退回泛化提示。
   return "当前还没轮到用户发言";
 });
 const playTurnHint = computed(() => {
@@ -1146,7 +1146,7 @@ const playTurnHint = computed(() => {
       expectedSpeaker: expectedSpeaker.value,
     });
   // 正式会话的下一位角色名可能滞后于最新 turnState，同样不适合作为主提示直接展示。
-  // 这里统一改成泛化文案，避免出现“轮到某角色发言”但实际并非如此的误导状态。
+  // 这里统一改成泛化文案，避免出现"轮到某角色发言"但实际并非如此的误导状态。
   return "当前还没轮到用户发言，等待剧情继续。";
 });
 
@@ -1157,7 +1157,7 @@ const playTurnHint = computed(() => {
  * 用途：
  * - 小游戏模式下，长提示应放到底部 turn hint，不应塞进输入框；
  * - 否则移动端和窄屏下输入框会被占位文本撑高，影响输入体验；
- * - 因此文本输入统一返回空串，语音模式仅保留“按住说话”。
+ * - 因此文本输入统一返回空串，语音模式仅保留"按住说话"。
  */
 function miniGameInputPlaceholder(
   game: NonNullable<typeof activeMiniGame.value>,
@@ -1293,7 +1293,7 @@ const miniGameSummaryItems = computed(() => {
 });
 
 /**
- * 监听小游戏面板视图变化，便于排查“为什么小游戏面板出现或消失”。
+ * 监听小游戏面板视图变化，便于排查"为什么小游戏面板出现或消失"。
  */
 watch(
   activeMiniGame,
@@ -1358,14 +1358,14 @@ const androidVoiceBtnText = computed(() => {
   if (voiceHoldCancelPending.value) return "松开取消";
   if (androidVoiceMode.value === "action") return "动作: (xxx)";
   if (androidVoiceMode.value === "scene") return "场景: [xxx]";
-  if (voiceHoldActive.value) return androidVoiceText.value || "松开发送";
+  if (voiceListening.value) return androidVoiceText.value || "松开发送";
   return "按住说话";
 });
 
 const androidVoiceTip = computed(() => {
   if (voiceHoldCancelPending.value) return "松开取消";
-  if (androidVoiceMode.value === "action") return "动作模式：内容会用括号包裹 (xxx)";
-  if (androidVoiceMode.value === "scene") return "场景模式：内容会用方括号包裹 [xxx]";
+  if (androidVoiceMode.value === "action") return "动作模式：(xxx) · 上移取消，侧移输入(台词)";
+  if (androidVoiceMode.value === "scene") return "场景模式：[xxx] · 上移取消，侧移输入(台词)";
   return "上移取消，侧移输入(动作、场景)";
 });
 
@@ -1375,11 +1375,13 @@ function onAndroidVoiceStart(e: PointerEvent) {
   androidVoiceStartY.value = e.clientY;
   androidVoiceMode.value = null;
   androidVoiceText.value = "";
-  startVoiceHold(e.pointerId, e.clientY);
+  voiceHoldCancelPending.value = false;
+  // 开始录音
+  startVoiceRecognition();
 }
 
 function onAndroidVoiceMove(e: PointerEvent) {
-  if (!voiceHoldActive.value) return;
+  if (!voiceListening.value) return;
   const deltaX = e.clientX - androidVoiceStartX.value;
   const deltaY = androidVoiceStartY.value - e.clientY;
   const threshold = 60;
@@ -1388,7 +1390,6 @@ function onAndroidVoiceMove(e: PointerEvent) {
   if (deltaY > threshold) {
     voiceHoldCancelPending.value = true;
     androidVoiceMode.value = null;
-    updateVoiceHoldCancel(e.clientY);
     return;
   }
 
@@ -1409,18 +1410,22 @@ function onAndroidVoiceMove(e: PointerEvent) {
 }
 
 function onAndroidVoiceEnd(e: PointerEvent) {
-  if (!voiceHoldActive.value) return;
+  if (!voiceListening.value) return;
 
   const mode = androidVoiceMode.value;
   const cancelled = voiceHoldCancelPending.value;
 
-  endVoiceHold(e.pointerId, cancelled);
-
-  if (!cancelled && voiceTranscribing.value) {
-    // 语音识别完成后发送
+  if (cancelled) {
+    // 取消录音
+    discardNextRecording = true;
+    stopVoiceRecognition();
+  } else {
+    // 停止录音并发送，记录模式用于包裹文字
     pendingAndroidVoiceMode.value = mode;
+    stopVoiceRecordingAndTranscribe();
   }
 
+  voiceHoldCancelPending.value = false;
   androidVoiceMode.value = null;
 }
 
@@ -1636,7 +1641,7 @@ const latestRuntimeChatTrace = computed(() => {
     return rows.length ? rows[rows.length - 1] : null;
   }
   const scopedRows = rows.filter((row) => row.conversationId === currentConversationId);
-  // 当前会话还没写入 trace 时，不能退回到“所有会话最后一条”，否则会把旧会话角色串进当前 UI。
+  // 当前会话还没写入 trace 时，不能退回到"所有会话最后一条"，否则会把旧会话角色串进当前 UI。
   return scopedRows.length ? scopedRows[scopedRows.length - 1] : null;
 });
 
@@ -1682,7 +1687,7 @@ const runtimeDebugNextRoleLabel = computed(() => {
   const status = currentRuntimeInputStatus.value;
   if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
   // 正式会话的 turnState.expectedRole 在部分链路里会滞后于最新台词。
-  // 这里继续展示具体角色名，只会把旧缓存误显示成“下一位纳兰嫣然”。
+  // 这里继续展示具体角色名，只会把旧缓存误显示成"下一位纳兰嫣然"。
   return "剧情继续";
 });
 const runtimeDebugStatusLabel = computed(() => {
@@ -1795,7 +1800,7 @@ watch(
 );
 
 /**
- * 把章节背景音乐的播放状态和当前“有声/静音”开关保持一致。
+ * 把章节背景音乐的播放状态和当前"有声/静音"开关保持一致。
  * 关闭时暂停但保留播放进度，恢复时从当前位置继续播放。
  */
 function syncChapterBgmAudibility() {
@@ -1939,7 +1944,7 @@ watch(
     for (const message of newMessages) {
       if (cancelled) return;
       // 流式台词在首个 delta 返回前，只是一个空占位。
-      // 这里先不把它塞进聊天框，避免“编排接口刚返回就先出现获取台词中气泡”的假象。
+      // 这里先不把它塞进聊天框，避免"编排接口刚返回就先出现获取台词中气泡"的假象。
       if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
         continue;
       }
@@ -3456,12 +3461,17 @@ function stopVoiceRecordingAndTranscribe() {
 
 async function startVoiceRecognition() {
   if (!browserSpeechSupported.value) {
-    inputMode.value = "text";
-    store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
-    nextTick(() => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
-      textarea?.focus();
-    });
+    // 安卓设备模式下不切换到文字模式
+    if (!isAndroidDevice.value) {
+      inputMode.value = "text";
+      store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
+      nextTick(() => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
+        textarea?.focus();
+      });
+    } else {
+      store.state.notice = "当前设备暂不支持语音输入";
+    }
     return;
   }
   try {
@@ -3475,7 +3485,7 @@ async function startVoiceRecognition() {
         : "";
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     mediaRecorder = recorder;
-    // 立即进入录音态，避免 onstart 延迟时看起来像“没有按住效果”。
+    // 立即进入录音态，避免 onstart 延迟时看起来像"没有按住效果"。
     voiceListening.value = true;
     recorder.onstart = () => {
       voiceListening.value = true;
@@ -3511,9 +3521,12 @@ async function startVoiceRecognition() {
     };
     recorder.start();
   } catch (error: any) {
-    inputMode.value = "text";
     voiceListening.value = false;
     resetVoiceHoldState();
+    // 安卓设备模式下不切换到文字模式
+    if (!isAndroidDevice.value) {
+      inputMode.value = "text";
+    }
     store.state.notice = `无法开始录音: ${error?.message || "未知错误"}`;
   }
 }
@@ -4013,7 +4026,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="!allowRoleView" class="play-inline-card">
-          创作者未开放“他人可查看角色设定”，当前仅展示基础信息。
+          创作者未开放"他人可查看角色设定"，当前仅展示基础信息。
         </div>
         <div v-else-if="settingSelectedRole" class="play-inline-card">
           <div class="play-inline-card__title">{{ settingSelectedRole.name }}</div>
@@ -4330,12 +4343,13 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <template v-else>
+            <div v-if="voiceListening" class="android-voice-tip">{{ androidVoiceTip }}</div>
             <div class="android-voice-bar">
               <button
                 type="button"
                 class="android-voice-btn"
                 :class="{
-                  'is-active': voiceHoldActive && !voiceHoldCancelPending && !androidVoiceMode,
+                  'is-active': voiceListening && !voiceHoldCancelPending && !androidVoiceMode,
                   'is-action': androidVoiceMode === 'action',
                   'is-scene': androidVoiceMode === 'scene',
                   'is-cancel': voiceHoldCancelPending
@@ -4348,10 +4362,11 @@ onBeforeUnmount(() => {
               >
                 {{ androidVoiceBtnText }}
               </button>
-              <button type="button" class="play-mini-round" @click="inputMode = 'text'">键</button>
-              <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+              <template v-if="!voiceListening">
+                <button type="button" class="play-mini-round" @click="inputMode = 'text'">键</button>
+                <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+              </template>
             </div>
-            <div v-if="voiceHoldActive" class="android-voice-tip">{{ androidVoiceTip }}</div>
           </template>
         </template>
         <!-- 网页端原有UI -->
