@@ -5687,19 +5687,15 @@ body.android-device {
   padding-top: 0px;
 }
 body.android-device .my-page,
-body.android-device .main-view > section {
+body.android-device .main-view > section:not(.play-page):not(.home-stage) {
   margin-top: var(--android-inset-top);
 }
 
-body.android-device .home-stage,body.android-device > section.home-stage {
-  margin-top: 0px!important;
+body.android-device .home-stage {
   padding-top: var(--android-inset-top);
 }
-body.android-device > section.play-page {
-  margin-top: 0px!important;
-}
+
 body.android-device .play-page .play-stage{
-  margin-top: 0px!important;
   padding-top: var(--android-inset-top);
 }
 
