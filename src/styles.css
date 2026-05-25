@@ -5625,8 +5625,8 @@ textarea::-webkit-scrollbar-thumb {
   height: 44px;
   border: none;
   border-radius: 22px;
-  background: #1a1a1a;
-  color: #fff;
+  background: #c3c2c2;
+  color: #6c6b6b;
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
