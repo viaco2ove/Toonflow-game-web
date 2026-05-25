@@ -5687,7 +5687,7 @@ body.android-device,
 body.android-device #app {
   padding-bottom: var(--android-inset-bottom);
 }
-body.android-device .home-stage,body.android-device .app-shell,body.android-device .my-page,
+body.android-device .home-stage,body.android-device .my-page,
 body.android-device .main-view > section {
   padding-top: var(--android-inset-top);
 }
