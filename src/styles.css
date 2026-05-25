@@ -5682,10 +5682,9 @@ textarea::-webkit-scrollbar-thumb {
   --android-inset-bottom: 0px;
 }
 
-/* 安卓模式下给页面容器加 padding-top */
-body.android-device,
-body.android-device #app {
-  padding-bottom: var(--android-inset-bottom);
+/* 安卓模式下给页面容器加 padding-top（只加顶部，底部由 .nav 处理） */
+body.android-device {
+  padding-top: 0px;
 }
 body.android-device .home-stage,body.android-device .my-page,
 body.android-device .main-view > section {
@@ -5705,3 +5704,7 @@ body.android-device .play-global-actions {
   top: calc(8px + var(--android-inset-top));
 }
 
+
+body.android-device .nav {
+  padding-bottom: calc(12px + var(--android-inset-bottom, 0px));
+}
