@@ -13,6 +13,37 @@ import ScenePlay from "./components/ScenePlay.vue";
 const store = useToonflowStore();
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
+// 安卓设备模式检测
+function checkAndroidDevice() {
+  const urlParams = new URLSearchParams(window.location.search);
+  let isAndroid = false;
+  if (urlParams.get("device") === "mobile") {
+    isAndroid = true;
+  } else if (typeof (window as any).Android !== "undefined") {
+    isAndroid = true;
+  } else {
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes("android") && (ua.includes("mobile") || ua.includes("toonflow"))) {
+      isAndroid = true;
+    }
+  }
+  if (isAndroid) {
+    document.body.classList.add("android-device");
+  }
+}
+
+function updateAndroidInsets() {
+  const insets = (window as any).androidInsets;
+  if (insets) {
+    // Android 传的是物理像素，需要转成 CSS 像素
+    const dpr = window.devicePixelRatio || 1;
+    const top = Math.round(insets.top / dpr);
+    const bottom = Math.round(insets.bottom / dpr);
+    document.documentElement.style.setProperty("--android-inset-top", `${top}px`);
+    document.documentElement.style.setProperty("--android-inset-bottom", `${bottom}px`);
+  }
+}
+
 function isImportantNotice(text: string) {
   if (!text.trim()) return false;
   return [
@@ -37,6 +68,9 @@ const bottomActive = computed(() => {
 });
 
 onMounted(async () => {
+  checkAndroidDevice();
+  window.addEventListener("android-insets", updateAndroidInsets);
+  updateAndroidInsets();
   if (!store.state.selectedProjectId && store.state.projects.length) {
     store.selectProject(store.state.projects[0].id);
   }
@@ -69,6 +103,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (noticeTimer) clearTimeout(noticeTimer);
+  window.removeEventListener("android-insets", updateAndroidInsets);
 });
 
 function changeTab(tab: "home" | "create" | "history" | "my") {

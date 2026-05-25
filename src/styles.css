@@ -3542,6 +3542,10 @@ textarea::-webkit-scrollbar-thumb {
   padding: 12px;
 }
 
+.android-device .home-stage {
+  border-radius: 0;
+}
+
 .home-global-actions {
   position: absolute;
   top: 12px;
@@ -3634,6 +3638,10 @@ textarea::-webkit-scrollbar-thumb {
   background: #10233f;
   box-shadow: 0 24px 42px rgba(4, 12, 25, 0.34);
 }
+.android-device .home-hero-card {
+  border-radius: 0;
+}
+
 
 .home-hero-card .story-cover {
   border: 0;
@@ -5312,8 +5320,15 @@ textarea::-webkit-scrollbar-thumb {
   border-radius: 999px;
   border: 1px solid rgba(188, 204, 226, 0.22);
   background: rgba(255, 255, 255, 0.08);
-  color: #eef4ff;
+  color: #22222f;
   font-weight: 800;
+}
+
+.play-text-bar .play-mini-round {
+    color: #fff4f4;
+}
+.android-text-bar .play-mini-round {
+    color: #22222f;
 }
 
 .play-mini-round--voice {
@@ -5576,3 +5591,117 @@ textarea::-webkit-scrollbar-thumb {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* 安卓设备模式样式 */
+.android-text-bar {
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+.android-text-bar .play-textarea {
+  background: #f0f2f5;
+  border-radius: 20px;
+  color: #1b2434;
+}
+
+.android-text-bar .play-textarea::placeholder {
+  color: #a0aabd;
+}
+
+.android-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+.android-voice-btn {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+
+.android-voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.android-voice-btn.is-active {
+  background: #1a1a1a;
+  color: #fff;
+}
+
+.android-voice-btn.is-action,
+.android-voice-btn.is-scene {
+  background: #fff;
+  color: #1a1a1a;
+  border: 2px solid #e0e0e0;
+}
+
+.android-voice-btn.is-cancel {
+  background: #ff4444;
+  color: #fff;
+}
+
+.android-voice-tip {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  margin-top: 8px;
+}
+
+
+/* 安卓设备模式安全区域适配 */
+.android-text-bar,
+.android-voice-bar {
+  margin-bottom: var(--android-inset-bottom, 0px);
+}
+
+/* 安卓模式下整体下移 */
+.play-input-shell {
+  padding-bottom: var(--android-inset-bottom, 0px);
+}
+
+/* 安卓模式顶部状态栏适配 */
+:root {
+  --android-inset-top: 0px;
+  --android-inset-bottom: 0px;
+}
+
+/* 安卓模式下给页面容器加 padding-top */
+body.android-device,
+body.android-device #app {
+  padding-bottom: var(--android-inset-bottom);
+}
+body.android-device .home-stage,body.android-device .app-shell,body.android-device .my-page,
+body.android-device .main-view > section {
+  padding-top: var(--android-inset-top);
+}
+
+/* 安卓模式下顶部按钮下移 */
+body.android-device .home-global-actions {
+  top: calc(12px + var(--android-inset-top));
+}
+
+body.android-device .play-header {
+  padding-top: calc(8px + var(--android-inset-top));
+}
+
+body.android-device .play-global-actions {
+  top: calc(8px + var(--android-inset-top));
+}
+

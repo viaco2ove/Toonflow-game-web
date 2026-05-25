@@ -1325,6 +1325,114 @@ const playbackPlaying = ref(false);
 let playbackRunId = 0;
 const isSessionPlaybackMode = computed(() => !store.state.debugMode && store.state.sessionViewMode === "playback");
 const inputMode = ref<"voice" | "text">("text");
+
+// 安卓设备模式检测
+const isAndroidDevice = ref(false);
+function checkAndroidDevice() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("device") === "mobile") {
+    isAndroidDevice.value = true;
+    return;
+  }
+  if (typeof (window as any).Android !== "undefined") {
+    isAndroidDevice.value = true;
+    return;
+  }
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("android") && (ua.includes("mobile") || ua.includes("toonflow"))) {
+    isAndroidDevice.value = true;
+  }
+}
+onMounted(() => {
+  checkAndroidDevice();
+});
+
+// 安卓语音模式：dialogue(台词/黑色), action(动作/白色), scene(场景/白色)
+const androidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
+const androidVoiceStartX = ref(0);
+const androidVoiceStartY = ref(0);
+const androidVoiceText = ref("");
+
+const androidVoiceBtnText = computed(() => {
+  if (voiceTranscribing.value) return "识别中...";
+  if (voiceHoldCancelPending.value) return "松开取消";
+  if (androidVoiceMode.value === "action") return "动作: (xxx)";
+  if (androidVoiceMode.value === "scene") return "场景: [xxx]";
+  if (voiceHoldActive.value) return androidVoiceText.value || "松开发送";
+  return "按住说话";
+});
+
+const androidVoiceTip = computed(() => {
+  if (voiceHoldCancelPending.value) return "松开取消";
+  if (androidVoiceMode.value === "action") return "动作模式：内容会用括号包裹 (xxx)";
+  if (androidVoiceMode.value === "scene") return "场景模式：内容会用方括号包裹 [xxx]";
+  return "上移取消，侧移输入(动作、场景)";
+});
+
+function onAndroidVoiceStart(e: PointerEvent) {
+  if (!canPlayerInput.value || voiceTranscribing.value) return;
+  androidVoiceStartX.value = e.clientX;
+  androidVoiceStartY.value = e.clientY;
+  androidVoiceMode.value = null;
+  androidVoiceText.value = "";
+  startVoiceHold(e.pointerId, e.clientY);
+}
+
+function onAndroidVoiceMove(e: PointerEvent) {
+  if (!voiceHoldActive.value) return;
+  const deltaX = e.clientX - androidVoiceStartX.value;
+  const deltaY = androidVoiceStartY.value - e.clientY;
+  const threshold = 60;
+
+  // 上滑取消
+  if (deltaY > threshold) {
+    voiceHoldCancelPending.value = true;
+    androidVoiceMode.value = null;
+    updateVoiceHoldCancel(e.clientY);
+    return;
+  }
+
+  voiceHoldCancelPending.value = false;
+
+  // 右滑 -> 动作模式
+  if (deltaX > threshold) {
+    androidVoiceMode.value = "action";
+  }
+  // 左滑 -> 场景模式
+  else if (deltaX < -threshold) {
+    androidVoiceMode.value = "scene";
+  }
+  // 中间 -> 台词模式
+  else {
+    androidVoiceMode.value = null;
+  }
+}
+
+function onAndroidVoiceEnd(e: PointerEvent) {
+  if (!voiceHoldActive.value) return;
+
+  const mode = androidVoiceMode.value;
+  const cancelled = voiceHoldCancelPending.value;
+
+  endVoiceHold(e.pointerId, cancelled);
+
+  if (!cancelled && voiceTranscribing.value) {
+    // 语音识别完成后发送
+    pendingAndroidVoiceMode.value = mode;
+  }
+
+  androidVoiceMode.value = null;
+}
+
+const pendingAndroidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
+
+// 修改语音识别结果处理，根据模式包裹文字
+function wrapVoiceText(text: string, mode: "dialogue" | "action" | "scene" | null): string {
+  if (mode === "action") return `(${text})`;
+  if (mode === "scene") return `[${text}]`;
+  return text;
+}
+
 const autoVoice = ref(readPlayAutoVoicePreference());
 const voiceListening = ref(false);
 const voiceTranscribing = ref(false);
@@ -3321,7 +3429,12 @@ async function transcribeVoiceBlob(blob: Blob) {
       store.state.notice = "语音识别未返回文本";
       return;
     }
-    store.state.sendText = text;
+    // 安卓模式下根据模式包裹文字
+    const finalText = isAndroidDevice.value && pendingAndroidVoiceMode.value
+      ? wrapVoiceText(text, pendingAndroidVoiceMode.value)
+      : text;
+    pendingAndroidVoiceMode.value = null;
+    store.state.sendText = finalText;
     await submit();
   } catch (error: any) {
     store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
@@ -4200,6 +4313,48 @@ onBeforeUnmount(() => {
         <template v-if="playMode === 'history' && isSessionPlaybackMode">
           <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
         </template>
+        <!-- 安卓设备模式 -->
+        <template v-else-if="isAndroidDevice">
+          <template v-if="inputMode === 'text'">
+            <div class="play-text-bar android-text-bar">
+              <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话继续故事" :disabled="!canPlayerInput" @keydown.enter.prevent="submit"></textarea>
+              <button type="button" class="play-mini-round play-mini-round--voice" :disabled="!canPlayerInput" @click="inputMode = 'voice'">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>
+                  <path d="M7.8 11.8a4.2 4.2 0 0 0 8.4 0"></path>
+                  <path d="M12 16v3"></path>
+                  <path d="M9.5 19h5"></path>
+                </svg>
+              </button>
+              <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+            </div>
+          </template>
+          <template v-else>
+            <div class="android-voice-bar">
+              <button
+                type="button"
+                class="android-voice-btn"
+                :class="{
+                  'is-active': voiceHoldActive && !voiceHoldCancelPending && !androidVoiceMode,
+                  'is-action': androidVoiceMode === 'action',
+                  'is-scene': androidVoiceMode === 'scene',
+                  'is-cancel': voiceHoldCancelPending
+                }"
+                :disabled="voiceTranscribing || !canPlayerInput"
+                @pointerdown="onAndroidVoiceStart"
+                @pointermove="onAndroidVoiceMove"
+                @pointerup="onAndroidVoiceEnd"
+                @pointercancel="onAndroidVoiceEnd"
+              >
+                {{ androidVoiceBtnText }}
+              </button>
+              <button type="button" class="play-mini-round" @click="inputMode = 'text'">键</button>
+              <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+            </div>
+            <div v-if="voiceHoldActive" class="android-voice-tip">{{ androidVoiceTip }}</div>
+          </template>
+        </template>
+        <!-- 网页端原有UI -->
         <template v-else-if="inputMode === 'text'">
           <div class="play-text-bar">
             <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerInput"></textarea>
