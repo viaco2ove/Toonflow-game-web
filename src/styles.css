@@ -5682,7 +5682,7 @@ textarea::-webkit-scrollbar-thumb {
   --android-inset-bottom: 0px;
 }
 
-/* 安卓模式下给页面容器加 padding-top（只加顶部，底部由 .nav 处理） */
+/* 安卓模式下给页面容器的第一个section 加 padding-top（只加顶部，底部由 .nav 处理） */
 body.android-device {
   padding-top: 0px;
 }
