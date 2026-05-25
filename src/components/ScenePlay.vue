@@ -1345,7 +1345,73 @@ function checkAndroidDevice() {
 }
 onMounted(() => {
   checkAndroidDevice();
+  // 监听原生语音识别事件
+  if (isAndroidDevice.value) {
+    window.addEventListener("speechstart", onNativeSpeechStart);
+    window.addEventListener("speechpartial", onNativeSpeechPartial);
+    window.addEventListener("speechresult", onNativeSpeechResult);
+    window.addEventListener("speecherror", onNativeSpeechError);
+    window.addEventListener("speechend", onNativeSpeechEnd);
+    window.addEventListener("permission-granted", onPermissionGranted);
+    window.addEventListener("permission-denied", onPermissionDenied);
+  }
 });
+
+onBeforeUnmount(() => {
+  if (isAndroidDevice.value) {
+    window.removeEventListener("speechstart", onNativeSpeechStart);
+    window.removeEventListener("speechpartial", onNativeSpeechPartial);
+    window.removeEventListener("speechresult", onNativeSpeechResult);
+    window.removeEventListener("speecherror", onNativeSpeechError);
+    window.removeEventListener("speechend", onNativeSpeechEnd);
+    window.removeEventListener("permission-granted", onPermissionGranted);
+    window.removeEventListener("permission-denied", onPermissionDenied);
+  }
+});
+
+let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
+
+function onNativeSpeechStart() {
+  voiceListening.value = true;
+}
+
+function onNativeSpeechPartial(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  if (detail) androidVoiceText.value = detail;
+}
+
+async function onNativeSpeechResult(e: Event) {
+  voiceListening.value = false;
+  voiceTranscribing.value = false;
+  const detail = (e as CustomEvent).detail;
+  if (detail) {
+    const text = wrapVoiceText(detail, pendingAndroidVoiceMode);
+    pendingAndroidVoiceMode = null;
+    store.state.sendText = text;
+    await submit();
+  }
+}
+
+function onNativeSpeechError(e: Event) {
+  voiceListening.value = false;
+  voiceTranscribing.value = false;
+  const detail = (e as CustomEvent).detail;
+  store.state.notice = `语音识别失败: ${detail}`;
+  resetVoiceHoldState();
+}
+
+function onNativeSpeechEnd() {
+  voiceListening.value = false;
+}
+
+function onPermissionGranted() {
+  (window as any).Android?.startSpeech();
+}
+
+function onPermissionDenied() {
+  voiceListening.value = false;
+  store.state.notice = "需要麦克风权限才能使用语音输入";
+}
 
 // 安卓语音模式：dialogue(台词/黑色), action(动作/白色), scene(场景/白色)
 const androidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
@@ -1376,8 +1442,14 @@ function onAndroidVoiceStart(e: PointerEvent) {
   androidVoiceMode.value = null;
   androidVoiceText.value = "";
   voiceHoldCancelPending.value = false;
-  // 开始录音
-  startVoiceRecognition();
+  pendingAndroidVoiceMode = null;
+  // 安卓设备模式下使用原生语音识别
+  if (isAndroidDevice.value && (window as any).Android) {
+    (window as any).Android.startSpeech();
+  } else {
+    // 网页端使用 WebAudio API
+    startVoiceRecognition();
+  }
 }
 
 function onAndroidVoiceMove(e: PointerEvent) {
@@ -1417,19 +1489,26 @@ function onAndroidVoiceEnd(e: PointerEvent) {
 
   if (cancelled) {
     // 取消录音
-    discardNextRecording = true;
-    stopVoiceRecognition();
+    if (isAndroidDevice.value && (window as any).Android) {
+      (window as any).Android.cancelSpeech();
+    } else {
+      discardNextRecording = true;
+      stopVoiceRecognition();
+    }
   } else {
-    // 停止录音并发送，记录模式用于包裹文字
-    pendingAndroidVoiceMode.value = mode;
-    stopVoiceRecordingAndTranscribe();
+    // 停止录音并发送
+    if (isAndroidDevice.value && (window as any).Android) {
+      pendingAndroidVoiceMode = mode;
+      (window as any).Android.stopSpeech();
+    } else {
+      pendingAndroidVoiceMode = mode;
+      stopVoiceRecordingAndTranscribe();
+    }
   }
 
   voiceHoldCancelPending.value = false;
   androidVoiceMode.value = null;
 }
-
-const pendingAndroidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
 
 // 修改语音识别结果处理，根据模式包裹文字
 function wrapVoiceText(text: string, mode: "dialogue" | "action" | "scene" | null): string {
@@ -3435,10 +3514,10 @@ async function transcribeVoiceBlob(blob: Blob) {
       return;
     }
     // 安卓模式下根据模式包裹文字
-    const finalText = isAndroidDevice.value && pendingAndroidVoiceMode.value
-      ? wrapVoiceText(text, pendingAndroidVoiceMode.value)
+    const finalText = isAndroidDevice.value && pendingAndroidVoiceMode
+      ? wrapVoiceText(text, pendingAndroidVoiceMode)
       : text;
-    pendingAndroidVoiceMode.value = null;
+    pendingAndroidVoiceMode = null;
     store.state.sendText = finalText;
     await submit();
   } catch (error: any) {

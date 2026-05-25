@@ -35,11 +35,12 @@ function checkAndroidDevice() {
 function updateAndroidInsets() {
   const insets = (window as any).androidInsets;
   if (insets) {
-    // Android 传的是物理像素，需要转成 CSS 像素
-    const dpr = window.devicePixelRatio || 1;
-    const top = Math.round(insets.top / dpr);
-    const bottom = Math.round(insets.bottom / dpr);
-    const ime = Math.round((insets.ime || 0) / dpr);
+    // 🚨 修正：Android 传过来的（insets.top / density）已经是 CSS 逻辑像素了
+    // 直接使用，不要再除以 dpr，否则会遭遇“二次缩水”
+    const top = Math.round(insets.top);
+    const bottom = Math.round(insets.bottom);
+    const ime = Math.round(insets.ime || 0);
+
     document.documentElement.style.setProperty("--android-inset-top", `${top}px`);
     document.documentElement.style.setProperty("--android-inset-bottom", `${bottom}px`);
     document.documentElement.style.setProperty("--android-ime-height", `${ime}px`);

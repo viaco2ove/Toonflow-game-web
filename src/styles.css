@@ -5690,8 +5690,16 @@ body.android-device .my-page,
 body.android-device .main-view > section {
   margin-top: var(--android-inset-top);
 }
-body.android-device .home-stage,body.android-device .play-page {
-   margin-top: 0px!important;
+
+body.android-device .home-stage,body.android-device > section.home-stage {
+  margin-top: 0px!important;
+  padding-top: var(--android-inset-top);
+}
+body.android-device > section.play-page {
+  margin-top: 0px!important;
+}
+body.android-device .play-page .play-stage{
+  margin-top: 0px!important;
   padding-top: var(--android-inset-top);
 }
 
