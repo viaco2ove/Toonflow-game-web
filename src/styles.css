@@ -5739,7 +5739,7 @@ body.android-device .play-page .play-stage{
 }
 
 /* 新增伪元素样式 */
-body.android-device .my-page::before,
+body.android-device .my-page::before,body.android-device settings-page,
 body.android-device .main-view > section:not(.play-page):not(.home-stage)::before {
   content: "";
   position: absolute;
