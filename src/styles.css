@@ -4231,6 +4231,9 @@ textarea::-webkit-scrollbar-thumb {
   color: #20304a;
   box-shadow: 0 22px 50px rgba(3, 10, 20, 0.24);
   backdrop-filter: blur(12px);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .play-live-card--player {
@@ -4460,6 +4463,9 @@ textarea::-webkit-scrollbar-thumb {
   line-height: 1.6;
   white-space: pre-wrap;
   box-shadow: 0 10px 24px rgba(10, 20, 32, 0.16);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .play-bubble-voice-tail {
@@ -5632,7 +5638,11 @@ textarea::-webkit-scrollbar-thumb {
   cursor: pointer;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s, color 0.15s;
+  min-width: 80px;
 }
 
 .android-voice-btn:disabled {
@@ -5640,28 +5650,53 @@ textarea::-webkit-scrollbar-thumb {
   cursor: not-allowed;
 }
 
+/* 按住录音时：黑色 + 脉动动画 */
 .android-voice-btn.is-active {
   background: #1a1a1a;
   color: #fff;
+  animation: voice-recording-pulse 1.2s ease-in-out infinite;
 }
 
+@keyframes voice-recording-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(26, 26, 26, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(26, 26, 26, 0); }
+}
+
+/* 动作/场景模式：白色 + 脉动 */
 .android-voice-btn.is-action,
 .android-voice-btn.is-scene {
   background: #fff;
   color: #1a1a1a;
   border: 2px solid #e0e0e0;
+  animation: voice-recording-pulse-white 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-recording-pulse-white {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+  50% { box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
 }
 
 .android-voice-btn.is-cancel {
   background: #ff4444;
   color: #fff;
+  animation: none;
 }
 
 .android-voice-tip {
   text-align: center;
   font-size: 12px;
   color: #999;
-  margin-top: 8px;
+  margin-bottom: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.android-voice-bar {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 

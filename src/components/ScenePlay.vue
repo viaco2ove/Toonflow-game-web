@@ -1330,7 +1330,14 @@ const inputMode = ref<"voice" | "text">("text");
 const isAndroidDevice = ref(false);
 function checkAndroidDevice() {
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get("device") === "mobile") {
+  const deviceParam = urlParams.get("device");
+  // 默认为非安卓
+  isAndroidDevice.value = false;
+  if (deviceParam === "pc" || deviceParam === "desktop") {
+    isAndroidDevice.value = false;
+    return;
+  }
+  if (deviceParam === "mobile") {
     isAndroidDevice.value = true;
     return;
   }
@@ -1372,7 +1379,7 @@ onBeforeUnmount(() => {
 let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
 
 function onNativeSpeechStart() {
-  voiceListening.value = true;
+  // 已在 onAndroidVoiceStart 中设置，这里不需要重复
 }
 
 function onNativeSpeechPartial(e: Event) {
@@ -1396,6 +1403,7 @@ function onNativeSpeechError(e: Event) {
   voiceListening.value = false;
   voiceTranscribing.value = false;
   const detail = (e as CustomEvent).detail;
+  alert("语音识别错误: " + detail);
   store.state.notice = `语音识别失败: ${detail}`;
   resetVoiceHoldState();
 }
@@ -1411,6 +1419,36 @@ function onPermissionGranted() {
 function onPermissionDenied() {
   voiceListening.value = false;
   store.state.notice = "需要麦克风权限才能使用语音输入";
+}
+
+// 等待安卓麦克风权限授权完成（系统级权限，非 web 层）
+function ensureMicPermission(): Promise<boolean> {
+  const android = (window as any).Android;
+  if (!android) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let resolved = false;
+    const onGrant = () => {
+      if (!resolved) {
+        resolved = true;
+        window.removeEventListener("permission-granted", onGrant);
+        window.removeEventListener("permission-denied", onDeny);
+        resolve(true);
+      }
+    };
+    const onDeny = () => {
+      if (!resolved) {
+        resolved = true;
+        window.removeEventListener("permission-granted", onGrant);
+        window.removeEventListener("permission-denied", onDeny);
+        resolve(false);
+      }
+    };
+    window.addEventListener("permission-granted", onGrant);
+    window.addEventListener("permission-denied", onDeny);
+    android.requestMicPermission();
+  });
 }
 
 // 安卓语音模式：dialogue(台词/黑色), action(动作/白色), scene(场景/白色)
@@ -1436,20 +1474,29 @@ const androidVoiceTip = computed(() => {
 });
 
 function onAndroidVoiceStart(e: PointerEvent) {
-  if (!canPlayerInput.value || voiceTranscribing.value) return;
+  if (e.cancelable) e.preventDefault();
+
+  if (voiceTranscribing.value) {
+    store.state.notice = "上一段语音还在识别中，请稍候";
+    return;
+  }
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "AI 正在生成，请稍候";
+    return;
+  }
+
+  (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
   androidVoiceStartX.value = e.clientX;
   androidVoiceStartY.value = e.clientY;
   androidVoiceMode.value = null;
   androidVoiceText.value = "";
   voiceHoldCancelPending.value = false;
   pendingAndroidVoiceMode = null;
-  // 安卓设备模式下使用原生语音识别
-  if (isAndroidDevice.value && (window as any).Android) {
-    (window as any).Android.startSpeech();
-  } else {
-    // 网页端使用 WebAudio API
-    startVoiceRecognition();
-  }
+  // 立即进入录音态
+  voiceListening.value = true;
+  // 统一使用 H5 的 WebAudio API 录音
+  startVoiceRecognition();
 }
 
 function onAndroidVoiceMove(e: PointerEvent) {
@@ -1484,26 +1531,19 @@ function onAndroidVoiceMove(e: PointerEvent) {
 function onAndroidVoiceEnd(e: PointerEvent) {
   if (!voiceListening.value) return;
 
+  (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
   const mode = androidVoiceMode.value;
   const cancelled = voiceHoldCancelPending.value;
 
   if (cancelled) {
     // 取消录音
-    if (isAndroidDevice.value && (window as any).Android) {
-      (window as any).Android.cancelSpeech();
-    } else {
-      discardNextRecording = true;
-      stopVoiceRecognition();
-    }
+    discardNextRecording = true;
+    stopVoiceRecognition();
   } else {
     // 停止录音并发送
-    if (isAndroidDevice.value && (window as any).Android) {
-      pendingAndroidVoiceMode = mode;
-      (window as any).Android.stopSpeech();
-    } else {
-      pendingAndroidVoiceMode = mode;
-      stopVoiceRecordingAndTranscribe();
-    }
+    pendingAndroidVoiceMode = mode;
+    stopVoiceRecordingAndTranscribe();
   }
 
   voiceHoldCancelPending.value = false;
@@ -3538,6 +3578,19 @@ function stopVoiceRecordingAndTranscribe() {
   }
 }
 
+/**
+ * 安卓浏览器的http 的权限可能有所限制
+ * chrome-138.0.7204.179.apk
+ * https://files06.tchspt.com/down/chrome-138.0.7204.179.apk
+ * adb install -r chrome-138.0.7204.179.apk
+ *
+ * chrome://flags/#unsafely-treat-insecure-origin-as-secure
+ * Insecure origins treated as secure（高亮标黄的选项）
+ * 填入：http://{ip}:{port}
+ * 如：http://10.10.3.183:5173
+ * unsafely-treat-insecure-origin-as-secure:已启用
+ *
+ */
 async function startVoiceRecognition() {
   if (!browserSpeechSupported.value) {
     // 安卓设备模式下不切换到文字模式
@@ -3549,9 +3602,27 @@ async function startVoiceRecognition() {
         textarea?.focus();
       });
     } else {
-      store.state.notice = "当前设备暂不支持语音输入";
+      const isHttps = location.protocol === "https:";
+      const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      if (!isHttps && !isLocalhost) {
+        store.state.notice = "语音功能需要 HTTPS，请在 Toonflow App 内使用";
+      } else if (!(window as any).Android) {
+        store.state.notice = "手机浏览器环境受限，请在 Toonflow App 内使用语音";
+      } else {
+        store.state.notice = "当前设备暂不支持语音输入";
+      }
     }
     return;
+  }
+  // 安卓 WebView 内 getUserMedia 仅授权 web 层权限，需要先确保系统层 RECORD_AUDIO 已授权
+  if (isAndroidDevice.value) {
+    const ok = await ensureMicPermission();
+    if (!ok) {
+      voiceListening.value = false;
+      resetVoiceHoldState();
+      store.state.notice = "需要麦克风权限才能录音";
+      return;
+    }
   }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -4434,10 +4505,12 @@ onBeforeUnmount(() => {
                   'is-cancel': voiceHoldCancelPending
                 }"
                 :disabled="voiceTranscribing || !canPlayerInput"
-                @pointerdown="onAndroidVoiceStart"
+                @pointerdown.prevent="onAndroidVoiceStart"
                 @pointermove="onAndroidVoiceMove"
                 @pointerup="onAndroidVoiceEnd"
                 @pointercancel="onAndroidVoiceEnd"
+                @pointerleave="onAndroidVoiceEnd"
+                @contextmenu.prevent
               >
                 {{ androidVoiceBtnText }}
               </button>
