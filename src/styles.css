@@ -5114,7 +5114,7 @@ textarea::-webkit-scrollbar-thumb {
   gap: 8px;
   padding: 8px;
   border-radius: 14px;
-  background: rgba(8, 20, 37, 0.42);
+  background: #08142517;
   border: 1px solid rgba(188, 204, 226, 0.14);
   backdrop-filter: blur(10px);
 }
@@ -5727,9 +5727,12 @@ body.android-device .main-view > section:not(.play-page):not(.home-stage) {
   margin-top: var(--android-inset-top);
 }
 body.android-device .settings-header {
-  margin-top: var(--android-inset-top);
+    margin-top: var(--android-inset-top);
 }
 
+body.android-device .modal-panel.fullscreen {
+  height: calc(100vh - 24px - var(--android-inset-top));
+}
 body.android-device .home-stage {
   padding-top: var(--android-inset-top);
 }
@@ -5739,7 +5742,7 @@ body.android-device .play-page .play-stage{
 }
 
 /* 新增伪元素样式 */
-body.android-device .my-page::before,body.android-device settings-page,
+body.android-device .my-page::before,body.android-device .settings-page::before,
 body.android-device .main-view > section:not(.play-page):not(.home-stage)::before {
   content: "";
   position: absolute;
