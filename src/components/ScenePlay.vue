@@ -1403,7 +1403,6 @@ function onNativeSpeechError(e: Event) {
   voiceListening.value = false;
   voiceTranscribing.value = false;
   const detail = (e as CustomEvent).detail;
-  alert("语音识别错误: " + detail);
   store.state.notice = `语音识别失败: ${detail}`;
   resetVoiceHoldState();
 }
@@ -3519,6 +3518,16 @@ function stopVoiceRecognition() {
   voiceHoldActive.value = false;
   voiceHoldCancelPending.value = false;
   voiceHoldPointerId.value = null;
+
+  // 安卓 App 内：通知原生层直接取消，不返回文字
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    (window as any).Android.cancelSpeech();
+    voiceListening.value = false;
+    voiceTranscribing.value = false;
+    return;
+  }
+
+  // 网页环境：清空流和实例
   if (speechRecognition) {
     try {
       speechRecognition.stop();
@@ -3570,6 +3579,15 @@ async function transcribeVoiceBlob(blob: Blob) {
 }
 
 function stopVoiceRecordingAndTranscribe() {
+  // 安卓 App 内：通知原生层停止录音，原生会通过 onNativeSpeechResult 把文字传回来
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    // 先立刻清 UI 状态，别等原生回调，防止卡住
+    voiceListening.value = false;
+    voiceTranscribing.value = true;
+    (window as any).Android.stopSpeech();
+    return;
+  }
+  // 网页环境
   const recorder = mediaRecorder;
   if (!recorder) return;
   try {
@@ -3594,8 +3612,19 @@ function stopVoiceRecordingAndTranscribe() {
  *
  */
 async function startVoiceRecognition() {
+  // 安卓 App 内：彻底走原生录音，绝不碰 H5 的 getUserMedia，避免抢麦冲突
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    const ok = await ensureMicPermission();
+    if (!ok) {
+      voiceListening.value = false;
+      resetVoiceHoldState();
+      store.state.notice = "需要麦克风权限才能录音";
+    }
+    // 原生已接管麦克风硬件，直接 return，绝不往下走 H5 录音！
+    return;
+  }
+
   if (!browserSpeechSupported.value) {
-    // 安卓设备模式下不切换到文字模式
     if (!isAndroidDevice.value) {
       inputMode.value = "text";
       store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
@@ -3604,30 +3633,14 @@ async function startVoiceRecognition() {
         textarea?.focus();
       });
     } else {
-      const isHttps = location.protocol === "https:";
-      const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
-      if (!isHttps && !isLocalhost) {
-        store.state.notice = "语音功能需要 HTTPS，请在 Toonflow App 内使用";
-      } else if (!(window as any).Android) {
-        store.state.notice = "手机浏览器环境受限，请在 Toonflow App 内使用语音";
-      } else {
-        store.state.notice = "当前设备暂不支持语音输入";
-      }
+      store.state.notice = "语音功能需要 App 环境，请在 Toonflow App 内使用";
     }
     return;
   }
-  // 安卓 WebView 内 getUserMedia 仅授权 web 层权限，需要先确保系统层 RECORD_AUDIO 已授权
-  if (isAndroidDevice.value) {
-    const ok = await ensureMicPermission();
-    if (!ok) {
-      voiceListening.value = false;
-      resetVoiceHoldState();
-      store.state.notice = "需要麦克风权限才能录音";
-      return;
-    }
-  }
   try {
+     console.log("getUserMedia ing");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+     console.log("getUserMedia ed");
     mediaStream = stream;
     mediaChunks = [];
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -3640,18 +3653,22 @@ async function startVoiceRecognition() {
     // 立即进入录音态，避免 onstart 延迟时看起来像"没有按住效果"。
     voiceListening.value = true;
     recorder.onstart = () => {
+       console.log("recorder.onstart ");
       voiceListening.value = true;
     };
     recorder.ondataavailable = (event) => {
+      console.log(" recorder.ondataavailable ");
       if (event.data && event.data.size > 0) {
         mediaChunks.push(event.data);
       }
     };
     recorder.onerror = () => {
+       console.log(" recorder.onerror ");
       voiceListening.value = false;
       store.state.notice = "语音识别失败";
     };
     recorder.onstop = async () => {
+       console.log(" recorder.onstop ");
       const chunks = mediaChunks.slice();
       mediaChunks = [];
       voiceListening.value = false;
@@ -3671,8 +3688,12 @@ async function startVoiceRecognition() {
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       await transcribeVoiceBlob(blob);
     };
+    console.log("recorder.start ing ");
     recorder.start();
+    console.log("recorder.start ed ");
   } catch (error: any) {
+    console.log("startVoiceRecognition");
+    console.log(error);
     voiceListening.value = false;
     resetVoiceHoldState();
     // 安卓设备模式下不切换到文字模式
