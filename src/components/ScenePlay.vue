@@ -1388,22 +1388,41 @@ function onNativeSpeechPartial(e: Event) {
 }
 
 async function onNativeSpeechResult(e: Event) {
-  voiceListening.value = false;
-  voiceTranscribing.value = false;
   const detail = (e as CustomEvent).detail;
   if (detail) {
-    const text = wrapVoiceText(detail, pendingAndroidVoiceMode);
-    pendingAndroidVoiceMode = null;
-    store.state.sendText = text;
-    await submit();
+    try {
+      // detail 是原生传过来的 WAV base64，传给后端转写接口
+      const text = await store.transcribeRuntimeVoice(detail, store.state.currentSessionId);
+      if (!text) {
+        store.state.notice = "语音识别未返回文本";
+        return;
+      }
+      const finalText = wrapVoiceText(text, pendingAndroidVoiceMode);
+      pendingAndroidVoiceMode = null;
+      store.state.sendText = finalText;
+      await submit();
+    } catch (error: any) {
+      store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
+    }
   }
+  voiceListening.value = false;
+  voiceTranscribing.value = false;
+  resetVoiceHoldState();
 }
 
 function onNativeSpeechError(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  // 对常见错误给友好提示
+  const msgMap: Record<string, string> = {
+    too_short: "录音时间太短",
+    permission: "麦克风权限未授权",
+    start_failed: "无法启动录音",
+    encode_failed: "音频编码失败",
+    network: "网络错误，请重试"
+  };
+  store.state.notice = msgMap[detail] || `语音识别失败: ${detail}`;
   voiceListening.value = false;
   voiceTranscribing.value = false;
-  const detail = (e as CustomEvent).detail;
-  store.state.notice = `语音识别失败: ${detail}`;
   resetVoiceHoldState();
 }
 
