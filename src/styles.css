@@ -5726,6 +5726,9 @@ body.android-device .main-view > section:not(.play-page):not(.home-stage) {
   position: relative;
   margin-top: var(--android-inset-top);
 }
+body.android-device .settings-header {
+  margin-top: var(--android-inset-top);
+}
 
 body.android-device .home-stage {
   padding-top: var(--android-inset-top);
