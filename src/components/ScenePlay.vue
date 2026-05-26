@@ -1543,6 +1543,8 @@ function onAndroidVoiceEnd(e: PointerEvent) {
   } else {
     // 停止录音并发送
     pendingAndroidVoiceMode = mode;
+    // 调试：显示捕获到的模式
+    store.state.notice = `录音结束，模式：${mode || "台词"}`;
     stopVoiceRecordingAndTranscribe();
   }
 
