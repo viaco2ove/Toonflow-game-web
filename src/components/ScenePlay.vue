@@ -1393,6 +1393,10 @@ async function onNativeSpeechResult(e: Event) {
     try {
       // detail 是原生传过来的 WAV base64，传给后端转写接口
       const text = await store.transcribeRuntimeVoice(detail, store.state.currentSessionId);
+      // 识别完成立刻清 UI，别等 submit()，不然会卡"识别中"
+      voiceListening.value = false;
+      voiceTranscribing.value = false;
+      resetVoiceHoldState();
       if (!text) {
         store.state.notice = "语音识别未返回文本";
         return;
@@ -1402,12 +1406,16 @@ async function onNativeSpeechResult(e: Event) {
       store.state.sendText = finalText;
       await submit();
     } catch (error: any) {
+      voiceListening.value = false;
+      voiceTranscribing.value = false;
+      resetVoiceHoldState();
       store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
     }
+  } else {
+    voiceListening.value = false;
+    voiceTranscribing.value = false;
+    resetVoiceHoldState();
   }
-  voiceListening.value = false;
-  voiceTranscribing.value = false;
-  resetVoiceHoldState();
 }
 
 function onNativeSpeechError(e: Event) {
