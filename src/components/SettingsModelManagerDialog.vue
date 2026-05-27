@@ -172,7 +172,7 @@ const editingId = ref<number | null>(null);
 const testingId = ref<number | null>(null);
 const visibleKeys = reactive<Record<number, boolean>>({});
 const localAvatarMattingStatus = ref<LocalAvatarMattingStatus | null>(null);
-const autodlModelPreset = ref<string>("__custom__");
+const modelPreset = ref<string>("__custom__");
 const localAvatarMattingInstalling = ref(false);
 const reasoningEffortOptions = [
   { value: "minimal", label: "minimal" },
@@ -251,6 +251,18 @@ const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMatt
 const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
 const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
+
+const modelDropdownOptions = computed(() => {
+  if (isAutoDlTextConfig.value) {
+    return autodlTextModelOptions.value;
+  }
+  if (props.configType === "text" && store.state.settingsTextModelList[form.manufacturer]) {
+    return store.state.settingsTextModelList[form.manufacturer];
+  }
+  return [];
+});
+
+const hasModelDropdown = computed(() => modelDropdownOptions.value.length > 0);
 
 const slotRows = computed(() =>
   store
@@ -374,11 +386,7 @@ watch(
 watch(
   () => [showEditor.value, form.manufacturer, form.model] as const,
   async ([visible, manufacturer, model]) => {
-    if (isAutoDlTextConfig.value) {
-      autodlModelPreset.value = autodlTextModelOptions.value.some((item) => item.value === model) ? String(model || "") : "__custom__";
-    } else {
-      autodlModelPreset.value = "__custom__";
-    }
+    syncModelPreset(model as string);
     if (!visible || !isLocalAvatarMattingManufacturer(manufacturer)) {
       if (!visible) {
         localAvatarMattingStatus.value = null;
@@ -456,8 +464,8 @@ async function installLocalAvatarMattingFromButton() {
   }
 }
 
-function applyAutodlModelPreset(value: string) {
-  autodlModelPreset.value = value;
+function applyModelPreset(value: string) {
+  modelPreset.value = value;
   if (value !== "__custom__") {
     form.model = value;
   }
@@ -475,9 +483,10 @@ function formatPricePer1M(input: unknown, currency = "CNY"): string {
   return `${currency || "CNY"} ${value}/100万`;
 }
 
-function syncAutodlModelPreset(value?: string | null) {
+function syncModelPreset(value?: string | null) {
   const model = String(value || form.model || "").trim();
-  autodlModelPreset.value = autodlTextModelOptions.value.some((item) => item.value === model) ? model : "__custom__";
+  const options = modelDropdownOptions.value;
+  modelPreset.value = options.some((item) => item.value === model) ? model : "__custom__";
 }
 
 function close() {
@@ -503,7 +512,7 @@ function openCreate() {
   form.reasoningEffort = "minimal";
   form.remark = "";
   localAvatarMattingStatus.value = null;
-  syncAutodlModelPreset(form.model);
+  syncModelPreset(form.model);
   showEditor.value = true;
 }
 
@@ -527,7 +536,7 @@ function openEdit(row: ModelConfigItem) {
   form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high";
   form.remark = String(row.remark || "").trim();
   localAvatarMattingStatus.value = null;
-  syncAutodlModelPreset(form.model);
+  syncModelPreset(form.model);
   showEditor.value = true;
 }
 
@@ -776,15 +785,15 @@ async function confirmBinding() {
         </div>
         <div class="field">
           <label>模型</label>
-          <template v-if="isAutoDlTextConfig">
+          <template v-if="hasModelDropdown">
             <select
-              v-model="autodlModelPreset"
+              v-model="modelPreset"
               class="select"
-              @change="applyAutodlModelPreset(autodlModelPreset)"
+              @change="applyModelPreset(modelPreset)"
             >
               <option value="__custom__">手动输入模型标识</option>
               <option
-                v-for="item in autodlTextModelOptions"
+                v-for="item in modelDropdownOptions"
                 :key="item.value"
                 :value="item.value"
               >
@@ -795,10 +804,10 @@ async function confirmBinding() {
               v-model="form.model"
               class="input"
               type="text"
-              placeholder="也可直接输入 AutoDL 模型标识"
+              placeholder="也可直接输入模型标识"
             />
             <div class="settings-field-hint">
-              可先从下拉框选预设模型，也可以直接手动输入 AutoDL 支持的模型标识。
+              可先从下拉框选预设模型，也可以直接手动输入。
             </div>
           </template>
           <input

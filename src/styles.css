@@ -5717,47 +5717,94 @@ textarea::-webkit-scrollbar-thumb {
   --android-inset-bottom: 0px;
 }
 
-/* 安卓模式下给页面容器的第一个section 加 padding-top（只加顶部，底部由 .nav 处理） */
+/*
+ * 安卓模式下采用"固定外壳 + 内部滚动"的三段式布局：
+ *   1. body / html 固定为视口高度，禁止整页滚动
+ *   2. .app-shell 作为外壳同样占满视口，flex 列布局
+ *   3. .main-view 是唯一的滚动容器，nav 通过 flex-shrink: 0 自然固定在底部
+ *   4. 状态栏渐变改用 .app-shell::before 固定定位，不再随内容滚动消失
+ *
+ * 这样修复之前"往上拖动后顶部渐变被挤出、nav 被推上去"的问题。
+ */
+html,
 body.android-device {
-  padding-top: 0px;
+  height: 100vh;
+  height: 100dvh;
 }
+
+body.android-device {
+  padding-top: 0;
+  overflow: hidden;
+}
+
+body.android-device .app-shell {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 状态栏渐变条：固定在视窗顶部，覆盖手机状态栏让位区，不随内容滚动 */
+body.android-device .app-shell::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 480px);
+  height: var(--android-inset-top);
+  background-image: linear-gradient(
+    rgba(0, 0, 0, 0.7),  /* 顶部色（深半透明） */
+    rgba(0, 0, 0, 0.3)   /* 底部色（接近完全透明） */
+  );
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* 中部滚动区域：唯一的滚动容器 */
+body.android-device .main-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* play 页面用自己的全屏布局，不参与 main-view 的滚动逻辑 */
+body.android-device .main-view--play {
+  overflow: hidden;
+}
+
+/* 普通滚动页面：让首屏内容从状态栏下方开始 */
 body.android-device .my-page,
 body.android-device .main-view > section:not(.play-page):not(.home-stage) {
   position: relative;
-  margin-top: var(--android-inset-top);
+  padding-top: var(--android-inset-top);
+  min-height: auto;
 }
-body.android-device .settings-header {
-    margin-top: var(--android-inset-top);
+
+/* settings-page 是 <main> 元素，不适用上面的 section 选择器，需要单独处理 */
+body.android-device .settings-page {
+  min-height: auto;
+  padding-top: var(--android-inset-top);
 }
 
 body.android-device .modal-panel.fullscreen {
   height: calc(100vh - 24px - var(--android-inset-top));
+  height: calc(100dvh - 24px - var(--android-inset-top));
 }
+
+/* home-stage 与 play-stage 占满整个 main-view，自行让出状态栏空间 */
 body.android-device .home-stage {
   padding-top: var(--android-inset-top);
 }
 
-body.android-device .play-page .play-stage{
+body.android-device .play-page .play-stage {
   padding-top: var(--android-inset-top);
 }
 
-/* 新增伪元素样式 */
-body.android-device .my-page::before,body.android-device .settings-page::before,
-body.android-device .main-view > section:not(.play-page):not(.home-stage)::before {
-  content: "";
-  position: absolute;
-  top: calc(-1 * var(--android-inset-top)); /* 向上偏移等于margin-top的值 */
-  left: 0;
-  right: 0;
-  height: var(--android-inset-top); /* 高度等于margin-top */
-    background-image: linear-gradient(
-    rgba(0, 0, 0, 0.7),  /* 顶部色（深半透明） */
-    rgba(0, 0, 0, 0.3)    /* 底部色（接近完全透明） */
-  );
-  z-index: 1;
-}
-
-/* 安卓模式下顶部按钮下移 */
+/* 全局浮动按钮：相对视窗定位，状态栏让位由这里负责下移 */
 body.android-device .home-global-actions {
   top: calc(12px + var(--android-inset-top));
 }
@@ -5770,7 +5817,9 @@ body.android-device .play-global-actions {
   top: calc(8px + var(--android-inset-top));
 }
 
-
+/* 底部 nav：取消 sticky，靠 flex-shrink:0 自然固定在外壳底部 */
 body.android-device .nav {
+  position: static;
+  flex-shrink: 0;
   padding-bottom: calc(12px + var(--android-inset-bottom, 0px));
 }
