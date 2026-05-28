@@ -3916,6 +3916,7 @@ onBeforeUnmount(() => {
     window.clearInterval(pendingDotsTimer);
     pendingDotsTimer = null;
   }
+  clearFigureAnimTimer();
   stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
@@ -3970,7 +3971,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="figureKey" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div

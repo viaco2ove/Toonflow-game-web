@@ -1453,18 +1453,63 @@ function createToonflowStore() {
    */
   function normalizeSessionOrchestrationResult(result: SessionOrchestrationResult): SessionOrchestrationResult {
     const raw = result as unknown as Record<string, unknown>;
-    if (result.plan || (typeof raw.role !== "string" && typeof raw.motive !== "string")) {
+
+    // 如果有 plan，直接返回
+    if (result.plan) {
       return result;
     }
-    return {
-      ...result,
-      plan: {
-        role: String(raw.role || "").trim(),
-        roleType: String(raw.roleType || "").trim() || "narrator",
-        motive: String(raw.motive || "").trim(),
-        awaitUser: Boolean(raw.awaitUser),
-      },
-    };
+
+    // 检查 result 本身有没有 role/roleType/motive（即使是空字符串）
+    const hasTopLevelRoleMotive =
+      raw.role !== undefined ||
+      raw.roleType !== undefined ||
+      raw.motive !== undefined;
+
+    // 如果顶层有这些字段，包装成 plan
+    if (hasTopLevelRoleMotive) {
+      const role = String(raw.role || "").trim();
+      const roleType = String(raw.roleType || "").trim() || "narrator";
+      const motive = String(raw.motive || "").trim();
+      const awaitUser = Boolean(raw.awaitUser);
+
+      // 如果顶层字段都空，但 result.plan 不存在，看看能不能从 expectedRole 等推断
+      if (!role && !motive && result.expectedRole) {
+        return {
+          ...result,
+          plan: {
+            role: result.expectedRole,
+            roleType: result.expectedRoleType || "player",
+            motive: "等待用户输入",
+            awaitUser: true,
+          },
+        };
+      }
+
+      return {
+        ...result,
+        plan: {
+          role,
+          roleType,
+          motive,
+          awaitUser,
+        },
+      };
+    }
+
+    // 兜底：如果有 expectedRole，就用它构造一个 plan
+    if (result.expectedRole) {
+      return {
+        ...result,
+        plan: {
+          role: result.expectedRole,
+          roleType: result.expectedRoleType || "player",
+          motive: "等待用户输入",
+          awaitUser: true,
+        },
+      };
+    }
+
+    return result;
   }
 
   /**
