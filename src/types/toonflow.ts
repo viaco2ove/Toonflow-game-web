@@ -52,6 +52,8 @@ export interface StoryRole {
   name: string;
   avatarPath?: string;
   avatarBgPath?: string;
+  avatarSourcePath?: string;
+  avatarVideoPath?: string;
   description?: string;
   voice?: string;
   voiceMode?: string;
@@ -475,6 +477,12 @@ export interface RoleAvatarTaskResult {
   backgroundPath?: string;
   backgroundFilePath?: string;
   foregroundExt?: string;
+  /** 原图 OSS 地址（头像分离来源图） */
+  sourcePath?: string;
+  sourceFilePath?: string;
+  /** 原视频 OSS 地址（MP4 转 WebP 来源视频） */
+  videoPath?: string;
+  videoFilePath?: string;
 }
 
 export interface VoiceModelConfig {

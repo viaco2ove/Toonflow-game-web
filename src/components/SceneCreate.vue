@@ -11,7 +11,7 @@ import { imageStyleForKey } from "../utils/imageStyles";
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
 type AvatarPreviewTarget = "user" | "npc";
-type AvatarPreviewMode = "composed" | "foreground" | "background";
+type AvatarPreviewMode = "composed" | "foreground" | "background" | "source";
 type ChapterTabItem = {
   id: number | null;
   label: string;
@@ -175,6 +175,8 @@ const avatarPreviewState = computed(() => {
       title: store.state.playerName || "用户头像",
       foregroundPath: store.resolveMediaPath(store.state.userAvatarPath),
       backgroundPath: store.resolveMediaPath(store.state.userAvatarBgPath),
+      sourcePath: store.resolveMediaPath(store.state.userAvatarSourcePath),
+      videoPath: store.resolveMediaPath(store.state.userAvatarVideoPath),
       fallbackText: (store.state.playerName || "用户").slice(0, 1) || "用",
     };
   }
@@ -184,6 +186,8 @@ const avatarPreviewState = computed(() => {
       title: role?.name || "角色头像",
       foregroundPath: store.resolveMediaPath(role?.avatarPath || ""),
       backgroundPath: store.resolveMediaPath(role?.avatarBgPath || ""),
+      sourcePath: store.resolveMediaPath(role?.avatarSourcePath || ""),
+      videoPath: store.resolveMediaPath(role?.avatarVideoPath || ""),
       fallbackText: role?.name?.slice(0, 1) || "角",
     };
   }
@@ -191,6 +195,11 @@ const avatarPreviewState = computed(() => {
 });
 const avatarPreviewHasForeground = computed(() => !!String(avatarPreviewState.value?.foregroundPath || "").trim());
 const avatarPreviewHasBackground = computed(() => !!String(avatarPreviewState.value?.backgroundPath || "").trim());
+const avatarPreviewHasSource = computed(() => {
+  const src = avatarPreviewState.value?.sourcePath || "";
+  const vid = avatarPreviewState.value?.videoPath || "";
+  return !!String(src || vid || "").trim();
+});
 const importRoleTotalPages = computed(() => Math.max(1, Math.ceil(importRoleTotal.value / importRolePageSize)));
 
 const chapterWritingGuideSections = [
@@ -1551,6 +1560,15 @@ function cancelRemoveCurrentNpc() {
             >
               仅背景
             </button>
+            <button
+              class="chip"
+              :class="{ active: avatarPreviewMode === 'source' }"
+              type="button"
+              :disabled="!avatarPreviewHasSource"
+              @click="avatarPreviewMode = 'source'"
+            >
+              原图
+            </button>
           </div>
           <div class="create-avatar-preview-stage">
             <div
@@ -1577,6 +1595,21 @@ function cancelRemoveCurrentNpc() {
                 :src="avatarPreviewState.backgroundPath"
                 :alt="`${avatarPreviewState.title} 背景图`"
               />
+              <template v-if="avatarPreviewMode === 'source'">
+                <img
+                  v-if="avatarPreviewState.sourcePath"
+                  class="create-avatar-preview-image"
+                  :src="avatarPreviewState.sourcePath"
+                  :alt="`${avatarPreviewState.title} 原图`"
+                />
+                <video
+                  v-else-if="avatarPreviewState.videoPath"
+                  class="create-avatar-preview-image"
+                  :src="avatarPreviewState.videoPath"
+                  controls
+                  :alt="`${avatarPreviewState.title} 原视频`"
+                />
+              </template>
               <div v-else class="placeholder">{{ avatarPreviewState.fallbackText }}</div>
             </div>
           </div>

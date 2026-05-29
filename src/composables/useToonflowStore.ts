@@ -939,6 +939,8 @@ function createToonflowStore() {
     accountAvatarBgPath: storageGet("toonflow.accountAvatarBgPath", ""),
     userAvatarPath: "",
     userAvatarBgPath: "",
+    userAvatarSourcePath: "",
+    userAvatarVideoPath: "",
     projects: [] as ProjectItem[],
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
     selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
@@ -4224,13 +4226,15 @@ function createToonflowStore() {
     return { path, bgPath };
   }
 
-  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath">) {
+  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath" | "sourcePath" | "sourceFilePath" | "videoPath" | "videoFilePath">) {
     const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
     const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
+    const sourcePath = String(result.sourceFilePath || result.sourcePath || "").trim();
+    const videoPath = String(result.videoFilePath || result.videoPath || "").trim();
     if (!path || !bgPath) {
       throw new Error("图像模型分离失败，未返回主体或背景图片");
     }
-    return { path, bgPath };
+    return { path, bgPath, sourcePath, videoPath };
   }
 
   async function waitForSeparateRoleAvatarTask(taskId: number) {
@@ -4239,7 +4243,17 @@ function createToonflowStore() {
       const task = await api.getSeparateRoleAvatarTask(taskId);
       const status = String(task.status || "").trim().toLowerCase();
       if (status === "success") {
-        return resolveSeparatedRolePaths(task);
+        const result = resolveSeparatedRolePaths(task);
+        if (result.sourcePath) {
+          const target = state.avatarProcessingTarget;
+          const npcIndex = state.avatarProcessingNpcIndex;
+          if (target === "user") {
+            state.userAvatarSourcePath = result.sourcePath;
+          } else if (target === "npc" && typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
+            state.npcRoles[npcIndex].avatarSourcePath = result.sourcePath;
+          }
+        }
+        return result;
       }
       if (status === "failed") {
         throw new Error(String(task.errorMessage || task.message || "头像分离失败").trim() || "头像分离失败");
@@ -4256,7 +4270,17 @@ function createToonflowStore() {
       const status = String(task.status || "").trim().toLowerCase();
       setAvatarProcessingMessage(target, npcIndex, buildAvatarVideoProgressMessage(task));
       if (status === "success") {
-        return resolveSeparatedRolePaths(task);
+        const result = resolveSeparatedRolePaths(task);
+        // 保存原视频路径
+        if (result.videoPath) {
+          if (target === "user") {
+            state.userAvatarVideoPath = result.videoPath;
+          } else if (target === "npc" && typeof npcIndex === "number") {
+            if (!state.npcRoles[npcIndex]) return result;
+            state.npcRoles[npcIndex].avatarVideoPath = result.videoPath;
+          }
+        }
+        return result;
       }
       if (status === "failed") {
         throw new Error(String(task.errorMessage || task.message || "MP4 转 GIF 失败").trim() || "MP4 转 GIF 失败");
