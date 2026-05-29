@@ -28,6 +28,7 @@
     "vue-tsc": "^2.2.8",
     "wait-on": "^9.0.10"
   },
+  "main": "electron/main.mjs",
   "build": {
     "appId": "com.toonflow.game",
     "productName": "Toonflow Game",
