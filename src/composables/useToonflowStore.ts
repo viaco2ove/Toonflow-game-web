@@ -939,6 +939,8 @@ function createToonflowStore() {
     accountAvatarBgPath: storageGet("toonflow.accountAvatarBgPath", ""),
     userAvatarPath: "",
     userAvatarBgPath: "",
+    userAvatarSourcePath: "",
+    userAvatarVideoPath: "",
     projects: [] as ProjectItem[],
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
     selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
@@ -1453,18 +1455,63 @@ function createToonflowStore() {
    */
   function normalizeSessionOrchestrationResult(result: SessionOrchestrationResult): SessionOrchestrationResult {
     const raw = result as unknown as Record<string, unknown>;
-    if (result.plan || (typeof raw.role !== "string" && typeof raw.motive !== "string")) {
+
+    // 如果有 plan，直接返回
+    if (result.plan) {
       return result;
     }
-    return {
-      ...result,
-      plan: {
-        role: String(raw.role || "").trim(),
-        roleType: String(raw.roleType || "").trim() || "narrator",
-        motive: String(raw.motive || "").trim(),
-        awaitUser: Boolean(raw.awaitUser),
-      },
-    };
+
+    // 检查 result 本身有没有 role/roleType/motive（即使是空字符串）
+    const hasTopLevelRoleMotive =
+      raw.role !== undefined ||
+      raw.roleType !== undefined ||
+      raw.motive !== undefined;
+
+    // 如果顶层有这些字段，包装成 plan
+    if (hasTopLevelRoleMotive) {
+      const role = String(raw.role || "").trim();
+      const roleType = String(raw.roleType || "").trim() || "narrator";
+      const motive = String(raw.motive || "").trim();
+      const awaitUser = Boolean(raw.awaitUser);
+
+      // 如果顶层字段都空，但 result.plan 不存在，看看能不能从 expectedRole 等推断
+      if (!role && !motive && result.expectedRole) {
+        return {
+          ...result,
+          plan: {
+            role: result.expectedRole,
+            roleType: result.expectedRoleType || "player",
+            motive: "等待用户输入",
+            awaitUser: true,
+          },
+        };
+      }
+
+      return {
+        ...result,
+        plan: {
+          role,
+          roleType,
+          motive,
+          awaitUser,
+        },
+      };
+    }
+
+    // 兜底：如果有 expectedRole，就用它构造一个 plan
+    if (result.expectedRole) {
+      return {
+        ...result,
+        plan: {
+          role: result.expectedRole,
+          roleType: result.expectedRoleType || "player",
+          motive: "等待用户输入",
+          awaitUser: true,
+        },
+      };
+    }
+
+    return result;
   }
 
   /**
@@ -2245,6 +2292,8 @@ function createToonflowStore() {
       eventDigestWindow: Array.isArray(result.eventDigestWindow) ? result.eventDigestWindow : (existingDetail?.eventDigestWindow || []),
       eventDigestWindowText: String(result.eventDigestWindowText || existingDetail?.eventDigestWindowText || ""),
       messages: existingDetail?.messages || state.messages,
+      // 从 storyInfo 同步 stage 进度数据
+      allEventStageProgress: result.allEventStageProgress || existingDetail?.allEventStageProgress || null,
     };
     // 从 storyInfo 提取小游戏配置（语音等待时间等）
     // 后端返回 audioProxyMinSec，默认3秒
@@ -4177,13 +4226,15 @@ function createToonflowStore() {
     return { path, bgPath };
   }
 
-  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath">) {
+  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath" | "sourcePath" | "sourceFilePath" | "videoPath" | "videoFilePath">) {
     const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
     const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
+    const sourcePath = String(result.sourceFilePath || result.sourcePath || "").trim();
+    const videoPath = String(result.videoFilePath || result.videoPath || "").trim();
     if (!path || !bgPath) {
       throw new Error("图像模型分离失败，未返回主体或背景图片");
     }
-    return { path, bgPath };
+    return { path, bgPath, sourcePath, videoPath };
   }
 
   async function waitForSeparateRoleAvatarTask(taskId: number) {
@@ -4192,7 +4243,17 @@ function createToonflowStore() {
       const task = await api.getSeparateRoleAvatarTask(taskId);
       const status = String(task.status || "").trim().toLowerCase();
       if (status === "success") {
-        return resolveSeparatedRolePaths(task);
+        const result = resolveSeparatedRolePaths(task);
+        if (result.sourcePath) {
+          const target = state.avatarProcessingTarget;
+          const npcIndex = state.avatarProcessingNpcIndex;
+          if (target === "user") {
+            state.userAvatarSourcePath = result.sourcePath;
+          } else if (target === "npc" && typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
+            state.npcRoles[npcIndex].avatarSourcePath = result.sourcePath;
+          }
+        }
+        return result;
       }
       if (status === "failed") {
         throw new Error(String(task.errorMessage || task.message || "头像分离失败").trim() || "头像分离失败");
@@ -4209,7 +4270,17 @@ function createToonflowStore() {
       const status = String(task.status || "").trim().toLowerCase();
       setAvatarProcessingMessage(target, npcIndex, buildAvatarVideoProgressMessage(task));
       if (status === "success") {
-        return resolveSeparatedRolePaths(task);
+        const result = resolveSeparatedRolePaths(task);
+        // 保存原视频路径
+        if (result.videoPath) {
+          if (target === "user") {
+            state.userAvatarVideoPath = result.videoPath;
+          } else if (target === "npc" && typeof npcIndex === "number") {
+            if (!state.npcRoles[npcIndex]) return result;
+            state.npcRoles[npcIndex].avatarVideoPath = result.videoPath;
+          }
+        }
+        return result;
       }
       if (status === "failed") {
         throw new Error(String(task.errorMessage || task.message || "MP4 转 GIF 失败").trim() || "MP4 转 GIF 失败");
@@ -5724,6 +5795,8 @@ function createToonflowStore() {
       currentEventDigest: eventView.currentEventDigest,
       eventDigestWindow: eventView.eventDigestWindow,
       eventDigestWindowText: eventView.eventDigestWindowText,
+      // 从 storyInfo 同步 stage 进度数据
+      allEventStageProgress: result.allEventStageProgress || null,
     };
     state.debugStatePreview = JSON.stringify(state.debugRuntimeState, null, 2);
     if (typeof result.chapterId === "number" && result.chapterId > 0) {
@@ -6900,6 +6973,21 @@ function createToonflowStore() {
     }
   }
 
+  /**
+   * 强制重试继续剧情（用于用户在"正在生成"状态下点击重试按钮）。
+   *
+   * 与 retryRuntimeFailure 的区别：
+   * - retryRuntimeFailure：用于运行时重试消息（如编排失败），基于 runtimeRetryTask
+   * - retryContinueSessionNarrative：用于正在生成下一句时用户强制重试，清除编排锁后重新触发
+   */
+  async function retryContinueSessionNarrative() {
+    // 清除编排锁和重试任务
+    continueSessionNarrativePromise = null;
+    clearRuntimeRetryState();
+    // 重新触发编排
+    await scheduleContinueSessionNarrative();
+  }
+
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
     // 小游戏模式下需要等待语音播放完成（或最小等待时间）后再继续编排
@@ -7146,6 +7234,7 @@ function createToonflowStore() {
     hasActiveMiniGameInCurrentSession,
     setRuntimeMessageStatus,
     retryRuntimeFailure,
+    retryContinueSessionNarrative,
     retryFailedPlayerMessage,
     restoreFailedPlayerMessageForRewrite,
     canRevisitDebugMessage,

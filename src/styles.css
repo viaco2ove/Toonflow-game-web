@@ -2258,6 +2258,15 @@ a {
   word-break: break-all;
 }
 
+.settings-manager-remark {
+  max-width: 200px;
+  color: #586d8a;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .settings-manager-key {
   display: flex;
   align-items: center;
@@ -3533,6 +3542,10 @@ textarea::-webkit-scrollbar-thumb {
   padding: 12px;
 }
 
+.android-device .home-stage {
+  border-radius: 0;
+}
+
 .home-global-actions {
   position: absolute;
   top: 12px;
@@ -3625,6 +3638,10 @@ textarea::-webkit-scrollbar-thumb {
   background: #10233f;
   box-shadow: 0 24px 42px rgba(4, 12, 25, 0.34);
 }
+.android-device .home-hero-card {
+  border-radius: 0;
+}
+
 
 .home-hero-card .story-cover {
   border: 0;
@@ -4214,6 +4231,9 @@ textarea::-webkit-scrollbar-thumb {
   color: #20304a;
   box-shadow: 0 22px 50px rgba(3, 10, 20, 0.24);
   backdrop-filter: blur(12px);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .play-live-card--player {
@@ -4443,6 +4463,9 @@ textarea::-webkit-scrollbar-thumb {
   line-height: 1.6;
   white-space: pre-wrap;
   box-shadow: 0 10px 24px rgba(10, 20, 32, 0.16);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .play-bubble-voice-tail {
@@ -5091,7 +5114,7 @@ textarea::-webkit-scrollbar-thumb {
   gap: 8px;
   padding: 8px;
   border-radius: 14px;
-  background: rgba(8, 20, 37, 0.42);
+  background: #08142517;
   border: 1px solid rgba(188, 204, 226, 0.14);
   backdrop-filter: blur(10px);
 }
@@ -5303,8 +5326,15 @@ textarea::-webkit-scrollbar-thumb {
   border-radius: 999px;
   border: 1px solid rgba(188, 204, 226, 0.22);
   background: rgba(255, 255, 255, 0.08);
-  color: #eef4ff;
+  color: #22222f;
   font-weight: 800;
+}
+
+.play-text-bar .play-mini-round {
+    color: #fff4f4;
+}
+.android-text-bar .play-mini-round {
+    color: #22222f;
 }
 
 .play-mini-round--voice {
@@ -5509,4 +5539,287 @@ textarea::-webkit-scrollbar-thumb {
   .settings-manager-count {
     justify-self: start;
   }
+}
+
+/* Stage 进度显示 */
+.play-stage-progress {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.play-stage-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.play-stage-phase__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.play-stage-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.play-stage-node {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.play-stage-node--done {
+  background: rgba(29, 143, 93, 0.1);
+  color: #1d8f5d;
+}
+
+.play-stage-node--active {
+  background: rgba(36, 88, 216, 0.1);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.play-stage-node--failed {
+  background: rgba(203, 77, 77, 0.1);
+  color: var(--danger);
+}
+
+.play-stage-arrow {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 安卓设备模式样式 */
+.android-text-bar {
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+.android-text-bar .play-textarea {
+  background: #f0f2f5;
+  border-radius: 20px;
+  color: #1b2434;
+}
+
+.android-text-bar .play-textarea::placeholder {
+  color: #a0aabd;
+}
+
+.android-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+
+.android-voice-btn {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: 22px;
+  background: #c3c2c2;
+  color: #6c6b6b;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, color 0.15s;
+  min-width: 80px;
+}
+
+.android-voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 按住录音时：黑色 + 脉动动画 */
+.android-voice-btn.is-active {
+  background: #1a1a1a;
+  color: #fff;
+  animation: voice-recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-recording-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(26, 26, 26, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(26, 26, 26, 0); }
+}
+
+/* 动作/场景模式：白色 + 脉动 */
+.android-voice-btn.is-action,
+.android-voice-btn.is-scene {
+  background: #fff;
+  color: #1a1a1a;
+  border: 2px solid #e0e0e0;
+  animation: voice-recording-pulse-white 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-recording-pulse-white {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+  50% { box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
+}
+
+.android-voice-btn.is-cancel {
+  background: #ff4444;
+  color: #fff;
+  animation: none;
+}
+
+.android-voice-tip {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.android-voice-bar {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* 安卓设备模式安全区域适配 */
+.android-text-bar,
+.android-voice-bar {
+  margin-bottom: var(--android-inset-bottom, 0px);
+}
+
+/* 安卓模式下整体下移 */
+.play-input-shell {
+  padding-bottom: var(--android-inset-bottom, 0px);
+}
+
+/* 安卓模式顶部状态栏适配 */
+:root {
+  --android-inset-top: 0px;
+  --android-inset-bottom: 0px;
+}
+
+/*
+ * 安卓模式下采用"固定外壳 + 内部滚动"的三段式布局：
+ *   1. body / html 固定为视口高度，禁止整页滚动
+ *   2. .app-shell 作为外壳同样占满视口，flex 列布局
+ *   3. .main-view 是唯一的滚动容器，nav 通过 flex-shrink: 0 自然固定在底部
+ *   4. 状态栏渐变改用 .app-shell::before 固定定位，不再随内容滚动消失
+ *
+ * 这样修复之前"往上拖动后顶部渐变被挤出、nav 被推上去"的问题。
+ */
+html,
+body.android-device {
+  height: 100vh;
+  height: 100dvh;
+}
+
+body.android-device {
+  padding-top: 0;
+  overflow: hidden;
+}
+
+body.android-device .app-shell {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 状态栏渐变条：固定在视窗顶部，覆盖手机状态栏让位区，不随内容滚动 */
+body.android-device .app-shell::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 480px);
+  height: var(--android-inset-top);
+  background-image: linear-gradient(
+    rgba(0, 0, 0, 0.7),  /* 顶部色（深半透明） */
+    rgba(0, 0, 0, 0.3)   /* 底部色（接近完全透明） */
+  );
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* 中部滚动区域：唯一的滚动容器 */
+body.android-device .main-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* play 页面用自己的全屏布局，不参与 main-view 的滚动逻辑 */
+body.android-device .main-view--play {
+  overflow: hidden;
+}
+
+/* 普通滚动页面：让首屏内容从状态栏下方开始 */
+body.android-device .my-page,
+body.android-device .main-view > section:not(.play-page):not(.home-stage) {
+  position: relative;
+  padding-top: var(--android-inset-top);
+  min-height: auto;
+}
+
+/* settings-page 是 <main> 元素，不适用上面的 section 选择器，需要单独处理 */
+body.android-device .settings-page {
+  min-height: auto;
+  padding-top: var(--android-inset-top);
+}
+
+body.android-device .modal-panel.fullscreen {
+  height: calc(100vh - 24px - var(--android-inset-top));
+  height: calc(100dvh - 24px - var(--android-inset-top));
+}
+
+/* home-stage 与 play-stage 占满整个 main-view，自行让出状态栏空间 */
+body.android-device .home-stage {
+  padding-top: var(--android-inset-top);
+}
+
+body.android-device .play-page .play-stage {
+  padding-top: var(--android-inset-top);
+}
+
+/* 全局浮动按钮：相对视窗定位，状态栏让位由这里负责下移 */
+body.android-device .home-global-actions {
+  top: calc(12px + var(--android-inset-top));
+}
+
+body.android-device .play-header {
+  padding-top: calc(8px + var(--android-inset-top));
+}
+
+body.android-device .play-global-actions {
+  top: calc(8px + var(--android-inset-top));
+}
+
+/* 底部 nav：取消 sticky，靠 flex-shrink:0 自然固定在外壳底部 */
+body.android-device .nav {
+  position: static;
+  flex-shrink: 0;
+  padding-bottom: calc(12px + var(--android-inset-bottom, 0px));
 }

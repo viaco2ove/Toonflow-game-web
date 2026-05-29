@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
@@ -110,6 +110,24 @@ function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | n
   const eventFacts = asMiniArray(raw.eventFacts).map((item) => scalarText(item)).filter(Boolean);
   const memoryFacts = asMiniArray(raw.memoryFacts).map((item) => scalarText(item)).filter(Boolean);
   const allowedRoles = asMiniArray(raw.allowedRoles).map((item) => scalarText(item)).filter(Boolean);
+  // 解析 stageProgress
+  const stageProgressRaw = raw.stageProgress;
+  let stageProgress: StageProgress | null = null;
+  if (stageProgressRaw && typeof stageProgressRaw === "object") {
+    const sp = stageProgressRaw as Record<string, unknown>;
+    const stages = Array.isArray(sp.stages)
+      ? sp.stages.map((s: any, idx: number) => ({
+          index: Number(s?.index ?? idx),
+          label: String(s?.label || ""),
+          status: (["", "i", "s", "f"].includes(s?.status) ? s.status : "") as StageProgressStatus,
+        }))
+      : [];
+    stageProgress = {
+      phaseId: String(sp.phaseId || ""),
+      phaseLabel: String(sp.phaseLabel || ""),
+      stages,
+    };
+  }
   return {
     eventIndex: Number(raw.eventIndex || 0) || 0,
     eventKind: scalarText(raw.eventKind),
@@ -123,6 +141,7 @@ function normalizeRuntimeEventDigest(input: unknown): RuntimeEventDigestItem | n
     updateTime: Number(raw.updateTime || 0) || 0,
     allowedRoles,
     userNodeId: scalarText(raw.userNodeId),
+    stageProgress,
   };
 }
 
@@ -231,14 +250,14 @@ function sessionStatusKey(input: unknown): string {
 }
 
 /**
- * 切换“故事设定”里的原始状态快照展开状态。
+ * 切换"故事设定"里的原始状态快照展开状态。
  */
 function toggleStatePreview(): void {
   statePreviewExpanded.value = !statePreviewExpanded.value;
 }
 
 /**
- * 切换“当前章节事件”里兜底原始事件窗口文本的展开状态。
+ * 切换"当前章节事件"里兜底原始事件窗口文本的展开状态。
  */
 function toggleRuntimeEventWindowPreview(): void {
   runtimeEventWindowExpanded.value = !runtimeEventWindowExpanded.value;
@@ -273,6 +292,19 @@ function runtimeMessageLoadingText(message: MessageItem | null | undefined): str
     return `${speaker} 正在生成台词...`;
   }
   return `${speaker} 正在生成内容...`;
+}
+
+/**
+ * 判断是否应该在加载状态下显示重试按钮（用户可能卡住了）。
+ * 条件：消息正在加载中，且不是玩家消息
+ */
+function showRuntimeRetryButton(message: MessageItem | null | undefined): boolean {
+  if (!message) return false;
+  // 只对系统消息（旁白/NPC）显示重试按钮
+  const roleType = String(message.roleType || "").trim().toLowerCase();
+  if (roleType === "player") return false;
+  // 消息正在加载中
+  return showRuntimeMessageLoading(message);
 }
 
 function runtimeStreamSentences(message: MessageItem | null | undefined): string[] {
@@ -337,7 +369,7 @@ function readRuntimeChatTraceRows(): RuntimeChatTraceRow[] {
           currentRole: scalarText(item.currentRole),
           currentRoleType: scalarText(item.currentRoleType),
           currentStatus,
-          // 禁止把旧缓存里的“下一位是谁”回放到 UI。
+          // 禁止把旧缓存里的"下一位是谁"回放到 UI。
           nextRole: "",
           nextRoleType: "",
           updateTime: Number(item.updateTime || 0),
@@ -412,7 +444,7 @@ function normalizePlayableSpeechText(input: unknown): string {
   const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
   if (!text) return "";
   const compact = text.replace(/\s+/g, "");
-  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
+  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
   return meaningful ? text : "";
 }
 
@@ -421,7 +453,7 @@ function speakableUnitCount(input: unknown): number {
   if (!text) return 0;
   return text
     .replace(/\s+/g, "")
-    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'“”‘’`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
+    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
     .length;
 }
 
@@ -576,6 +608,42 @@ const eventDigestWindowItems = computed<RuntimeEventDigestItem[]>(() => {
 const runtimeEventWindowText = computed(() =>
   scalarText(runtimeEventViewRecord.value.eventDigestWindowText || runtimeState.value.eventDigestWindowText),
 );
+
+// Stage 进度列表（用于 UI 显示事件链进度）
+const allEventStageProgress = computed(() => {
+  // 调试模式：从 debugRuntimeState 读取
+  if (store.state.debugMode) {
+    const fromDebug = (store.state.debugRuntimeState as any)?.allEventStageProgress;
+    console.log("[ScenePlay][debug] allEventStageProgress from debugRuntimeState:", fromDebug);
+    return (fromDebug || []) as StageProgress[];
+  }
+  // 正式模式：从 sessionDetail 读取
+  const fromSession = (session.value as any)?.allEventStageProgress;
+  console.log("[ScenePlay][session] allEventStageProgress:", fromSession, "session keys:", Object.keys(session.value || {}));
+  if (fromSession) return fromSession as StageProgress[];
+  return [] as StageProgress[];
+});
+
+// 当前 stage 进度（用于 UI 显示当前 phase 的 stage 进度）
+const currentStageProgress = computed(() => {
+  const progress = runtimeChapterProgressRecord.value;
+  const currentPhaseId = scalarText(progress.phaseId);
+  return allEventStageProgress.value.find(p => p.phaseId === currentPhaseId) || null;
+});
+
+// 当前 phase 的 stage 进度（用于内嵌到事件项显示）
+const currentPhaseStageProgress = computed(() => currentStageProgress.value);
+
+// Stage 进度状态标签
+const stageStatusLabel = (status: StageProgressStatus): string => {
+  switch (status) {
+    case "s": return "完成";
+    case "i": return "进行中";
+    case "f": return "失败";
+    default: return "未开始";
+  }
+};
+
 const debugOrchestratorRuntime = computed<OrchestratorRuntimeMeta | null>(() =>
   store.state.debugMode ? normalizeOrchestratorRuntime(store.state.debugLatestPlan?.orchestratorRuntime) : null,
 );
@@ -631,11 +699,50 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
   );
   const items: RuntimeEventDigestItem[] = [];
 
-  phases.forEach((phase) => {
+  phases.forEach((phase, phaseIdx) => {
     const phaseId = scalarText(phase.id);
     const phaseKind = scalarText(phase.kind) || "scene";
     const eventIndex = items.length + 1;
-    const eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+
+    // 生成带状态的 summary
+    const stages = asMiniArray(phase.stages);
+    const currentStageIndex = Number(progress.stageIndex) || 0;
+    let eventSummary: string;
+
+    if (stages.length > 0) {
+      // 根据 stage 状态生成 summary
+      const isPhaseCompleted = phaseId && completedEvents.has(`phase:${phaseId}`);
+      const isCurrentPhase = phaseId && currentPhaseId && phaseId === currentPhaseId;
+
+      const stageParts = stages.map((stage, stageIdx) => {
+        const stageLabel = scalarText(stage.label) || `阶段${stageIdx + 1}`;
+        let status = "";
+        if (isPhaseCompleted) {
+          status = "s";
+        } else if (isCurrentPhase) {
+          if (stageIdx < currentStageIndex) {
+            status = "s";
+          } else if (stageIdx === currentStageIndex) {
+            status = (currentEventStatus === "waiting_input" || currentEventStatus === "active") ? "i" : "s";
+          } else {
+            status = "";
+          }
+        } else {
+          // 非当前 phase：根据 phaseIndex 判断
+          const currentPhaseIndex = phases.findIndex((item) => scalarText(item.id) === currentPhaseId);
+          if (currentPhaseIndex >= 0 && phaseIdx < currentPhaseIndex) {
+            status = "s";
+          } else {
+            status = "";
+          }
+        }
+        return `[${status}]${stageLabel}`;
+      });
+      eventSummary = stageParts.join(" → ");
+    } else {
+      eventSummary = scalarText(phase.targetSummary) || scalarText(phase.label) || `事件 ${eventIndex}`;
+    }
+
     let eventStatus = "idle";
     if (phaseId && completedEvents.has(`phase:${phaseId}`)) {
       eventStatus = "completed";
@@ -729,7 +836,7 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     age: ageValue != null && Number.isFinite(ageValue) ? ageValue : null,
     level: levelValue != null && Number.isFinite(levelValue) ? levelValue : 1,
     // 参数卡里的经验值字段来自运行时 JSON，不在这里显式解析的话，
-    // 详情面板就会把已有数字误判成“未设定”。
+    // 详情面板就会把已有数字误判成"未设定"。
     exp: Number.isFinite(expValue) ? expValue : 0,
     next_level_exp: Number.isFinite(nextLevelExpValue) ? nextLevelExpValue : 100,
     level_desc: scalarText(raw.level_desc || raw.levelDesc) || "初入此界",
@@ -988,8 +1095,8 @@ const playInputPlaceholder = computed(() => {
   if (failedSessionStatuses.has(status)) {
     return "当前故事已失败";
   }
-  // 正式会话不再消费“下一位是谁”的预编排字段。
-  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成“下一位”，因此统一退回泛化提示。
+  // 正式会话不再消费"下一位是谁"的预编排字段。
+  // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成"下一位"，因此统一退回泛化提示。
   return "当前还没轮到用户发言";
 });
 const playTurnHint = computed(() => {
@@ -1039,7 +1146,7 @@ const playTurnHint = computed(() => {
       expectedSpeaker: expectedSpeaker.value,
     });
   // 正式会话的下一位角色名可能滞后于最新 turnState，同样不适合作为主提示直接展示。
-  // 这里统一改成泛化文案，避免出现“轮到某角色发言”但实际并非如此的误导状态。
+  // 这里统一改成泛化文案，避免出现"轮到某角色发言"但实际并非如此的误导状态。
   return "当前还没轮到用户发言，等待剧情继续。";
 });
 
@@ -1050,7 +1157,7 @@ const playTurnHint = computed(() => {
  * 用途：
  * - 小游戏模式下，长提示应放到底部 turn hint，不应塞进输入框；
  * - 否则移动端和窄屏下输入框会被占位文本撑高，影响输入体验；
- * - 因此文本输入统一返回空串，语音模式仅保留“按住说话”。
+ * - 因此文本输入统一返回空串，语音模式仅保留"按住说话"。
  */
 function miniGameInputPlaceholder(
   game: NonNullable<typeof activeMiniGame.value>,
@@ -1186,7 +1293,7 @@ const miniGameSummaryItems = computed(() => {
 });
 
 /**
- * 监听小游戏面板视图变化，便于排查“为什么小游戏面板出现或消失”。
+ * 监听小游戏面板视图变化，便于排查"为什么小游戏面板出现或消失"。
  */
 watch(
   activeMiniGame,
@@ -1218,6 +1325,266 @@ const playbackPlaying = ref(false);
 let playbackRunId = 0;
 const isSessionPlaybackMode = computed(() => !store.state.debugMode && store.state.sessionViewMode === "playback");
 const inputMode = ref<"voice" | "text">("text");
+
+// 安卓设备模式检测
+const isAndroidDevice = ref(false);
+function checkAndroidDevice() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const deviceParam = urlParams.get("device");
+  // 默认为非安卓
+  isAndroidDevice.value = false;
+  if (deviceParam === "pc" || deviceParam === "desktop") {
+    isAndroidDevice.value = false;
+    return;
+  }
+  if (deviceParam === "mobile") {
+    isAndroidDevice.value = true;
+    return;
+  }
+  if (typeof (window as any).Android !== "undefined") {
+    isAndroidDevice.value = true;
+    return;
+  }
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("android") && (ua.includes("mobile") || ua.includes("toonflow"))) {
+    isAndroidDevice.value = true;
+  }
+}
+onMounted(() => {
+  checkAndroidDevice();
+  // 监听原生语音识别事件
+  if (isAndroidDevice.value) {
+    window.addEventListener("speechstart", onNativeSpeechStart);
+    window.addEventListener("speechpartial", onNativeSpeechPartial);
+    window.addEventListener("speechresult", onNativeSpeechResult);
+    window.addEventListener("speecherror", onNativeSpeechError);
+    window.addEventListener("speechend", onNativeSpeechEnd);
+    window.addEventListener("permission-granted", onPermissionGranted);
+    window.addEventListener("permission-denied", onPermissionDenied);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (isAndroidDevice.value) {
+    window.removeEventListener("speechstart", onNativeSpeechStart);
+    window.removeEventListener("speechpartial", onNativeSpeechPartial);
+    window.removeEventListener("speechresult", onNativeSpeechResult);
+    window.removeEventListener("speecherror", onNativeSpeechError);
+    window.removeEventListener("speechend", onNativeSpeechEnd);
+    window.removeEventListener("permission-granted", onPermissionGranted);
+    window.removeEventListener("permission-denied", onPermissionDenied);
+  }
+});
+
+let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
+
+function onNativeSpeechStart() {
+  // 已在 onAndroidVoiceStart 中设置，这里不需要重复
+}
+
+function onNativeSpeechPartial(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  if (detail) androidVoiceText.value = detail;
+}
+
+async function onNativeSpeechResult(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  if (detail) {
+    try {
+      // detail 是原生传过来的 WAV base64，传给后端转写接口
+      const text = await store.transcribeRuntimeVoice(detail, store.state.currentSessionId);
+      // 识别完成立刻清 UI，别等 submit()，不然会卡"识别中"
+      voiceListening.value = false;
+      voiceTranscribing.value = false;
+      resetVoiceHoldState();
+      if (!text) {
+        store.state.notice = "语音识别未返回文本";
+        return;
+      }
+      const finalText = wrapVoiceText(text, pendingAndroidVoiceMode);
+      pendingAndroidVoiceMode = null;
+      store.state.sendText = finalText;
+      await submit();
+    } catch (error: any) {
+      voiceListening.value = false;
+      voiceTranscribing.value = false;
+      resetVoiceHoldState();
+      store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
+    }
+  } else {
+    voiceListening.value = false;
+    voiceTranscribing.value = false;
+    resetVoiceHoldState();
+  }
+}
+
+function onNativeSpeechError(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  // 对常见错误给友好提示
+  const msgMap: Record<string, string> = {
+    too_short: "录音时间太短",
+    permission: "麦克风权限未授权",
+    start_failed: "无法启动录音",
+    encode_failed: "音频编码失败",
+    network: "网络错误，请重试"
+  };
+  store.state.notice = msgMap[detail] || `语音识别失败: ${detail}`;
+  voiceListening.value = false;
+  voiceTranscribing.value = false;
+  resetVoiceHoldState();
+}
+
+function onNativeSpeechEnd() {
+  voiceListening.value = false;
+}
+
+function onPermissionGranted() {
+  (window as any).Android?.startSpeech();
+}
+
+function onPermissionDenied() {
+  voiceListening.value = false;
+  store.state.notice = "需要麦克风权限才能使用语音输入";
+}
+
+// 等待安卓麦克风权限授权完成（系统级权限，非 web 层）
+function ensureMicPermission(): Promise<boolean> {
+  const android = (window as any).Android;
+  if (!android) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let resolved = false;
+    const onGrant = () => {
+      if (!resolved) {
+        resolved = true;
+        window.removeEventListener("permission-granted", onGrant);
+        window.removeEventListener("permission-denied", onDeny);
+        resolve(true);
+      }
+    };
+    const onDeny = () => {
+      if (!resolved) {
+        resolved = true;
+        window.removeEventListener("permission-granted", onGrant);
+        window.removeEventListener("permission-denied", onDeny);
+        resolve(false);
+      }
+    };
+    window.addEventListener("permission-granted", onGrant);
+    window.addEventListener("permission-denied", onDeny);
+    android.requestMicPermission();
+  });
+}
+
+// 安卓语音模式：dialogue(台词/黑色), action(动作/白色), scene(场景/白色)
+const androidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
+const androidVoiceStartX = ref(0);
+const androidVoiceStartY = ref(0);
+const androidVoiceText = ref("");
+
+const androidVoiceBtnText = computed(() => {
+  if (voiceTranscribing.value) return "识别中...";
+  if (voiceHoldCancelPending.value) return "松开取消";
+  if (androidVoiceMode.value === "action") return "动作: (xxx)";
+  if (androidVoiceMode.value === "scene") return "场景: [xxx]";
+  if (voiceListening.value) return androidVoiceText.value || "松开发送";
+  return "按住说话";
+});
+
+const androidVoiceTip = computed(() => {
+  if (voiceHoldCancelPending.value) return "松开取消";
+  if (androidVoiceMode.value === "action") return "动作模式：(xxx) · 上移取消，侧移输入(台词)";
+  if (androidVoiceMode.value === "scene") return "场景模式：[xxx] · 上移取消，侧移输入(台词)";
+  return "上移取消，侧移输入(动作、场景)";
+});
+
+function onAndroidVoiceStart(e: PointerEvent) {
+  if (e.cancelable) e.preventDefault();
+
+  if (voiceTranscribing.value) {
+    store.state.notice = "上一段语音还在识别中，请稍候";
+    return;
+  }
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "AI 正在生成，请稍候";
+    return;
+  }
+
+  (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+  androidVoiceStartX.value = e.clientX;
+  androidVoiceStartY.value = e.clientY;
+  androidVoiceMode.value = null;
+  androidVoiceText.value = "";
+  voiceHoldCancelPending.value = false;
+  pendingAndroidVoiceMode = null;
+  // 立即进入录音态
+  voiceListening.value = true;
+  // 统一使用 H5 的 WebAudio API 录音
+  startVoiceRecognition();
+}
+
+function onAndroidVoiceMove(e: PointerEvent) {
+  if (!voiceListening.value) return;
+  const deltaX = e.clientX - androidVoiceStartX.value;
+  const deltaY = androidVoiceStartY.value - e.clientY;
+  const threshold = 60;
+
+  // 上滑取消
+  if (deltaY > threshold) {
+    voiceHoldCancelPending.value = true;
+    androidVoiceMode.value = null;
+    return;
+  }
+
+  voiceHoldCancelPending.value = false;
+
+  // 右滑 -> 动作模式
+  if (deltaX > threshold) {
+    androidVoiceMode.value = "action";
+  }
+  // 左滑 -> 场景模式
+  else if (deltaX < -threshold) {
+    androidVoiceMode.value = "scene";
+  }
+  // 中间 -> 台词模式
+  else {
+    androidVoiceMode.value = null;
+  }
+}
+
+function onAndroidVoiceEnd(e: PointerEvent) {
+  if (!voiceListening.value) return;
+
+  (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+  const mode = androidVoiceMode.value;
+  const cancelled = voiceHoldCancelPending.value;
+
+  if (cancelled) {
+    // 取消录音
+    discardNextRecording = true;
+    stopVoiceRecognition();
+  } else {
+    // 停止录音并发送
+    pendingAndroidVoiceMode = mode;
+    // 调试：显示捕获到的模式
+    store.state.notice = `录音结束，模式：${mode || "台词"}`;
+    stopVoiceRecordingAndTranscribe();
+  }
+
+  voiceHoldCancelPending.value = false;
+  androidVoiceMode.value = null;
+}
+
+// 修改语音识别结果处理，根据模式包裹文字
+function wrapVoiceText(text: string, mode: "dialogue" | "action" | "scene" | null): string {
+  if (mode === "action") return `(${text})`;
+  if (mode === "scene") return `[${text}]`;
+  return text;
+}
+
 const autoVoice = ref(readPlayAutoVoicePreference());
 const voiceListening = ref(false);
 const voiceTranscribing = ref(false);
@@ -1421,7 +1788,7 @@ const latestRuntimeChatTrace = computed(() => {
     return rows.length ? rows[rows.length - 1] : null;
   }
   const scopedRows = rows.filter((row) => row.conversationId === currentConversationId);
-  // 当前会话还没写入 trace 时，不能退回到“所有会话最后一条”，否则会把旧会话角色串进当前 UI。
+  // 当前会话还没写入 trace 时，不能退回到"所有会话最后一条"，否则会把旧会话角色串进当前 UI。
   return scopedRows.length ? scopedRows[scopedRows.length - 1] : null;
 });
 
@@ -1467,7 +1834,7 @@ const runtimeDebugNextRoleLabel = computed(() => {
   const status = currentRuntimeInputStatus.value;
   if (status === "waiting_player" || canPlayerSpeak.value) return "用户";
   // 正式会话的 turnState.expectedRole 在部分链路里会滞后于最新台词。
-  // 这里继续展示具体角色名，只会把旧缓存误显示成“下一位纳兰嫣然”。
+  // 这里继续展示具体角色名，只会把旧缓存误显示成"下一位纳兰嫣然"。
   return "剧情继续";
 });
 const runtimeDebugStatusLabel = computed(() => {
@@ -1580,7 +1947,7 @@ watch(
 );
 
 /**
- * 把章节背景音乐的播放状态和当前“有声/静音”开关保持一致。
+ * 把章节背景音乐的播放状态和当前"有声/静音"开关保持一致。
  * 关闭时暂停但保留播放进度，恢复时从当前位置继续播放。
  */
 function syncChapterBgmAudibility() {
@@ -1724,7 +2091,7 @@ watch(
     for (const message of newMessages) {
       if (cancelled) return;
       // 流式台词在首个 delta 返回前，只是一个空占位。
-      // 这里先不把它塞进聊天框，避免“编排接口刚返回就先出现获取台词中气泡”的假象。
+      // 这里先不把它塞进聊天框，避免"编排接口刚返回就先出现获取台词中气泡"的假象。
       if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
         continue;
       }
@@ -2024,6 +2391,11 @@ async function submit() {
 async function retryRuntimeMessage() {
   playMode.value = "live";
   await store.retryRuntimeFailure();
+}
+
+async function retryContinueSession() {
+  playMode.value = "live";
+  await store.retryContinueSessionNarrative();
 }
 
 async function submitMiniGameAction(text: string) {
@@ -3173,6 +3545,16 @@ function stopVoiceRecognition() {
   voiceHoldActive.value = false;
   voiceHoldCancelPending.value = false;
   voiceHoldPointerId.value = null;
+
+  // 安卓 App 内：通知原生层直接取消，不返回文字
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    (window as any).Android.cancelSpeech();
+    voiceListening.value = false;
+    voiceTranscribing.value = false;
+    return;
+  }
+
+  // 网页环境：清空流和实例
   if (speechRecognition) {
     try {
       speechRecognition.stop();
@@ -3209,7 +3591,12 @@ async function transcribeVoiceBlob(blob: Blob) {
       store.state.notice = "语音识别未返回文本";
       return;
     }
-    store.state.sendText = text;
+    // 安卓模式下根据模式包裹文字
+    const finalText = isAndroidDevice.value && pendingAndroidVoiceMode
+      ? wrapVoiceText(text, pendingAndroidVoiceMode)
+      : text;
+    pendingAndroidVoiceMode = null;
+    store.state.sendText = finalText;
     await submit();
   } catch (error: any) {
     store.state.notice = `语音识别失败: ${error?.message || "未知错误"}`;
@@ -3219,6 +3606,15 @@ async function transcribeVoiceBlob(blob: Blob) {
 }
 
 function stopVoiceRecordingAndTranscribe() {
+  // 安卓 App 内：通知原生层停止录音，原生会通过 onNativeSpeechResult 把文字传回来
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    // 先立刻清 UI 状态，别等原生回调，防止卡住
+    voiceListening.value = false;
+    voiceTranscribing.value = true;
+    (window as any).Android.stopSpeech();
+    return;
+  }
+  // 网页环境
   const recorder = mediaRecorder;
   if (!recorder) return;
   try {
@@ -3229,18 +3625,49 @@ function stopVoiceRecordingAndTranscribe() {
   }
 }
 
+/**
+ * 安卓浏览器的http 的权限可能有所限制
+ * chrome-138.0.7204.179.apk
+ * https://files06.tchspt.com/down/chrome-138.0.7204.179.apk
+ * adb install -r chrome-138.0.7204.179.apk
+ *
+ * chrome://flags/#unsafely-treat-insecure-origin-as-secure
+ * Insecure origins treated as secure（高亮标黄的选项）
+ * 填入：http://{ip}:{port}
+ * 如：http://10.10.3.183:5173
+ * unsafely-treat-insecure-origin-as-secure:已启用
+ *
+ */
 async function startVoiceRecognition() {
+  // 安卓 App 内：彻底走原生录音，绝不碰 H5 的 getUserMedia，避免抢麦冲突
+  if (isAndroidDevice.value && typeof (window as any).Android !== "undefined") {
+    const ok = await ensureMicPermission();
+    if (!ok) {
+      voiceListening.value = false;
+      resetVoiceHoldState();
+      store.state.notice = "需要麦克风权限才能录音";
+    }
+    // 原生已接管麦克风硬件，直接 return，绝不往下走 H5 录音！
+    return;
+  }
+
   if (!browserSpeechSupported.value) {
-    inputMode.value = "text";
-    store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
-    nextTick(() => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
-      textarea?.focus();
-    });
+    if (!isAndroidDevice.value) {
+      inputMode.value = "text";
+      store.state.notice = "当前浏览器暂不支持语音输入，已切换文字输入";
+      nextTick(() => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea");
+        textarea?.focus();
+      });
+    } else {
+      store.state.notice = "语音功能需要 App 环境，请在 Toonflow App 内使用";
+    }
     return;
   }
   try {
+     console.log("getUserMedia ing");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+     console.log("getUserMedia ed");
     mediaStream = stream;
     mediaChunks = [];
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -3250,21 +3677,25 @@ async function startVoiceRecognition() {
         : "";
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
     mediaRecorder = recorder;
-    // 立即进入录音态，避免 onstart 延迟时看起来像“没有按住效果”。
+    // 立即进入录音态，避免 onstart 延迟时看起来像"没有按住效果"。
     voiceListening.value = true;
     recorder.onstart = () => {
+       console.log("recorder.onstart ");
       voiceListening.value = true;
     };
     recorder.ondataavailable = (event) => {
+      console.log(" recorder.ondataavailable ");
       if (event.data && event.data.size > 0) {
         mediaChunks.push(event.data);
       }
     };
     recorder.onerror = () => {
+       console.log(" recorder.onerror ");
       voiceListening.value = false;
       store.state.notice = "语音识别失败";
     };
     recorder.onstop = async () => {
+       console.log(" recorder.onstop ");
       const chunks = mediaChunks.slice();
       mediaChunks = [];
       voiceListening.value = false;
@@ -3284,11 +3715,18 @@ async function startVoiceRecognition() {
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       await transcribeVoiceBlob(blob);
     };
+    console.log("recorder.start ing ");
     recorder.start();
+    console.log("recorder.start ed ");
   } catch (error: any) {
-    inputMode.value = "text";
+    console.log("startVoiceRecognition");
+    console.log(error);
     voiceListening.value = false;
     resetVoiceHoldState();
+    // 安卓设备模式下不切换到文字模式
+    if (!isAndroidDevice.value) {
+      inputMode.value = "text";
+    }
     store.state.notice = `无法开始录音: ${error?.message || "未知错误"}`;
   }
 }
@@ -3304,6 +3742,31 @@ function handleVoicePrimary() {
     return;
   }
   startVoiceRecognition();
+}
+
+// 移动端语音输入面板事件处理
+function onMobileVoiceSend(text: string, mode: "dialogue" | "action") {
+  if (!canPlayerInput.value) {
+    store.state.notice = runtimeProgressHint.value || "当前还没轮到用户发言";
+    return;
+  }
+  store.state.sendText = text;
+  void submit();
+}
+
+function onMobileVoiceStart() {
+  // 如果不是原生语音，使用 Web 录音
+  if (!hasNativeVoice.value && browserSpeechSupported.value) {
+    startVoiceRecognition();
+  }
+}
+
+function onMobileVoiceCancel() {
+  stopVoiceRecognition();
+}
+
+function onMobileVoiceModeChange(mode: "dialogue" | "action") {
+  mobileVoiceMode.value = mode;
 }
 
 function beginVoiceHoldInteraction(target: EventTarget | null, startY: number, pointerId: number | null) {
@@ -3453,6 +3916,7 @@ onBeforeUnmount(() => {
     window.clearInterval(pendingDotsTimer);
     pendingDotsTimer = null;
   }
+  clearFigureAnimTimer();
   stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
@@ -3507,7 +3971,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="figureKey" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
@@ -3558,6 +4022,14 @@ onBeforeUnmount(() => {
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
+                      <button
+                        v-if="showRuntimeRetryButton(message)"
+                        type="button"
+                        class="play-bubble-status__action"
+                        @click.stop="retryContinueSession"
+                      >
+                        重试
+                      </button>
                     </span>
                   </template>
                   <span v-else>{{ messageDisplayContent(message) || "（空消息）" }}</span>
@@ -3639,6 +4111,14 @@ onBeforeUnmount(() => {
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
                       <span class="play-message-loading__dot"></span>
+                      <button
+                        v-if="showRuntimeRetryButton(currentLiveMessage)"
+                        type="button"
+                        class="play-bubble-status__action"
+                        @click.stop="retryContinueSession"
+                      >
+                        重试
+                      </button>
                     </span>
                   </template>
                   <span v-else>{{ messageDisplayContent(currentLiveMessage) || "（空消息）" }}</span>
@@ -3747,7 +4227,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="!allowRoleView" class="play-inline-card">
-          创作者未开放“他人可查看角色设定”，当前仅展示基础信息。
+          创作者未开放"他人可查看角色设定"，当前仅展示基础信息。
         </div>
         <div v-else-if="settingSelectedRole" class="play-inline-card">
           <div class="play-inline-card__title">{{ settingSelectedRole.name }}</div>
@@ -4047,6 +4527,52 @@ onBeforeUnmount(() => {
         <template v-if="playMode === 'history' && isSessionPlaybackMode">
           <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
         </template>
+        <!-- 安卓设备模式 -->
+        <template v-else-if="isAndroidDevice">
+          <template v-if="inputMode === 'text'">
+            <div class="play-text-bar android-text-bar">
+              <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话继续故事" :disabled="!canPlayerInput" @keydown.enter.prevent="submit"></textarea>
+              <button type="button" class="play-mini-round play-mini-round--voice" :disabled="!canPlayerInput" @click="inputMode = 'voice'">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>
+                  <path d="M7.8 11.8a4.2 4.2 0 0 0 8.4 0"></path>
+                  <path d="M12 16v3"></path>
+                  <path d="M9.5 19h5"></path>
+                </svg>
+              </button>
+              <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+            </div>
+          </template>
+          <template v-else>
+            <div v-if="voiceListening" class="android-voice-tip">{{ androidVoiceTip }}</div>
+            <div class="android-voice-bar">
+              <button
+                type="button"
+                class="android-voice-btn"
+                :class="{
+                  'is-active': voiceListening && !voiceHoldCancelPending && !androidVoiceMode,
+                  'is-action': androidVoiceMode === 'action',
+                  'is-scene': androidVoiceMode === 'scene',
+                  'is-cancel': voiceHoldCancelPending
+                }"
+                :disabled="voiceTranscribing || !canPlayerInput"
+                @pointerdown.prevent="onAndroidVoiceStart"
+                @pointermove="onAndroidVoiceMove"
+                @pointerup="onAndroidVoiceEnd"
+                @pointercancel="onAndroidVoiceEnd"
+                @pointerleave="onAndroidVoiceEnd"
+                @contextmenu.prevent
+              >
+                {{ androidVoiceBtnText }}
+              </button>
+              <template v-if="!voiceListening">
+                <button type="button" class="play-mini-round" @click="inputMode = 'text'">键</button>
+                <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
+              </template>
+            </div>
+          </template>
+        </template>
+        <!-- 网页端原有UI -->
         <template v-else-if="inputMode === 'text'">
           <div class="play-text-bar">
             <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerInput"></textarea>
@@ -4400,5 +4926,52 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.5;
   color: rgba(223, 233, 255, 0.74);
+}
+
+.play-event-item__stages {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(223, 233, 255, 0.7);
+}
+
+.play-event-item__phase-label {
+  font-weight: 600;
+  color: rgba(223, 233, 255, 0.85);
+  margin-right: 4px;
+}
+
+.play-event-item__stage-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.play-event-item__stage-node {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.play-event-item__stage-node--done {
+  color: #4ade80;
+}
+
+.play-event-item__stage-node--active {
+  color: #facc15;
+  font-weight: 600;
+}
+
+.play-event-item__stage-node--failed {
+  color: #f87171;
+}
+
+.play-event-item__stage-arrow {
+  color: rgba(223, 233, 255, 0.4);
+  font-size: 10px;
 }
 </style>

@@ -52,6 +52,8 @@ export interface StoryRole {
   name: string;
   avatarPath?: string;
   avatarBgPath?: string;
+  avatarSourcePath?: string;
+  avatarVideoPath?: string;
   description?: string;
   voice?: string;
   voiceMode?: string;
@@ -174,6 +176,22 @@ export interface MessageItem {
   revisitData?: unknown;
 }
 
+// Stage 进度状态
+// "": 未开始, "i": 进行中, "s": 完成, "f": 失败
+export type StageProgressStatus = "" | "i" | "s" | "f";
+
+export interface StageProgressItem {
+  index: number;
+  label: string;
+  status: StageProgressStatus;
+}
+
+export interface StageProgress {
+  phaseId: string;
+  phaseLabel: string;
+  stages: StageProgressItem[];
+}
+
 export interface RuntimeEventDigestItem {
   eventIndex?: number;
   eventKind?: string;
@@ -187,6 +205,7 @@ export interface RuntimeEventDigestItem {
   updateTime?: number;
   allowedRoles?: string[];
   userNodeId?: string;
+  stageProgress?: StageProgress | null;
 }
 
 export interface RuntimeRetryMessageMeta {
@@ -229,6 +248,8 @@ export interface SessionDetail {
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
+  /** stage 进度列表（从 storyInfo 同步） */
+  allEventStageProgress?: StageProgress[] | null;
 }
 
 export interface SessionNarrativeResult {
@@ -384,6 +405,7 @@ export interface StoryInfoResult {
   miniGameConfig?: {
     audioProxyMinSec?: number;
   };
+  allEventStageProgress?: StageProgress[];
 }
 
 export interface AiTokenUsageLogItem {
@@ -455,6 +477,12 @@ export interface RoleAvatarTaskResult {
   backgroundPath?: string;
   backgroundFilePath?: string;
   foregroundExt?: string;
+  /** 原图 OSS 地址（头像分离来源图） */
+  sourcePath?: string;
+  sourceFilePath?: string;
+  /** 原视频 OSS 地址（MP4 转 WebP 来源视频） */
+  videoPath?: string;
+  videoFilePath?: string;
 }
 
 export interface VoiceModelConfig {
@@ -499,6 +527,7 @@ export interface ModelConfigItem {
   cacheReadPricePer1M?: number;
   currency?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
+  remark?: string;
   createTime?: number;
 }
 
@@ -515,6 +544,7 @@ export interface ModelConfigPayload {
   cacheReadPricePer1M?: number;
   currency?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  remark?: string;
 }
 
 export interface ModelTestResult {

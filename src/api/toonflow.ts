@@ -455,7 +455,7 @@ export class ToonflowApi {
       idleTimer = window.setTimeout(() => {
         timedOut = true;
         controller.abort();
-      }, 15000);
+      }, 23000);
     };
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -505,6 +505,7 @@ export class ToonflowApi {
       }
     } catch (error) {
       if (timedOut) {
+         console.log("[aiGame][streamDebugLines]", { error });
         throw new Error("调试台词流空闲超时");
       }
       throw error;

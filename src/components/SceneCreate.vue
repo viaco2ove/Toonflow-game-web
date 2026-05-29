@@ -11,7 +11,7 @@ import { imageStyleForKey } from "../utils/imageStyles";
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
 type AvatarPreviewTarget = "user" | "npc";
-type AvatarPreviewMode = "composed" | "foreground" | "background";
+type AvatarPreviewMode = "composed" | "foreground" | "background" | "source";
 type ChapterTabItem = {
   id: number | null;
   label: string;
@@ -175,6 +175,8 @@ const avatarPreviewState = computed(() => {
       title: store.state.playerName || "用户头像",
       foregroundPath: store.resolveMediaPath(store.state.userAvatarPath),
       backgroundPath: store.resolveMediaPath(store.state.userAvatarBgPath),
+      sourcePath: store.resolveMediaPath(store.state.userAvatarSourcePath),
+      videoPath: store.resolveMediaPath(store.state.userAvatarVideoPath),
       fallbackText: (store.state.playerName || "用户").slice(0, 1) || "用",
     };
   }
@@ -184,6 +186,8 @@ const avatarPreviewState = computed(() => {
       title: role?.name || "角色头像",
       foregroundPath: store.resolveMediaPath(role?.avatarPath || ""),
       backgroundPath: store.resolveMediaPath(role?.avatarBgPath || ""),
+      sourcePath: store.resolveMediaPath(role?.avatarSourcePath || ""),
+      videoPath: store.resolveMediaPath(role?.avatarVideoPath || ""),
       fallbackText: role?.name?.slice(0, 1) || "角",
     };
   }
@@ -191,6 +195,11 @@ const avatarPreviewState = computed(() => {
 });
 const avatarPreviewHasForeground = computed(() => !!String(avatarPreviewState.value?.foregroundPath || "").trim());
 const avatarPreviewHasBackground = computed(() => !!String(avatarPreviewState.value?.backgroundPath || "").trim());
+const avatarPreviewHasSource = computed(() => {
+  const src = avatarPreviewState.value?.sourcePath || "";
+  const vid = avatarPreviewState.value?.videoPath || "";
+  return !!String(src || vid || "").trim();
+});
 const importRoleTotalPages = computed(() => Math.max(1, Math.ceil(importRoleTotal.value / importRolePageSize)));
 
 const chapterWritingGuideSections = [
@@ -198,25 +207,49 @@ const chapterWritingGuideSections = [
     title: "怎么写章节内容",
     lines: [
       "把这一章真正会发生的内容写在这里，例如场景变化、人物行动、冲突推进、用户会被要求做什么。",
-      "对白请直接写成“@角色名：台词”，旁白也一样，例如“@旁白：乌坦城的风沙停了下来”。",
-      "提及用户扮演的角色时，请统一写“用户”，不要混用“你”或别的代称。",
-        "章节内容使用**Markdown格式**，通过二级标题(`##`)来划分不同的阶段",
+      '对白请直接写成"@角色名：台词"，旁白也一样，例如"@旁白：乌坦城的风沙停了下来"。',
+      '提及用户扮演的角色时，请统一写"用户"，不要混用"你"或别的代称。',
+      "章节内容使用**Markdown格式**，通过二级标题(`##`)划分阶段，三级标题(`###`)划分事件。",
     ],
   },
   {
-    title: "事件是怎么区分的",
+    title: "阶段与事件结构",
     lines: [
-      "系统默认会把正文识别成“章节内容”事件，这是这一章真正推进剧情的主体事件。",
-      "成功条件会被单独识别成“结束条件检查”事件，用来判断这一章是继续、成功还是失败。",
-      "如果你没有填写成功条件，这一章默认只有“章节内容”事件，不会触发章节判定。",
+      "`## 阶段名` 定义一个阶段（Phase），系统会按顺序推进各阶段。",
+      "`### 事件进度名` 定义阶段内的事件进度（stage），可以是台词、场景描述或用户发言节点。",
+      "注意 stage 里 台词一般只有一个。最多不能超过三个。",
+      "`### 用户发言` 单独一行表示等待用户输入，系统会自动切换到等待用户状态。",
+    ],
+  },
+  {
+    title: "随机编排NPC",
+    lines: [
+      '使用"随机"关键字可以让AI随机编排NPC发言，例如：`随机 遇见各种npc @角色A @角色B @角色C`。',
+      "可以指定条件：`聊天5轮对话后进入下个事件，也就是用户发言5次`。",
+      "AI会根据条件判断是否满足，不满足则随机选择NPC发言来引导用户。",
+    ],
+  },
+  {
+    title: "事件进度状态",
+    lines: [
+      "每个事件都有进度状态标记：`[]`未开始、`[i]`进行中、`[s]`完成、`[f]`失败。",
+      "系统会自动追踪事件进度，例如：`[s]开场 -> [i]交流 -> []结束`。",
+      "AI编排师会根据当前事件和进度决定谁来发言、剧情如何推进。",
+    ],
+  },
+  {
+    title: "非事件标记",
+    lines: [
+      "使用`## 非事件: 名称`可以标记不参与事件流程的内容，仅供旁白参考。",
+      "非事件内容不会影响进度追踪，但会作为上下文提供给AI。",
     ],
   },
   {
     title: "推荐写法",
     lines: [
       "先写本章开场和场景，再写角色互动，最后写用户需要完成的目标。",
-      "成功条件里只写结局判断，例如“用户输入了姓名、性别、年龄”或“突破到斗者一星”。",
-      "更复杂的阶段切换、固定事件、用户节点，再去用下面的 Phase Graph 高级配置，不要把所有逻辑都硬塞在正文里。",
+      '成功条件里只写结局判断，例如"用户选择了跟随A或B"或"用户发言达到5次"。',
+      "利用随机编排功能可以让章节更具可玩性，不需要为每个NPC写死台词。",
     ],
   },
 ];
@@ -1527,6 +1560,15 @@ function cancelRemoveCurrentNpc() {
             >
               仅背景
             </button>
+            <button
+              class="chip"
+              :class="{ active: avatarPreviewMode === 'source' }"
+              type="button"
+              :disabled="!avatarPreviewHasSource"
+              @click="avatarPreviewMode = 'source'"
+            >
+              原图
+            </button>
           </div>
           <div class="create-avatar-preview-stage">
             <div
@@ -1553,6 +1595,21 @@ function cancelRemoveCurrentNpc() {
                 :src="avatarPreviewState.backgroundPath"
                 :alt="`${avatarPreviewState.title} 背景图`"
               />
+              <template v-if="avatarPreviewMode === 'source'">
+                <img
+                  v-if="avatarPreviewState.sourcePath"
+                  class="create-avatar-preview-image"
+                  :src="avatarPreviewState.sourcePath"
+                  :alt="`${avatarPreviewState.title} 原图`"
+                />
+                <video
+                  v-else-if="avatarPreviewState.videoPath"
+                  class="create-avatar-preview-image"
+                  :src="avatarPreviewState.videoPath"
+                  controls
+                  :alt="`${avatarPreviewState.title} 原视频`"
+                />
+              </template>
               <div v-else class="placeholder">{{ avatarPreviewState.fallbackText }}</div>
             </div>
           </div>
@@ -1657,12 +1714,37 @@ function cancelRemoveCurrentNpc() {
             <div class="create-help-section-title">章节内容使用**Markdown格式**，通过二级标题(`##`)来划分不同的阶段</div>
             <div class="create-help-section-title">示例</div>
             <pre class="create-help-pre">
-## 场景
-@旁白：乌坦城的风沙停了下来。
-@萧炎：这不是我熟悉的地方。
+## 苏醒
 
-## 用户行动
-@旁白：请告知你的姓名、性别与年龄，让众人确认你的身份 。
+### 石板硌着后背
+@旁白：冰冷的石板硌着后背，你猛地睁开眼。
+
+## 探索
+### 黑术暗影君王的窥探
+@路人甲: (饰演黑术暗影君王)此片世界时空有点不太稳定（在宇宙之外看着）这人貌似能承载我的力量
+### 旁白引导剧情
+@旁白：你在这片天地探索，前面看见一些人影
+
+### 遇见与交流
+随机 遇见各种npc,也就是随机编排以下角色进行发言: @薰儿（萧薰儿|古薰儿） @纳兰嫣然 @海波东（冰皇） @美杜莎  @路人甲（扮演 闪人，旅人等）
+聊天5轮对话后进入下个事件，也就是用户发言5次.
+需要判断用户是否说了5次话。不够5次就随机编排npc 说话来引发用户发言.
+### 记忆管理
+@记忆管理 标记用户选择的阵营到用户的角色卡的“其他”字段里
+            </pre>
+          <div class="create-help-section-title">示例:自由章节</div>
+          <pre class="create-help-pre">
+# 自由章节：任务推荐
+
+## 任务推荐
+### 说明自由行动状态
+@旁白：你当前处于自由行动状态。
+### 任务推荐-内容
+@旁白：“接下来，你可以直接对我说：
+**“给我推荐个任务”**
+当你这样说时——
+我会从不同类别中，**一次为你推荐5个任务**。
+你只需要从中**选择1个**进入即可。”
 
 ## 非事件:任务分类（只是提供给旁白用来推荐任务）
 ### 生存类
