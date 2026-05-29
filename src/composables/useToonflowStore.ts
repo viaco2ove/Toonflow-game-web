@@ -793,6 +793,7 @@ function createEmptyWorldState() {
     worldCoverBgPath: "",
     playerName: "用户",
     playerDesc: "",
+    playerImagePrompt: "", // AI生图形象描述，独立于角色设定
     playerVoice: "",
     playerVoicePresetId: "",
     playerVoiceMode: "text",
@@ -830,6 +831,7 @@ interface StoryEditorSnapshot {
   worldCoverBgPath: string;
   playerName: string;
   playerDesc: string;
+  playerImagePrompt: string;
   playerVoice: string;
   playerVoicePresetId: string;
   playerVoiceMode: string;
@@ -937,6 +939,7 @@ function createToonflowStore() {
     userId: Number(storageGet("toonflow.userId", "0")) || 0,
     accountAvatarPath: storageGet("toonflow.accountAvatarPath", ""),
     accountAvatarBgPath: storageGet("toonflow.accountAvatarBgPath", ""),
+    accountAvatarSourcePath: storageGet("toonflow.accountAvatarSourcePath", ""),
     userAvatarPath: "",
     userAvatarBgPath: "",
     userAvatarSourcePath: "",
@@ -2868,6 +2871,7 @@ function createToonflowStore() {
     await api.saveUser({
       avatarPath: state.accountAvatarPath,
       avatarBgPath: state.accountAvatarBgPath,
+      avatarSourcePath: state.accountAvatarSourcePath,
     });
   }
 
@@ -2961,6 +2965,7 @@ function createToonflowStore() {
       worldCoverBgPath: state.worldCoverBgPath,
       playerName: state.playerName,
       playerDesc: state.playerDesc,
+      playerImagePrompt: state.playerImagePrompt,
       playerVoice: state.playerVoice,
       playerVoicePresetId: state.playerVoicePresetId,
       playerVoiceMode: state.playerVoiceMode,
@@ -3025,6 +3030,7 @@ function createToonflowStore() {
     state.worldCoverBgPath = snapshot.worldCoverBgPath;
     state.playerName = snapshot.playerName;
     state.playerDesc = snapshot.playerDesc;
+    state.playerImagePrompt = snapshot.playerImagePrompt || "";
     state.playerVoice = snapshot.playerVoice;
     state.playerVoicePresetId = snapshot.playerVoicePresetId;
     state.playerVoiceMode = snapshot.playerVoiceMode;
@@ -4147,7 +4153,7 @@ function createToonflowStore() {
     return String(result?.text || "").trim();
   }
 
-  async function generateImage(target: "role" | "scene", prompt: string, referenceList: string[], name: string): Promise<string> {
+  async function generateImage(target: "role" | "scene", prompt: string, referenceList: string[], name: string): Promise<{ path: string; sourcePath?: string }> {
     const result = await api.generateImage({
       projectId: state.selectedProjectId,
       type: target,
@@ -4157,7 +4163,10 @@ function createToonflowStore() {
       base64List: referenceList,
       size: "2K",
     });
-    return result.filePath || result.path || "";
+    return {
+      path: result.filePath || result.path || "",
+      sourcePath: result.originalPath || result.sourcePath || "",
+    };
   }
 
   async function uploadImagePayload(target: EditorImageTarget, fileName: string, base64Data: string): Promise<string> {
@@ -4380,11 +4389,37 @@ function createToonflowStore() {
       clearAvatarFailureNotice();
     }
     try {
-      const path = await generateImage(target === "chapter" || target === "cover" ? "scene" : "role", prompt, referenceList, name);
-      if (!path) {
+      const { path: generatedPath, sourcePath } = await generateImage(target === "chapter" || target === "cover" ? "scene" : "role", prompt, referenceList, name);
+      if (!generatedPath) {
         throw new Error("未生成图片");
       }
-      const prepared = await uploadStandardizedImageAsset(target, path, name || target);
+      // 保存原图路径（用于"原图"按钮显示）
+      if (sourcePath) {
+        if (target === "user") {
+          state.userAvatarSourcePath = sourcePath;
+        } else if (target === "account") {
+          state.accountAvatarSourcePath = sourcePath;
+        } else if (target === "npc") {
+          const npcIndex = state.avatarProcessingNpcIndex;
+          if (typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
+            state.npcRoles[npcIndex].avatarSourcePath = sourcePath;
+          }
+        }
+      }
+      // 保存AI生图形象描述（独立于角色设定）
+      if (prompt) {
+        if (target === "user") {
+          state.playerImagePrompt = prompt;
+        } else if (target === "account") {
+          state.playerImagePrompt = prompt; // 复用同一字段
+        } else if (target === "npc") {
+          const npcIndex = state.avatarProcessingNpcIndex;
+          if (typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
+            state.npcRoles[npcIndex].avatarImagePrompt = prompt;
+          }
+        }
+      }
+      const prepared = await uploadStandardizedImageAsset(target, generatedPath, name || target);
       if (target === "account") {
         state.accountAvatarPath = prepared.path;
         state.accountAvatarBgPath = prepared.bgPath || prepared.path;
@@ -4748,6 +4783,8 @@ function createToonflowStore() {
       name: state.playerName,
       avatarPath: state.userAvatarPath,
       avatarBgPath: state.userAvatarBgPath,
+      avatarSourcePath: state.userAvatarSourcePath,
+      avatarImagePrompt: state.playerImagePrompt,
       description: state.playerDesc,
       voice: state.playerVoice,
       voiceMode: state.playerVoiceMode,
@@ -5050,8 +5087,10 @@ function createToonflowStore() {
       state.allowChatShare = worldDetail.settings?.allowChatShare ?? true;
       state.playerName = worldDetail.playerRole?.name || "用户";
       state.playerDesc = worldDetail.playerRole?.description || "";
+      state.playerImagePrompt = worldDetail.playerRole?.avatarImagePrompt || "";
       state.userAvatarPath = worldDetail.playerRole?.avatarPath || "";
       state.userAvatarBgPath = worldDetail.playerRole?.avatarBgPath || "";
+      state.userAvatarSourcePath = worldDetail.playerRole?.avatarSourcePath || "";
       state.playerVoice = worldDetail.playerRole?.voice || "";
       state.playerVoiceMode = worldDetail.playerRole?.voiceMode || "text";
       state.playerVoicePresetId = worldDetail.playerRole?.voicePresetId || "";

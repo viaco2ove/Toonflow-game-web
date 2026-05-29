@@ -54,6 +54,7 @@ export interface StoryRole {
   avatarBgPath?: string;
   avatarSourcePath?: string;
   avatarVideoPath?: string;
+  avatarImagePrompt?: string; // AI生图形象描述，独立于角色设定
   description?: string;
   voice?: string;
   voiceMode?: string;

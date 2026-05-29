@@ -10,7 +10,7 @@ import { imageStyleForKey } from "../utils/imageStyles";
 
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
-type AvatarPreviewTarget = "user" | "npc";
+type AvatarPreviewTarget = "account" | "user" | "npc";
 type AvatarPreviewMode = "composed" | "foreground" | "background" | "source";
 type ChapterTabItem = {
   id: number | null;
@@ -180,6 +180,16 @@ const avatarPreviewState = computed(() => {
       fallbackText: (store.state.playerName || "用户").slice(0, 1) || "用",
     };
   }
+  if (avatarPreviewTarget.value === "account") {
+    return {
+      title: store.state.userName || "账号头像",
+      foregroundPath: store.resolveMediaPath(store.state.accountAvatarPath),
+      backgroundPath: store.resolveMediaPath(store.state.accountAvatarBgPath),
+      sourcePath: store.resolveMediaPath(store.state.accountAvatarSourcePath),
+      videoPath: "",
+      fallbackText: (store.state.userName || "账").slice(0, 1) || "账",
+    };
+  }
   if (avatarPreviewTarget.value === "npc") {
     const role = typeof avatarPreviewNpcIndex.value === "number" ? store.state.npcRoles[avatarPreviewNpcIndex.value] : null;
     return {
@@ -278,7 +288,7 @@ const imageDialogState = computed(() => {
     case "user":
       return {
         title: "创建角色",
-        initialPrompt: store.state.playerDesc || store.state.playerName || "用户头像",
+        initialPrompt: store.state.playerImagePrompt || store.state.playerDesc || store.state.playerName || "用户头像",
         initialStyleKey: "general_3",
       };
     case "cover":
@@ -297,7 +307,7 @@ const imageDialogState = computed(() => {
       const role = typeof imageDialogNpcIndex.value === "number" ? store.state.npcRoles[imageDialogNpcIndex.value] : null;
       return {
         title: "创建角色",
-        initialPrompt: role?.description || role?.sample || role?.name || "角色头像",
+        initialPrompt: role?.avatarImagePrompt || role?.description || role?.sample || role?.name || "角色头像",
         initialStyleKey: "general_3",
       };
     }
