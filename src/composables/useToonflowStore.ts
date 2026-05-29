@@ -4476,9 +4476,11 @@ function createToonflowStore() {
       } else if (target === "user") {
         state.userAvatarPath = prepared.path;
         state.userAvatarBgPath = prepared.bgPath;
+        state.userAvatarSourcePath = prepared.sourcePath || "";
       } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
         state.npcRoles[roleIndex].avatarPath = prepared.path;
         state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        state.npcRoles[roleIndex].avatarSourcePath = prepared.sourcePath || "";
         onReady?.(prepared.path, prepared.bgPath);
       }
       clearAvatarFailureNotice();
@@ -4499,12 +4501,12 @@ function createToonflowStore() {
       } else if (target === "user") {
         state.userAvatarPath = prepared.path;
         state.userAvatarBgPath = prepared.bgPath;
+        // userAvatarVideoPath 已在 waitForAvatarVideoTask 中保存
       } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
+        state.npcRoles[roleIndex].avatarPath = prepared.path;
+        state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        // npc avatarVideoPath 已在 waitForAvatarVideoTask 中保存
         onReady?.(prepared.path, prepared.bgPath);
-        if (!onReady) {
-          state.npcRoles[roleIndex].avatarPath = prepared.path;
-          state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
-        }
       }
       clearAvatarFailureNotice();
     } finally {
