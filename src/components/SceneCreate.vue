@@ -729,6 +729,8 @@ async function handleImageConfirm(payload: { prompt: string; styleKey: string; r
   try {
     if (target === "user") {
       await store.applyImageToTarget("user", mergedPrompt, payload.references, store.state.playerName || "用户");
+      // 用户生图后立即保存世界数据
+      await store.saveWorldOnly("preserve", false);
     } else if (target === "cover") {
       await store.applyImageToTarget("cover", mergedPrompt, payload.references, store.state.worldName || "故事封面");
     } else if (target === "chapter") {
@@ -738,7 +740,9 @@ async function handleImageConfirm(payload: { prompt: string; styleKey: string; r
       if (role) {
         await store.applyImageToTarget("npc", mergedPrompt, payload.references, role.name || "角色", (path, bgPath) => {
           store.setNpcRoleAvatar(imageDialogNpcIndex.value as number, path, bgPath);
-        });
+        }, imageDialogNpcIndex.value);
+        // NPC 生图后立即保存世界数据，确保 avatarSourcePath 和 avatarImagePrompt 持久化
+        await store.saveWorldOnly("preserve", false);
       }
     }
     store.state.notice = "图片已更新";

@@ -4203,9 +4203,10 @@ function createToonflowStore() {
     return await waitForAvatarVideoTask(taskId, target, roleIndex);
   }
 
-  async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
+  async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string; sourcePath?: string }> {
     if (target === "account" || target === "user" || target === "npc") {
-      return await separateRoleImageAsset(target, source, baseName);
+      const result = await separateRoleImageAsset(target, source, baseName);
+      return result; // separateRoleImageAsset already returns {path, bgPath, sourcePath, videoPath}
     }
     const safeBaseName = buildSafeUploadBaseName(baseName, target);
     const asset = await loadImageSourceAsset(state.baseUrl, source, safeBaseName);
@@ -4383,7 +4384,7 @@ function createToonflowStore() {
     return isAvatarProcessing(target, npcIndex) ? String(state.avatarProcessingMessages[key] || "").trim() : "";
   }
 
-  async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
+  async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void, npcIndex?: number | null) {
     state.aiGenerating = true;
     if (target === "account" || target === "user" || target === "npc") {
       clearAvatarFailureNotice();
@@ -4400,9 +4401,9 @@ function createToonflowStore() {
         } else if (target === "account") {
           state.accountAvatarSourcePath = sourcePath;
         } else if (target === "npc") {
-          const npcIndex = state.avatarProcessingNpcIndex;
-          if (typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
-            state.npcRoles[npcIndex].avatarSourcePath = sourcePath;
+          const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+          if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+            state.npcRoles[npcIdx].avatarSourcePath = sourcePath;
           }
         }
       }
@@ -4413,10 +4414,29 @@ function createToonflowStore() {
         } else if (target === "account") {
           state.playerImagePrompt = prompt; // 复用同一字段
         } else if (target === "npc") {
-          const npcIndex = state.avatarProcessingNpcIndex;
-          if (typeof npcIndex === "number" && state.npcRoles[npcIndex]) {
-            state.npcRoles[npcIndex].avatarImagePrompt = prompt;
+          const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+          if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+            state.npcRoles[npcIdx].avatarImagePrompt = prompt;
           }
+        }
+      }
+      // 保存分离前的原始图片路径（用于"原图"按钮显示）
+      // generatedPath 是 AI 生成的原图，prepared.path 是分离后的前景图
+      if (target === "user") {
+        state.userAvatarSourcePath = generatedPath;
+      } else if (target === "account") {
+        state.accountAvatarSourcePath = generatedPath;
+      } else if (target === "npc") {
+        const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+        if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+          state.npcRoles[npcIdx].avatarSourcePath = generatedPath;
+        }
+      }
+      // 保存参考图路径（如果有）
+      if (referenceList && referenceList.length > 0 && target === "npc") {
+        const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+        if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+          state.npcRoles[npcIdx].avatarReferringPath = referenceList[0];
         }
       }
       const prepared = await uploadStandardizedImageAsset(target, generatedPath, name || target);
@@ -4785,6 +4805,7 @@ function createToonflowStore() {
       avatarBgPath: state.userAvatarBgPath,
       avatarSourcePath: state.userAvatarSourcePath,
       avatarImagePrompt: state.playerImagePrompt,
+      avatarReferringPath: state.accountAvatarSourcePath, // 用户的参考图
       description: state.playerDesc,
       voice: state.playerVoice,
       voiceMode: state.playerVoiceMode,

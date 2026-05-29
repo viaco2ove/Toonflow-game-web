@@ -52,7 +52,8 @@ export interface StoryRole {
   name: string;
   avatarPath?: string;
   avatarBgPath?: string;
-  avatarSourcePath?: string;
+  avatarSourcePath?: string; // AI生成后分离前的原图
+  avatarReferringPath?: string; // AI生图参考图
   avatarVideoPath?: string;
   avatarImagePrompt?: string; // AI生图形象描述，独立于角色设定
   description?: string;
