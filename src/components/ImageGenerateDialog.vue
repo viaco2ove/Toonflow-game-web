@@ -67,7 +67,7 @@ async function onChooseFiles(e: Event) {
 async function askPolishPrompt() {
   const text = prompt.value.trim();
   if (!text) {
-    status.value = "请先填写形象描述";
+    status.value = "请先填写ai生图形象描述";
     return;
   }
   status.value = "AI 帮写中...";
@@ -83,7 +83,7 @@ async function askPolishPrompt() {
 function confirm() {
   if (props.loading) return;
   if (!prompt.value.trim()) {
-    status.value = "请先填写形象描述";
+    status.value = "请先填写ai生图形象描述";
     return;
   }
   emit("confirm", {
@@ -129,7 +129,7 @@ function confirm() {
 
         <section class="surface section-block stack-gap">
           <div class="row-between">
-            <div class="subtle">形象描述</div>
+            <div class="subtle">ai生图形象描述</div>
             <button class="button small" type="button" :disabled="props.loading" @click="askPolishPrompt">AI帮写</button>
           </div>
           <textarea v-model="prompt" class="textarea" rows="6" :placeholder="selectedPreset.promptHint"></textarea>
