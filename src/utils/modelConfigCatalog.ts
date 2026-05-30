@@ -122,30 +122,14 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
-    value: "qwen",
-    label: "阿里千问",
+    value: "aliyun_direct",
+    label: "阿里百炼",
     website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
     defaults: {
       text: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       voice: "https://dashscope.aliyuncs.com",
       voice_design: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
       voice_clone: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
-    },
-  },
-  {
-    value: "aliyun",
-    label: "local阿里云",
-    website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
-    defaults: {
-      voice: "http://127.0.0.1:8000",
-    },
-  },
-  {
-    value: "aliyun_direct",
-    label: "阿里云直连",
-    website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
-    defaults: {
-      voice: "https://dashscope.aliyuncs.com",
     },
   },
   {
@@ -209,7 +193,7 @@ export function defaultModelTypeFor(type: ModelConfigKind): string {
 }
 
 export function defaultManufacturerFor(type: ModelConfigKind): string {
-  if (type === "voice_design") return "qwen";
+  if (type === "voice_design") return "aliyun_direct";
   if (type === "voice_clone") return "minimax";
   return type === "voice" ? "ai_voice_tts" : "volcengine";
 }
@@ -219,13 +203,13 @@ export function defaultBaseUrlFor(
   type: ModelConfigKind,
   modelType = defaultModelTypeFor(type),
 ): string {
-  if (type === "voice_design" && manufacturer === "qwen") {
+  if (type === "voice_design" && manufacturer === "aliyun_direct") {
     return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
   }
   if (type === "voice_design" && manufacturer === "minimax") {
     return "https://api.minimaxi.com";
   }
-  if (type === "voice_clone" && manufacturer === "qwen") {
+  if (type === "voice_clone" && manufacturer === "aliyun_direct") {
     return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
   }
   if (type === "voice_clone" && manufacturer === "minimax") {
@@ -260,7 +244,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   }
 
   // 语音设计模型
-  if (type === "voice_design" && manufacturer === "qwen") {
+  if (type === "voice_design" && manufacturer === "aliyun_direct") {
     return "qwen3-tts-vd-2026-01-26";
   }
   if (type === "voice_design" && manufacturer === "minimax") {
@@ -268,7 +252,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   }
 
   // 语音克隆模型
-  if (type === "voice_clone" && manufacturer === "qwen") {
+  if (type === "voice_clone" && manufacturer === "aliyun_direct") {
     return "voice-enrollment";
   }
   if (type === "voice_clone" && manufacturer === "minimax") {
@@ -288,7 +272,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
   }
-  if (type === "voice" && manufacturer === "qwen") {
+  if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
   }
   if (type === "voice" && manufacturer === "ai_voice_tts") {
@@ -321,7 +305,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
 export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { value: string; label: string }[] {
   // 语音设计模型选项
   if (type === "voice_design") {
-    if (manufacturer === "qwen") {
+    if (manufacturer === "aliyun_direct") {
       return [
         { value: "qwen3-tts-vd-2026-01-26", label: "Qwen3 TTS VD (语音设计)" },
         { value: "cosyvoice-v3-plus", label: "CosyVoice V3 Plus" },
@@ -336,7 +320,7 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
 
   // 语音克隆模型选项
   if (type === "voice_clone") {
-    if (manufacturer === "qwen") {
+    if (manufacturer === "aliyun_direct") {
       return [
         { value: "voice-enrollment", label: "Voice Enrollment (CosyVoice 专属音色)" },
         { value: "qwen-voice-enrollment", label: "Qwen Voice Enrollment (Qwen3 TTS VC 专属音色)" },
@@ -362,7 +346,7 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
   }
 
   // 语音合成模型选项
-  if (type === "voice" && manufacturer === "qwen") {
+  if (type === "voice" && manufacturer === "aliyun_direct") {
     return [
       { value: "cosyvoice-v3-flash", label: "CosyVoice V3 Flash" },
       { value: "cosyvoice-v3-plus", label: "CosyVoice V3 Plus" },

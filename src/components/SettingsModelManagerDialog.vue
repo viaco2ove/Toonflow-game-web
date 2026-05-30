@@ -40,7 +40,7 @@ function isVoiceDesignModel(model?: string | null): boolean {
   const normalized = String(model || "").trim().toLowerCase();
   if (!normalized) return false;
 
-  // 阿里千问
+  // 阿里百炼
   if (normalized === "qwen-voice-design"
     || normalized.startsWith("qwen3-tts-vd")
     || normalized === "voice-enrollment"
@@ -59,7 +59,7 @@ function isVoiceDesignModel(model?: string | null): boolean {
 
 function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
   const normalized = String(manufacturer || "").trim().toLowerCase();
-  return normalized === "qwen" || normalized === "minimax";
+  return normalized === "aliyun_direct" || normalized === "minimax";
 }
 
 function isAvatarMattingManufacturer(manufacturer?: string | null): boolean {
@@ -93,7 +93,7 @@ function isAutoDlTextManufacturer(manufacturer?: string | null): boolean {
 
 function defaultSlotManufacturer(): string {
   if (isVoiceDesignSlot()) {
-    return "qwen";
+    return "aliyun_direct";
   }
   if (props.slotKey === "storyAvatarMattingModel") {
     return "bria";
@@ -124,7 +124,7 @@ function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelTyp
   if (props.configType === "text" && manufacturer === "lmstudio") {
     return "qwen3.5-9b";
   }
-  if (isVoiceDesignSlot() && manufacturer === "qwen") {
+  if (isVoiceDesignSlot() && manufacturer === "aliyun_direct") {
     return "qwen3-tts-vd-2026-01-26";
   }
   if (props.slotKey === "storyAvatarMattingModel" && manufacturer === "bria") {
@@ -220,10 +220,10 @@ const testResult = reactive({
 const manufacturerOptions = computed(() =>
   MODEL_MANUFACTURERS.filter((item) => {
     if (isVoiceDesignSlot()) {
-      return item.value === "qwen" || item.value === "minimax";
+      return item.value === "aliyun_direct" || item.value === "minimax";
     }
     if (props.slotKey === "storyVoiceCloneModel") {
-      return item.value === "qwen" || item.value === "minimax" || item.value === "ai_voice_tts";
+      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"
@@ -245,7 +245,7 @@ const manufacturerOptions = computed(() =>
     }
     if (props.configType === "voice") {
       // 语音合成/识别槽位只显示相关厂商
-      return item.value === "qwen"
+      return item.value === "aliyun_direct"
         || item.value === "aliyun_direct"
         || item.value === "ai_voice_tts"
         || item.value === "minimax"
@@ -532,7 +532,8 @@ function useRecommendation() {
 
 function openCreate() {
   editingId.value = null;
-  form.manufacturer = defaultSlotManufacturer();
+  // 语音克隆槽位使用 form.manufacturer，其他槽位使用 defaultSlotManufacturer
+  form.manufacturer = props.slotKey === "storyVoiceCloneModel" ? "minimax" : defaultSlotManufacturer();
   form.modelType = defaultSlotModelType();
   form.model = defaultSlotModelName(form.manufacturer, form.modelType);
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
@@ -550,10 +551,15 @@ function openCreate() {
 
 function openEdit(row: ModelConfigItem) {
   editingId.value = row.id;
-  form.manufacturer = isVoiceDesignSlot() && !isVoiceDesignManufacturer(row.manufacturer)
-    ? defaultSlotManufacturer()
-    : (row.manufacturer || "other");
-  form.modelType = isVoiceDesignSlot()
+  // 语音克隆槽位直接使用 row 的厂商，其他槽位保持原有逻辑
+  if (props.slotKey === "storyVoiceCloneModel") {
+    form.manufacturer = row.manufacturer || "minimax";
+  } else {
+    form.manufacturer = isVoiceDesignSlot() && !isVoiceDesignManufacturer(row.manufacturer)
+      ? defaultSlotManufacturer()
+      : (row.manufacturer || "other");
+  }
+  form.modelType = isVoiceDesignSlot() || props.slotKey === "storyVoiceCloneModel"
     ? defaultSlotModelType()
     : (row.modelType || defaultSlotModelType());
   form.model = isVoiceDesignSlot() && !isVoiceDesignModel(row.model)
@@ -574,8 +580,8 @@ function openEdit(row: ModelConfigItem) {
 
 async function submitEditor() {
   try {
-    const manufacturer = isVoiceDesignSlot() ? defaultSlotManufacturer() : form.manufacturer;
-    const modelType = isVoiceDesignSlot() ? defaultSlotModelType() : form.modelType;
+    const manufacturer = form.manufacturer;
+    const modelType = form.modelType;
     if (!form.model.trim()) {
       store.state.notice = "模型名称不能为空";
       return;
