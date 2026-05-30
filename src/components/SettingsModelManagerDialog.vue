@@ -13,6 +13,7 @@ import {
   manufacturerLabel,
   manufacturerWebsite,
   modelKindLabel,
+  modelOptionsFor,
   type ModelConfigKind,
 } from "../utils/modelConfigCatalog";
 
@@ -37,13 +38,23 @@ function isVoiceDesignSlot(): boolean {
 
 function isVoiceDesignModel(model?: string | null): boolean {
   const normalized = String(model || "").trim().toLowerCase();
-  return !!normalized && (
-    normalized === "qwen-voice-design"
+  if (!normalized) return false;
+
+  // 阿里千问
+  if (normalized === "qwen-voice-design"
     || normalized.startsWith("qwen3-tts-vd")
     || normalized === "voice-enrollment"
     || normalized.startsWith("cosyvoice-v3")
-    || normalized.startsWith("cosyvoice-v3.5")
-  );
+    || normalized.startsWith("cosyvoice-v3.5")) {
+    return true;
+  }
+
+  // MiniMax
+  if (normalized === "voice-design" || normalized === "minimax-voice-design") {
+    return true;
+  }
+
+  return false;
 }
 
 function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
@@ -138,6 +149,10 @@ function rowMatchesSlot(item: ModelConfigItem): boolean {
   if (isVoiceDesignSlot()) {
     return isVoiceDesignManufacturer(item.manufacturer) && isVoiceDesignModel(item.model);
   }
+  if (props.slotKey === "storyVoiceCloneModel") {
+    // 语音克隆槽位只显示 voice_clone 类型的配置
+    return String(item.type || "").trim() === "voice_clone";
+  }
   if (props.slotKey === "storyAvatarMattingModel") {
     return isAvatarMattingManufacturer(item.manufacturer);
   }
@@ -207,6 +222,9 @@ const manufacturerOptions = computed(() =>
     if (isVoiceDesignSlot()) {
       return item.value === "qwen" || item.value === "minimax";
     }
+    if (props.slotKey === "storyVoiceCloneModel") {
+      return item.value === "qwen" || item.value === "minimax" || item.value === "ai_voice_tts";
+    }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"
         || item.value === "aliyun_imageseg"
@@ -222,10 +240,11 @@ const manufacturerOptions = computed(() =>
         && item.value !== "aliyun_imageseg"
         && item.value !== "tencent_ci"
         && item.value !== "local_birefnet"
-        && item.value !== "local_modnet";
+        && item.value !== "local_modnet"
+        && item.value !== "ai_voice_tts";
     }
     if (props.configType === "voice") {
-      return item.value !== "qwen" && item.value !== "lmstudio" && item.value !== "autodl_chat";
+      return item.value !== "lmstudio" && item.value !== "autodl_chat" && item.value !== "bria";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"
@@ -243,6 +262,9 @@ const modelTypeOptions = computed(() => {
   if (isVoiceDesignSlot()) {
     return [{ value: "voice_design", label: "语音设计" }];
   }
+  if (props.slotKey === "storyVoiceCloneModel") {
+    return [{ value: "voice_clone", label: "语音克隆" }];
+  }
   return MODEL_TYPE_OPTIONS[props.configType];
 });
 
@@ -259,6 +281,10 @@ const modelDropdownOptions = computed(() => {
   }
   if (props.configType === "text" && store.state.settingsTextModelList[form.manufacturer]) {
     return store.state.settingsTextModelList[form.manufacturer];
+  }
+  // 语音相关的模型选项下拉
+  if (props.configType === "voice" || props.configType === "voice_design" || props.configType === "voice_clone") {
+    return modelOptionsFor(form.manufacturer, props.configType);
   }
   return [];
 });

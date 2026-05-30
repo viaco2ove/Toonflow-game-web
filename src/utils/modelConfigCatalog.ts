@@ -15,7 +15,7 @@ export interface ModelTypeOption {
 export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
   {
     value: "ai_voice_tts",
-    label: "ai_voice_tts",
+    label = "local CosyVoice(ai_voice_tts)",
     website: "https://github.com/viaco2ove/ai_voice_tts",
     defaults: {
       voice: "http://127.0.0.1:8000",
@@ -127,7 +127,9 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     website: "https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key",
     defaults: {
       text: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      voice: "https://dashscope.aliyuncs.com",
       voice_design: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
+      voice_clone: "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
     },
   },
   {
@@ -157,6 +159,15 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "ai_voice_tts",
+    label: "local CosyVoice(ai_voice_tts)",
+    website: "https://github.com/viaco2ove/ai_voice_tts",
+    defaults: {
+      voice: "http://127.0.0.1:8000",
+      voice_clone: "http://127.0.0.1:8000",
+    },
+  },
+  {
     value: "other",
     label: "其他",
     defaults: {},
@@ -173,7 +184,7 @@ export const MODEL_TYPE_OPTIONS: Record<ModelConfigKind, ModelTypeOption[]> = {
     { value: "i2i", label: "图生图" },
   ],
   voice: [
-    { value: "tts", label: "语音tts" },
+    { value: "tts", label: "语音合成" },
     { value: "asr", label: "语音识别" },
   ],
   voice_design: [
@@ -199,6 +210,7 @@ export function defaultModelTypeFor(type: ModelConfigKind): string {
 
 export function defaultManufacturerFor(type: ModelConfigKind): string {
   if (type === "voice_design") return "qwen";
+  if (type === "voice_clone") return "minimax";
   return type === "voice" ? "ai_voice_tts" : "volcengine";
 }
 
@@ -213,10 +225,22 @@ export function defaultBaseUrlFor(
   if (type === "voice_design" && manufacturer === "minimax") {
     return "https://api.minimaxi.com";
   }
+  if (type === "voice_clone" && manufacturer === "qwen") {
+    return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
+  }
+  if (type === "voice_clone" && manufacturer === "minimax") {
+    return "https://api.minimaxi.com";
+  }
+  if (type === "voice_clone" && manufacturer === "ai_voice_tts") {
+    return "http://127.0.0.1:8000";
+  }
   if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr"
       ? "https://dashscope.aliyuncs.com/compatible-mode"
       : "https://dashscope.aliyuncs.com";
+  }
+  if (type === "voice" && manufacturer === "ai_voice_tts") {
+    return "http://127.0.0.1:8000";
   }
   return MODEL_MANUFACTURERS.find((item) => item.value === manufacturer)?.defaults[type] || "";
 }
@@ -234,15 +258,47 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "text" && manufacturer === "lmstudio") {
     return "qwen3.5-9b";
   }
+
+  // 语音设计模型
   if (type === "voice_design" && manufacturer === "qwen") {
     return "qwen3-tts-vd-2026-01-26";
   }
   if (type === "voice_design" && manufacturer === "minimax") {
     return "voice-design";
   }
+
+  // 语音克隆模型
+  if (type === "voice_clone" && manufacturer === "qwen") {
+    return "voice-enrollment";
+  }
+  if (type === "voice_clone" && manufacturer === "minimax") {
+    return "speech-02-hd";
+  }
+  if (type === "voice_clone" && manufacturer === "ai_voice_tts") {
+    return "clone_upload";
+  }
+
+  // 语音合成模型
   if (type === "voice" && manufacturer === "ai_voice_tts") {
     return modelType === "tts" ? "ai_voice_tts" : "";
   }
+  if (type === "voice" && manufacturer === "aliyun") {
+    return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
+  }
+  if (type === "voice" && manufacturer === "aliyun_direct") {
+    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
+  }
+  if (type === "voice" && manufacturer === "qwen") {
+    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
+  }
+  if (type === "voice" && manufacturer === "ai_voice_tts") {
+    return modelType === "asr" ? "fun-asr-realtime" : "tts";
+  }
+  if (type === "voice" && manufacturer === "minimax") {
+    return modelType === "tts" ? "speech-02-hd" : "";
+  }
+
+  // 图像模型
   if (type === "image" && manufacturer === "bria") {
     return "RMBG-2.0";
   }
@@ -258,19 +314,86 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "image" && manufacturer === "local_modnet") {
     return "modnet-photographic-portrait";
   }
-  if (type === "voice" && manufacturer === "aliyun") {
-    return modelType === "asr" ? "fun-asr-realtime" : "cosyvoice-v3-flash";
+
+  return "";
+}
+
+export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { value: string; label: string }[] {
+  // 语音设计模型选项
+  if (type === "voice_design") {
+    if (manufacturer === "qwen") {
+      return [
+        { value: "qwen3-tts-vd-2026-01-26", label: "Qwen3 TTS VD (语音设计)" },
+        { value: "cosyvoice-v3-plus", label: "CosyVoice V3 Plus" },
+      ];
+    }
+    if (manufacturer === "minimax") {
+      return [
+        { value: "voice-design", label: "Voice Design (接口无模型参数)" },
+      ];
+    }
   }
-  if (type === "voice" && manufacturer === "aliyun_direct") {
-    return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
+
+  // 语音克隆模型选项
+  if (type === "voice_clone") {
+    if (manufacturer === "qwen") {
+      return [
+        { value: "voice-enrollment", label: "Voice Enrollment (CosyVoice 专属音色)" },
+        { value: "qwen-voice-enrollment", label: "Qwen Voice Enrollment (Qwen3 TTS VC 专属音色)" },
+      ];
+    }
+    if (manufacturer === "minimax") {
+      return [
+        { value: "speech-2.8-hd", label: "Speech 2.8 HD" },
+        { value: "speech-2.8-turbo", label: "Speech 2.8 Turbo" },
+        { value: "speech-2.6-hd", label: "Speech 2.6 HD" },
+        { value: "speech-2.6-turbo", label: "Speech 2.6 Turbo" },
+        { value: "speech-02-hd", label: "Speech 02 HD" },
+        { value: "speech-02-turbo", label: "Speech 02 Turbo" },
+        { value: "speech-01-hd", label: "Speech 01 HD" },
+        { value: "speech-01-turbo", label: "Speech 01 Turbo" },
+      ];
+    }
+    if (manufacturer === "ai_voice_tts") {
+      return [
+        { value: "clone_upload", label: "Clone Upload (本地克隆)" },
+      ];
+    }
+  }
+
+  // 语音合成模型选项
+  if (type === "voice" && manufacturer === "qwen") {
+    return [
+      { value: "cosyvoice-v3-flash", label: "CosyVoice V3 Flash" },
+      { value: "cosyvoice-v3-plus", label: "CosyVoice V3 Plus" },
+      { value: "cosyvoice-v3.5-flash", label: "CosyVoice V3.5 Flash" },
+      { value: "cosyvoice-v3.5-plus", label: "CosyVoice V3.5 Plus" },
+      { value: "qwen-tts", label: "Qwen TTS" },
+      { value: "qwen-tts-latest", label: "Qwen TTS Latest" },
+      { value: "qwen3-asr-flash", label: "Qwen3 ASR Flash" },
+    ];
+  }
+  if (type === "voice" && manufacturer === "ai_voice_tts") {
+    return [
+      { value: "tts", label: "TTS (语音合成)" },
+      { value: "fun-asr-realtime", label: "Fun ASR Realtime (语音识别)" },
+      { value: "clone_upload", label: "Clone Upload (语音克隆)" },
+    ];
   }
   if (type === "voice" && manufacturer === "minimax") {
-    return modelType === "tts" ? "speech-02-hd" : "";
+    return [
+      { value: "speech-2.8-hd", label: "Speech 2.8 HD" },
+      { value: "speech-2.8-turbo", label: "Speech 2.8 Turbo" },
+      { value: "speech-2.6-hd", label: "Speech 2.6 HD" },
+      { value: "speech-2.6-turbo", label: "Speech 2.6 Turbo" },
+      { value: "speech-02-hd", label: "Speech 02 HD" },
+      { value: "speech-02-turbo", label: "Speech 02 Turbo" },
+      { value: "speech-01-hd", label: "Speech 01 HD" },
+      { value: "speech-01-turbo", label: "Speech 01 Turbo" },
+    ];
   }
-  if (type === "voice_clone" && manufacturer === "minimax") {
-    return "voice-clone";
-  }
-  return "";
+
+  return [];
 }
 
 export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind): boolean {
@@ -278,6 +401,8 @@ export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind)
   if (type === "text" && manufacturer === "lmstudio") return false;
   if (type === "image" && manufacturer === "local_birefnet") return false;
   if (type === "image" && manufacturer === "local_modnet") return false;
+  if (type === "voice" && manufacturer === "ai_voice_tts") return false;
+  if (type === "voice_clone" && manufacturer === "ai_voice_tts") return false;
   return true;
 }
 
