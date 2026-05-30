@@ -56,11 +56,16 @@ const runtimeVoiceDesignConfigId = computed(() => {
   const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceDesignModel")?.configId;
   return value && value > 0 ? value : null;
 });
+const runtimeVoiceCloneConfigId = computed(() => {
+  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceCloneModel")?.configId;
+  return value && value > 0 ? value : null;
+});
 const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value);
 const presets = computed(() => store.voicePresetsForConfig(effectiveConfigId.value));
 const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === effectiveConfigId.value) || null);
 const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
 const hasVoiceDesignModel = computed(() => !!runtimeVoiceDesignConfigId.value);
+const hasVoiceCloneModel = computed(() => !!runtimeVoiceCloneConfigId.value);
 const modelSupportedModes = computed(() => resolveModelSupportedModes(selectedModel.value));
 const supportedModes = computed(() => {
   const modes = new Set(modelSupportedModes.value);

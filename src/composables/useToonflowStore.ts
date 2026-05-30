@@ -888,6 +888,7 @@ const GAME_MODEL_SLOTS = [
   { key: "storyImageModel", label: "AI生图", configType: "image" },
   { key: "storyAvatarMattingModel", label: "头像分离", configType: "image" },
   { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
+  { key: "storyVoiceCloneModel", label: "语音克隆", configType: "voice_clone" },
   { key: "storyVoiceModel", label: "语音生成", configType: "voice" },
   { key: "storyAsrModel", label: "语音识别", configType: "voice" },
 ] as const;
@@ -962,6 +963,7 @@ function createToonflowStore() {
     settingsTextConfigs: [] as ModelConfigItem[],
     settingsImageConfigs: [] as ModelConfigItem[],
     settingsVoiceDesignConfigs: [] as ModelConfigItem[],
+    settingsVoiceCloneConfigs: [] as ModelConfigItem[],
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
     settingsTextModelList: {} as AiModelListMap,
@@ -3841,10 +3843,11 @@ function createToonflowStore() {
     return state.userId === 1 || state.userName.trim().toLowerCase() === "admin";
   }
 
-  function settingsConfigOptions(type: "text" | "image" | "voice" | "voice_design"): ModelConfigItem[] {
+  function settingsConfigOptions(type: "text" | "image" | "voice" | "voice_design" | "voice_clone"): ModelConfigItem[] {
     if (type === "text") return state.settingsTextConfigs;
     if (type === "image") return state.settingsImageConfigs;
     if (type === "voice_design") return state.settingsVoiceDesignConfigs;
+    if (type === "voice_clone") return state.settingsVoiceCloneConfigs;
     return state.settingsVoiceConfigs.map((item) => ({
       id: item.id,
       type: item.type || "voice",
@@ -4541,6 +4544,7 @@ function createToonflowStore() {
       state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
       state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
       state.settingsVoiceDesignConfigs = configs.filter((item) => String(item.type || "").trim() === "voice_design");
+      state.settingsVoiceCloneConfigs = configs.filter((item) => String(item.type || "").trim() === "voice_clone");
       state.settingsVoiceConfigs = (voiceConfigs || [])
         .map(normalizeVoiceModelConfig)
         .filter((item) => String(item.type || "voice").trim() === "voice");
@@ -5033,6 +5037,7 @@ function createToonflowStore() {
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
     state.settingsVoiceDesignConfigs = [];
+    state.settingsVoiceCloneConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
     state.settingsTextModelList = {};

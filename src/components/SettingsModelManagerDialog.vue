@@ -47,7 +47,8 @@ function isVoiceDesignModel(model?: string | null): boolean {
 }
 
 function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
-  return String(manufacturer || "").trim() === "qwen";
+  const normalized = String(manufacturer || "").trim().toLowerCase();
+  return normalized === "qwen" || normalized === "minimax";
 }
 
 function isAvatarMattingManufacturer(manufacturer?: string | null): boolean {
@@ -204,7 +205,7 @@ const testResult = reactive({
 const manufacturerOptions = computed(() =>
   MODEL_MANUFACTURERS.filter((item) => {
     if (isVoiceDesignSlot()) {
-      return item.value === "qwen";
+      return item.value === "qwen" || item.value === "minimax";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"

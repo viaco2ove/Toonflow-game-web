@@ -1,4 +1,4 @@
-export type ModelConfigKind = "text" | "image" | "voice" | "voice_design";
+export type ModelConfigKind = "text" | "image" | "voice" | "voice_design" | "voice_clone";
 
 export interface ManufacturerOption {
   value: string;
@@ -147,6 +147,16 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "minimax",
+    label: "MiniMax",
+    website: "https://platform.minimaxi.com",
+    defaults: {
+      voice: "https://api.minimaxi.com",
+      voice_design: "https://api.minimaxi.com",
+      voice_clone: "https://api.minimaxi.com",
+    },
+  },
+  {
     value: "other",
     label: "其他",
     defaults: {},
@@ -169,6 +179,9 @@ export const MODEL_TYPE_OPTIONS: Record<ModelConfigKind, ModelTypeOption[]> = {
   voice_design: [
     { value: "voice_design", label: "语音设计" },
   ],
+  voice_clone: [
+    { value: "voice_clone", label: "语音克隆" },
+  ],
 };
 
 export function modelKindLabel(type: string): string {
@@ -176,6 +189,7 @@ export function modelKindLabel(type: string): string {
   if (type === "image") return "图像模型";
   if (type === "voice") return "语音模型";
   if (type === "voice_design") return "语音设计模型";
+  if (type === "voice_clone") return "语音克隆模型";
   return "未知模型";
 }
 
@@ -195,6 +209,9 @@ export function defaultBaseUrlFor(
 ): string {
   if (type === "voice_design" && manufacturer === "qwen") {
     return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
+  }
+  if (type === "voice_design" && manufacturer === "minimax") {
+    return "https://api.minimaxi.com";
   }
   if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr"
@@ -220,6 +237,9 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "voice_design" && manufacturer === "qwen") {
     return "qwen3-tts-vd-2026-01-26";
   }
+  if (type === "voice_design" && manufacturer === "minimax") {
+    return "voice-design";
+  }
   if (type === "voice" && manufacturer === "ai_voice_tts") {
     return modelType === "tts" ? "ai_voice_tts" : "";
   }
@@ -243,6 +263,12 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   }
   if (type === "voice" && manufacturer === "aliyun_direct") {
     return modelType === "asr" ? "qwen3-asr-flash" : "cosyvoice-v3-flash";
+  }
+  if (type === "voice" && manufacturer === "minimax") {
+    return modelType === "tts" ? "speech-02-hd" : "";
+  }
+  if (type === "voice_clone" && manufacturer === "minimax") {
+    return "voice-clone";
   }
   return "";
 }
