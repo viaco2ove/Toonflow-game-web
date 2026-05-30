@@ -15,7 +15,7 @@ export interface ModelTypeOption {
 export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
   {
     value: "ai_voice_tts",
-    label = "local CosyVoice(ai_voice_tts)",
+    label: "local CosyVoice(ai_voice_tts)",
     website: "https://github.com/viaco2ove/ai_voice_tts",
     defaults: {
       voice: "http://127.0.0.1:8000",

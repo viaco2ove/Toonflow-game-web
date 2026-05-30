@@ -244,7 +244,12 @@ const manufacturerOptions = computed(() =>
         && item.value !== "ai_voice_tts";
     }
     if (props.configType === "voice") {
-      return item.value !== "lmstudio" && item.value !== "autodl_chat" && item.value !== "bria";
+      // 语音合成/识别槽位只显示相关厂商
+      return item.value === "qwen"
+        || item.value === "aliyun_direct"
+        || item.value === "ai_voice_tts"
+        || item.value === "minimax"
+        || item.value === "aliyun";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"
