@@ -611,6 +611,13 @@ async function submitEditor() {
         remark: form.remark.trim() || undefined,
       });
     } else {
+      console.log("[submitEditor] addManagedModelConfig", {
+        configType: props.configType,
+        slotKey: props.slotKey,
+        manufacturer,
+        modelType,
+        formModel: form.model.trim(),
+      });
       await store.addManagedModelConfig({
         type: props.configType,
         manufacturer,
@@ -646,6 +653,11 @@ async function testRow(row: ModelConfigItem) {
     const result = await store.testManagedModelConfig(row);
     testResult.kind = result.kind;
     testResult.content = result.content;
+    testResult.title = `${manufacturerLabel(row.manufacturer || "")} / ${row.model || `配置${row.id}`}`;
+    testResult.visible = true;
+  } catch (err) {
+    testResult.kind = "text";
+    testResult.content = `错误: ${(err as Error)?.message || String(err)}`;
     testResult.title = `${manufacturerLabel(row.manufacturer || "")} / ${row.model || `配置${row.id}`}`;
     testResult.visible = true;
   } finally {

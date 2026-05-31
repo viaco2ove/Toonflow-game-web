@@ -4674,6 +4674,18 @@ function createToonflowStore() {
         content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
       };
     }
+    if (type === "voice_clone") {
+      const result = await api.testVoiceCloneModel({
+        modelName: String(config.model || "").trim(),
+        apiKey: String(config.apiKey || "").trim(),
+        baseURL: String(config.baseUrl || "").trim() || undefined,
+        manufacturer: String(config.manufacturer || "").trim(),
+      });
+      return {
+        kind: "audio",
+        content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
+      };
+    }
     if (type === "text") {
       const result = await api.testTextModel({
         modelName: String(config.model || "").trim(),

@@ -696,6 +696,10 @@ export class ToonflowApi {
     return this.post<string>("/other/testVoiceDesign", payload);
   }
 
+  testVoiceCloneModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
+    return this.post<string>("/other/testVoiceClone", payload);
+  }
+
   describeImage(payload: { imageBase64: string; type?: "role" | "scene" }) {
     return this.post<{ description: string }>("/other/describeImage", payload);
   }
