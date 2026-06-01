@@ -757,7 +757,13 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
     } else if (!currentPhaseId && currentEventKind === phaseKind && currentEventSummary && currentEventSummary === eventSummary) {
       eventStatus = currentEventStatus || "active";
     } else if (!currentPhaseId && currentEventKind && currentEventKind !== "opening" && items.length > 0) {
-      eventStatus = "completed";
+      // 自由章节动态事件模式下，根据 eventIndex 判断 phase 是否已完成
+      // eventIndex 从 1 开始，phaseIndex 从 0 开始
+      // 如果当前 phase 的索引小于当前事件索引 - 1，说明该 phase 的事件已结束
+      const currentEventIndex = Number(progress.eventIndex) || 0;
+      if (phaseIdx < currentEventIndex - 1) {
+        eventStatus = "completed";
+      }
     }
     items.push({
       eventIndex,
@@ -1620,6 +1626,18 @@ const currentLiveFigureRole = computed(() => {
 });
 const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
+
+// WebP 动画控制
+const WAIT_DURATION = 3000; // 定格等待时间
+let figureAnimTimer: ReturnType<typeof setTimeout> | null = null;
+let isAnimatedWebp = false;
+function clearFigureAnimTimer() {
+  if (figureAnimTimer !== null) {
+    clearTimeout(figureAnimTimer);
+    figureAnimTimer = null;
+  }
+}
+
 let speechRecognition: any = null;
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
