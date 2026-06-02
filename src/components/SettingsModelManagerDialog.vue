@@ -859,6 +859,11 @@ async function confirmBinding() {
             <div class="settings-field-hint">
               可先从下拉框选预设模型，也可以直接手动输入。
             </div>
+            <!-- 语音克隆配置提示 -->
+            <div v-if="props.slotKey === 'storyVoiceCloneModel'" class="settings-field-hint settings-hint--warn">
+              <strong>注意：</strong>语音合成与语音克隆必须使用相同供应商和匹配的模型。<br>
+              CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用。
+            </div>
           </template>
           <input
             v-else

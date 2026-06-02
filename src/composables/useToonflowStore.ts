@@ -3949,6 +3949,29 @@ function createToonflowStore() {
   }
 
   function settingsModelAdvisory(key: string): { tone: "info" | "warn"; text: string } | null {
+    if (key === "storyVoiceCloneModel") {
+      const voiceBinding = settingsModelBinding("storyVoiceModel");
+      const cloneBinding = settingsModelBinding("storyVoiceCloneModel");
+      const voiceModelLabel = voiceBinding ? formatSettingsModelLabel(voiceBinding) : "语音生成模型";
+      const cloneModelLabel = cloneBinding ? formatSettingsModelLabel(cloneBinding) : "语音克隆模型";
+      const consistencyHint = "语音合成与语音克隆必须使用相同供应商和匹配的模型。CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用。";
+      if (!cloneBinding?.configId) {
+        return {
+          tone: "warn",
+          text: `用于角色音色克隆。建议与语音合成（${voiceModelLabel}）使用相同供应商和模型。${consistencyHint}`,
+        };
+      }
+      if (voiceBinding?.configId && voiceBinding.manufacturer !== cloneBinding.manufacturer) {
+        return {
+          tone: "warn",
+          text: `当前语音合成（${voiceModelLabel}）和语音克隆（${cloneModelLabel}）不是同一家供应商，克隆音色无法在合成通道使用。${consistencyHint}`,
+        };
+      }
+      return {
+        tone: "info",
+        text: `当前语音克隆模型：${cloneModelLabel}。${consistencyHint}`,
+      };
+    }
     if (key === "storyAvatarMattingModel") {
       const binding = settingsModelBinding("storyAvatarMattingModel");
       const recommendation = settingsRecommendedModel("storyAvatarMattingModel");
