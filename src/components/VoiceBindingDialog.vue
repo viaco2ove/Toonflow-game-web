@@ -645,6 +645,8 @@ onBeforeUnmount(() => {
 
           <section v-else-if="selectedMode === 'clone'" class="voice-dialog-section">
             <div class="voice-dialog-section__title">参考音频</div>
+            <div class="voice-dialog-note voice-dialog-note--warn">语音合成与语音克隆必须使用相同供应商和匹配的模型</div>
+            <div class="voice-dialog-note">CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用</div>
             <input ref="fileInput" type="file" accept="audio/*" hidden @change="chooseAudio" />
             <button class="voice-dialog-upload" type="button" :disabled="audioUploading" @click="openAudioPicker">
               {{ audioUploading ? "上传中..." : "选择并上传音频" }}
@@ -701,7 +703,7 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
-              <button class="voice-dialog-preview-btn  generated-timbre-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色123' }}</button>
+              <button class="voice-dialog-preview-btn  generated-timbre-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色文件' }}</button>
               <button v-if="previewAudioUrl || (hasGeneratedVoiceInSession && (referenceAudioPath || generatedDownloadUrl)) || (props.initialReferenceAudioPath && hasGeneratedVoiceInSession)" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
