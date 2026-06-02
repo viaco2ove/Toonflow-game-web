@@ -230,6 +230,9 @@ watch(
   runtimeStoryVoiceConfigId,
   async (configId) => {
     if (!props.open || !configId) return;
+    // 换模型时清除该配置的缓存，确保加载新模型的预设列表
+    const key = Number(configId);
+    delete store.state.voicePresetsCache[key];
     await store.fetchVoicePresets(configId);
   },
   { immediate: true },
