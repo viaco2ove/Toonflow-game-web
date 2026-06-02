@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
-              <button class="voice-dialog-preview-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色123' }}</button>
+              <button class="voice-dialog-preview-btn  generated-timbre-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色123' }}</button>
               <button v-if="previewAudioUrl || (hasGeneratedVoiceInSession && (referenceAudioPath || generatedDownloadUrl)) || (props.initialReferenceAudioPath && hasGeneratedVoiceInSession)" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
