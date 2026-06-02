@@ -802,6 +802,7 @@ function createEmptyWorldState() {
     playerVoiceReferenceText: "",
     playerVoicePromptText: "",
     playerVoiceMixVoices: [] as VoiceMixItem[],
+    playerVoiceGeneratedDownloadUrl: "",
     narratorName: "旁白",
     narratorVoice: "混合（清朗温润）",
     narratorVoicePresetId: "",
@@ -811,6 +812,7 @@ function createEmptyWorldState() {
     narratorVoiceReferenceText: "",
     narratorVoicePromptText: "",
     narratorVoiceMixVoices: [] as VoiceMixItem[],
+    narratorVoiceGeneratedDownloadUrl: "",
     globalBackground: "",
     allowRoleView: true,
     allowChatShare: true,
@@ -840,6 +842,7 @@ interface StoryEditorSnapshot {
   playerVoiceReferenceText: string;
   playerVoicePromptText: string;
   playerVoiceMixVoices: VoiceMixItem[];
+  playerVoiceGeneratedDownloadUrl: string;
   narratorName: string;
   narratorVoice: string;
   narratorVoicePresetId: string;
@@ -849,6 +852,7 @@ interface StoryEditorSnapshot {
   narratorVoiceReferenceText: string;
   narratorVoicePromptText: string;
   narratorVoiceMixVoices: VoiceMixItem[];
+  narratorVoiceGeneratedDownloadUrl: string;
   globalBackground: string;
   allowRoleView: boolean;
   allowChatShare: boolean;
@@ -3723,6 +3727,7 @@ function createToonflowStore() {
     state.playerVoiceReferenceText = binding.referenceText || "";
     state.playerVoicePromptText = binding.promptText || "";
     state.playerVoiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    state.playerVoiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNarratorVoiceBinding(binding: VoiceBindingDraft) {
@@ -3734,6 +3739,7 @@ function createToonflowStore() {
     state.narratorVoiceReferenceText = binding.referenceText || "";
     state.narratorVoicePromptText = binding.promptText || "";
     state.narratorVoiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    state.narratorVoiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNpcRoleVoice(index: number, binding: VoiceBindingDraft) {
@@ -3747,6 +3753,7 @@ function createToonflowStore() {
     role.voiceReferenceText = binding.referenceText || "";
     role.voicePromptText = binding.promptText || "";
     role.voiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    role.voiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNpcRoleAvatar(index: number, avatarPath: string, avatarBgPath = "") {

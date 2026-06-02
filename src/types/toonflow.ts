@@ -66,6 +66,7 @@ export interface StoryRole {
   voiceReferenceText?: string;
   voicePromptText?: string;
   voiceMixVoices?: VoiceMixItem[];
+  voiceGeneratedDownloadUrl?: string;
   sample?: string;
   parameterCardJson?: RoleParameterCard | null;
 }
@@ -81,6 +82,7 @@ export interface VoiceBindingDraft {
   referenceText?: string;
   promptText?: string;
   mixVoices?: VoiceMixItem[];
+  generatedDownloadUrl?: string;
 }
 
 export interface ImportableRoleListItem {
@@ -637,6 +639,7 @@ export function createDefaultPlayerRole(): StoryRole {
     voiceReferenceText: "",
     voicePromptText: "",
     voiceMixVoices: [],
+    voiceGeneratedDownloadUrl: "",
     sample: "",
     parameterCardJson: null,
   };
@@ -658,6 +661,7 @@ export function createDefaultNarratorRole(): StoryRole {
     voiceReferenceText: "",
     voicePromptText: "",
     voiceMixVoices: [],
+    voiceGeneratedDownloadUrl: "",
     sample: "",
     parameterCardJson: null,
   };

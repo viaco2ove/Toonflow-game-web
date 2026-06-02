@@ -15,6 +15,8 @@ const props = defineProps<{
   initialReferenceText?: string;
   initialPromptText?: string;
   initialMixVoices?: VoiceMixItem[];
+  // 下次打开时用于下载的已生成音色 URL
+  initialGeneratedDownloadUrl?: string;
 }>();
 
 const emit = defineEmits<{
@@ -41,6 +43,10 @@ const previewAudioUrl = ref("");
 const previewPlayer = ref<HTMLAudioElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 let previewObjectUrl = "";
+// 标记本次会话是否生成过音色文件，用于下次打开时依然可以下载
+const hasGeneratedVoiceInSession = ref(false);
+// 保存生成音色的下载 URL，供下次打开时使用
+const generatedDownloadUrl = ref("");
 const modeOptions = [
   { key: "text", label: "预设音色" },
   { key: "clone", label: "克隆音色" },
@@ -206,6 +212,11 @@ watch(
     previewText.value = DEFAULT_PREVIEW_TEXT;
     previewStatus.value = "";
     previewAudioUrl.value = "";
+    // 如果有初始的已生成音色 URL，恢复下载能力
+    if (props.initialGeneratedDownloadUrl || props.initialReferenceAudioPath) {
+      generatedDownloadUrl.value = props.initialGeneratedDownloadUrl || props.initialReferenceAudioPath || "";
+      hasGeneratedVoiceInSession.value = true;
+    }
     await store.fetchVoiceModels();
     if (effectiveConfigId.value) {
       await store.fetchVoicePresets(effectiveConfigId.value);
@@ -482,6 +493,10 @@ async function generateVoiceFile() {
     });
     await loadPreviewAudioUrl(previewUrl);
     previewStatus.value = "音色文件已生成，并已按当前试听文本重新试听";
+    // 标记本次会话已生成音色，下次打开依然可以下载
+    hasGeneratedVoiceInSession.value = true;
+    // 保存下载 URL，下次打开时可以用 referenceAudioPath 下载生成的文件
+    generatedDownloadUrl.value = previewUrl || generated.audioPath || "";
   } catch (err) {
     previewStatus.value = `生成音色失败: ${(err as Error).message}`;
   } finally {
@@ -497,9 +512,15 @@ function downloadAudioName() {
 }
 
 async function downloadPreviewAudio() {
-  const url = previewAudioUrl.value.trim();
+  let url = previewAudioUrl.value.trim();
+  // 如果没有试听音频但有生成过的音色文件，直接用该文件下载
+  if (!url && hasGeneratedVoiceInSession.value) {
+    url = generatedDownloadUrl.value.trim()
+      || referenceAudioPath.value.trim()
+      || (props.initialReferenceAudioPath ? props.initialReferenceAudioPath : "");
+  }
   if (!url) {
-    previewStatus.value = "请先试听后再下载";
+    previewStatus.value = "请先试听或生成音色后再下载";
     return;
   }
   previewStatus.value = "正在准备下载...";
@@ -542,6 +563,7 @@ function confirm() {
     referenceText: referenceText.value.trim(),
     promptText: promptText.value.trim(),
     mixVoices: mixVoices.value.filter((item) => item.voiceId),
+    generatedDownloadUrl: generatedDownloadUrl.value,
   });
 }
 
@@ -680,7 +702,7 @@ onBeforeUnmount(() => {
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色' }}</button>
-              <button v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
+              <button v-if="previewAudioUrl || (hasGeneratedVoiceInSession && (referenceAudioPath || generatedDownloadUrl)) || (props.initialReferenceAudioPath && hasGeneratedVoiceInSession)" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
             <audio v-if="previewAudioUrl" ref="previewPlayer" class="voice-dialog-audio" :src="previewAudioUrl" controls preload="metadata"></audio>

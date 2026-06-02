@@ -334,6 +334,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: store.state.playerVoiceReferenceText,
         initialPromptText: store.state.playerVoicePromptText,
         initialMixVoices: store.state.playerVoiceMixVoices,
+        initialGeneratedDownloadUrl: store.state.playerVoiceGeneratedDownloadUrl,
       };
     case "narrator":
       return {
@@ -347,6 +348,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: store.state.narratorVoiceReferenceText,
         initialPromptText: store.state.narratorVoicePromptText,
         initialMixVoices: store.state.narratorVoiceMixVoices,
+        initialGeneratedDownloadUrl: store.state.narratorVoiceGeneratedDownloadUrl,
       };
     case "npc": {
       const role = typeof voiceDialogNpcIndex.value === "number" ? store.state.npcRoles[voiceDialogNpcIndex.value] : null;
@@ -361,6 +363,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: role?.voiceReferenceText || "",
         initialPromptText: role?.voicePromptText || "",
         initialMixVoices: role?.voiceMixVoices || [],
+        initialGeneratedDownloadUrl: role?.voiceGeneratedDownloadUrl || "",
       };
     }
     default:
@@ -375,6 +378,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: "",
         initialPromptText: "",
         initialMixVoices: [],
+        initialGeneratedDownloadUrl: "",
       };
   }
 });
@@ -1658,6 +1662,7 @@ function cancelRemoveCurrentNpc() {
       :initial-reference-text="voiceDialogState.initialReferenceText"
       :initial-prompt-text="voiceDialogState.initialPromptText"
       :initial-mix-voices="voiceDialogState.initialMixVoices"
+      :initial-generated-download-url="voiceDialogState.initialGeneratedDownloadUrl"
       @close="closeVoiceDialog"
       @confirm="handleVoiceConfirm"
     />
