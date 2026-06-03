@@ -835,6 +835,7 @@ onBeforeUnmount(() => {
                 />
                 <select v-model="minimaxPresetVoiceType" class="select voice-dialog-preset-filter">
                   <option value="all">全部类型</option>
+                  <option value="business_preset">业务预设</option>
                   <option value="system">系统音色</option>
                   <option value="voice_cloning">克隆音色</option>
                   <option value="voice_generation">文生音色</option>
