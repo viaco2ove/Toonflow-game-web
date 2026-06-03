@@ -4753,6 +4753,14 @@ function createToonflowStore() {
         content: "当前为语音识别模型。设置页暂不内置样本音频测试，请在录音入口验证。",
       };
     }
+    // 语音合成模型（voice）走专用测试接口
+    if (type === "voice") {
+      const result: any = await api.testVoiceSynthesisModel(config.id);
+      return {
+        kind: "audio",
+        content: resolveMediaUrl(state.baseUrl, String(result?.audioUrl || "").trim()),
+      };
+    }
     const presets = await api.getVoicePresets(config.id);
     const firstVoice = presets.find((item) => item.voiceId.trim())?.voiceId || "";
     if (!firstVoice) {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
+import { ToonflowApi } from "../api/toonflow";
 import type { VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 
 const props = defineProps<{
@@ -25,6 +26,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useToonflowStore();
+const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const selectedPresetId = ref("");
 const selectedMode = ref("text");
 const referenceAudioPath = ref("");
@@ -47,6 +49,52 @@ let previewObjectUrl = "";
 const hasGeneratedVoiceInSession = ref(false);
 // 保存生成音色的下载 URL，供下次打开时使用
 const generatedDownloadUrl = ref("");
+// 阿里云 cosyvoice 预设音色搜索/过滤/分页
+const aliyunPresetSearch = ref("");
+const aliyunPresetGender = ref("all");
+const aliyunPresetAge = ref("all");
+const aliyunPresetPageIndex = ref(1);
+const aliyunPresetPageSize = 10;
+interface AliyunPresetRow {
+  voice: string;
+  name: string;
+  scene: string;
+  gender: string;
+  age: string;
+  language: string;
+}
+const aliyunPresetList = ref<AliyunPresetRow[]>([]);
+const aliyunPresetTotal = ref(0);
+const isAliyunDirectCosyVoice = computed(() => {
+  const manufacturer = String(selectedModel.value?.manufacturer || "").trim();
+  if (manufacturer !== "aliyun_direct") return false;
+  return isAliyunDirectCosyVoiceModel(selectedModel.value?.model);
+});
+const aliyunPresetPage = computed(() => aliyunPresetList.value);
+const aliyunPresetTotalPages = computed(() => Math.max(1, Math.ceil(aliyunPresetTotal.value / aliyunPresetPageSize)));
+const aliyunPresetModel = ref(""); // cosyvoice 模型选择
+const aliyunPresetModels: { value: string; label: string }[] = [
+  { value: "cosyvoice-v3-flash", label: "CosyVoice v3 Flash" },
+  { value: "cosyvoice-v3-plus", label: "CosyVoice v3 Plus" },
+  { value: "cosyvoice-v3.5-flash", label: "CosyVoice v3.5 Flash" },
+  { value: "cosyvoice-v3.5-plus", label: "CosyVoice v3.5 Plus" },
+];
+function onAliyunModelChange() {
+  aliyunPresetPageIndex.value = 1;
+  loadAliyunPresets();
+}
+
+// minimax 专用音色列表状态
+const minimaxPresetList = ref<{ voice: string; name: string; voiceType: string; language: string; gender: string }[]>([]);
+const minimaxPresetTotal = ref(0);
+const minimaxPresetSearch = ref("");
+const minimaxPresetVoiceType = ref("all");
+const minimaxPresetGender = ref("all");
+const minimaxPresetPageIndex = ref(1);
+const isMiniMaxManufacturer = computed(() => {
+  return String(selectedModel.value?.manufacturer || "").trim() === "minimax";
+});
+const minimaxPresetTotalPages = computed(() => Math.max(1, Math.ceil(minimaxPresetTotal.value / aliyunPresetPageSize)));
 const modeOptions = [
   { key: "text", label: "预设音色" },
   { key: "clone", label: "克隆音色" },
@@ -226,14 +274,104 @@ watch(
   { immediate: true },
 );
 
+// 加载阿里云预设音色
+async function loadAliyunPresets() {
+  if (!isAliyunDirectCosyVoice.value) {
+    aliyunPresetList.value = [];
+    aliyunPresetTotal.value = 0;
+    return;
+  }
+  const model = aliyunPresetModel.value || String(selectedModel.value?.model || "").trim();
+  if (!model) return;
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listAliyunPresets", {
+      model,
+      page: aliyunPresetPageIndex.value,
+      pageSize: aliyunPresetPageSize,
+      search: aliyunPresetSearch.value,
+      gender: aliyunPresetGender.value,
+      age: aliyunPresetAge.value,
+    });
+    aliyunPresetList.value = data?.items || [];
+    aliyunPresetTotal.value = Number(data?.total || 0);
+  } catch (err) {
+    aliyunPresetList.value = [];
+    aliyunPresetTotal.value = 0;
+    previewStatus.value = `加载阿里云音色失败: ${(err as Error).message}`;
+  }
+}
+
+async function loadMiniMaxPresets() {
+  if (!isMiniMaxManufacturer.value) {
+    minimaxPresetList.value = [];
+    minimaxPresetTotal.value = 0;
+    return;
+  }
+  const configId = effectiveConfigId.value;
+  if (!configId) return;
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listMiniMaxPresets", {
+      configId,
+      page: minimaxPresetPageIndex.value,
+      pageSize: aliyunPresetPageSize,
+      search: minimaxPresetSearch.value,
+      voiceType: minimaxPresetVoiceType.value,
+      gender: minimaxPresetGender.value,
+    });
+    minimaxPresetList.value = data?.items || [];
+    minimaxPresetTotal.value = Number(data?.total || 0);
+  } catch (err) {
+    minimaxPresetList.value = [];
+    minimaxPresetTotal.value = 0;
+    previewStatus.value = `加载 minimax 音色失败: ${(err as Error).message}`;
+  }
+}
+
 watch(
-  runtimeStoryVoiceConfigId,
-  async (configId) => {
-    if (!props.open || !configId) return;
-    // 换模型时清除该配置的缓存，确保加载新模型的预设列表
-    const key = Number(configId);
-    delete store.state.voicePresetsCache[key];
-    await store.fetchVoicePresets(configId);
+  [minimaxPresetSearch, minimaxPresetVoiceType, minimaxPresetGender],
+  () => {
+    minimaxPresetPageIndex.value = 1;
+    loadMiniMaxPresets();
+  },
+);
+
+watch(minimaxPresetPageIndex, () => loadMiniMaxPresets());
+
+watch(
+  [isMiniMaxManufacturer, () => props.open],
+  () => {
+    if (props.open && isMiniMaxManufacturer.value) {
+      minimaxPresetPageIndex.value = 1;
+      loadMiniMaxPresets();
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  [aliyunPresetSearch, aliyunPresetGender, aliyunPresetAge],
+  () => {
+    aliyunPresetPageIndex.value = 1;
+    loadAliyunPresets();
+  },
+);
+
+watch(
+  aliyunPresetPageIndex,
+  () => loadAliyunPresets(),
+);
+
+watch(
+  [isAliyunDirectCosyVoice, () => selectedModel.value?.model, () => props.open],
+  () => {
+    if (props.open && isAliyunDirectCosyVoice.value) {
+      const currentModel = String(selectedModel.value?.model || "").trim();
+      if (currentModel && aliyunPresetModel.value !== currentModel) {
+        aliyunPresetModel.value = currentModel;
+      }
+      aliyunPresetPageIndex.value = 1;
+      loadAliyunPresets();
+    }
   },
   { immediate: true },
 );
@@ -268,7 +406,12 @@ function labelForSelected() {
       return promptText.value.trim() ? `提示词：${promptText.value.trim().slice(0, 12)}` : "提示词音色";
     default: {
       const preset = presets.value.find((item) => item.voiceId === selectedPresetId.value);
-      return preset?.name || props.initialLabel || "预设音色";
+      if (preset?.name) return preset.name;
+      const aliyunRow = aliyunPresetList.value.find((item) => item.voice === selectedPresetId.value);
+      if (aliyunRow?.name) return aliyunRow.name;
+      const minimaxRow = minimaxPresetList.value.find((item) => item.voice === selectedPresetId.value);
+      if (minimaxRow?.name) return minimaxRow.name;
+      return props.initialLabel || "预设音色";
     }
   }
 }
@@ -632,6 +775,98 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-section__title">音色预设</div>
             <div v-if="!effectiveConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
             <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
+            <!-- 阿里云 cosyvoice 专用搜索列表 -->
+            <div v-else-if="isAliyunDirectCosyVoice" class="voice-dialog-aliyun-presets">
+              <div class="voice-dialog-preset-row">
+                <select v-model="aliyunPresetModel" class="select voice-dialog-preset-filter" @change="onAliyunModelChange">
+                  <option v-for="m in aliyunPresetModels" :key="m.value" :value="m.value">{{ m.label }}</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-row">
+                <input
+                  v-model="aliyunPresetSearch"
+                  class="input voice-dialog-preset-search"
+                  type="text"
+                  placeholder="搜索音色名称或 voice id"
+                />
+                <select v-model="aliyunPresetGender" class="select voice-dialog-preset-filter">
+                  <option value="all">全部性别</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+                <select v-model="aliyunPresetAge" class="select voice-dialog-preset-filter">
+                  <option value="all">全部年龄</option>
+                  <option value="child">儿童</option>
+                  <option value="youth">少年</option>
+                  <option value="adult">青年</option>
+                  <option value="middle">中年</option>
+                  <option value="elder">老年</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-list">
+                <button
+                  v-for="row in aliyunPresetPage"
+                  :key="row.voice"
+                  class="voice-dialog-preset-row-item"
+                  :class="{ 'is-active': selectedPresetId === row.voice }"
+                  type="button"
+                  @click="selectedPresetId = row.voice"
+                >
+                  <span class="voice-dialog-preset-name">{{ row.name }}</span>
+                  <span class="voice-dialog-preset-id">{{ row.voice }}</span>
+                  <span v-if="row.scene" class="voice-dialog-preset-scene">{{ row.scene }}</span>
+                </button>
+              </div>
+              <div v-if="aliyunPresetTotal === 0" class="voice-dialog-note">无匹配音色</div>
+              <div v-else class="voice-dialog-preset-pager">
+                <button class="button small" type="button" :disabled="aliyunPresetPageIndex <= 1" @click="aliyunPresetPageIndex = Math.max(1, aliyunPresetPageIndex - 1)">上一页</button>
+                <span class="voice-dialog-preset-page-text">{{ aliyunPresetPageIndex }} / {{ aliyunPresetTotalPages }}（共 {{ aliyunPresetTotal }} 条）</span>
+                <button class="button small" type="button" :disabled="aliyunPresetPageIndex >= aliyunPresetTotalPages" @click="aliyunPresetPageIndex = Math.min(aliyunPresetTotalPages, aliyunPresetPageIndex + 1)">下一页</button>
+              </div>
+            </div>
+            <!-- minimax 专用搜索列表 -->
+            <div v-else-if="isMiniMaxManufacturer" class="voice-dialog-aliyun-presets">
+              <div class="voice-dialog-preset-row">
+                <input
+                  v-model="minimaxPresetSearch"
+                  class="input voice-dialog-preset-search"
+                  type="text"
+                  placeholder="搜索 minimax 音色名称或 voice id"
+                />
+                <select v-model="minimaxPresetVoiceType" class="select voice-dialog-preset-filter">
+                  <option value="all">全部类型</option>
+                  <option value="system">系统音色</option>
+                  <option value="voice_cloning">克隆音色</option>
+                  <option value="voice_generation">文生音色</option>
+                </select>
+                <select v-model="minimaxPresetGender" class="select voice-dialog-preset-filter">
+                  <option value="all">全部性别</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-list">
+                <button
+                  v-for="row in minimaxPresetList"
+                  :key="row.voice"
+                  class="voice-dialog-preset-row-item"
+                  :class="{ 'is-active': selectedPresetId === row.voice }"
+                  type="button"
+                  @click="selectedPresetId = row.voice"
+                >
+                  <span class="voice-dialog-preset-name">{{ row.name }}</span>
+                  <span class="voice-dialog-preset-id">{{ row.voice }}</span>
+                  <span v-if="row.voiceType" class="voice-dialog-preset-scene">{{ row.voiceType }}</span>
+                </button>
+              </div>
+              <div v-if="minimaxPresetTotal === 0" class="voice-dialog-note">无匹配音色</div>
+              <div v-else class="voice-dialog-preset-pager">
+                <button class="button small" type="button" :disabled="minimaxPresetPageIndex <= 1" @click="minimaxPresetPageIndex = Math.max(1, minimaxPresetPageIndex - 1)">上一页</button>
+                <span class="voice-dialog-preset-page-text">{{ minimaxPresetPageIndex }} / {{ minimaxPresetTotalPages }}（共 {{ minimaxPresetTotal }} 条）</span>
+                <button class="button small" type="button" :disabled="minimaxPresetPageIndex >= minimaxPresetTotalPages" @click="minimaxPresetPageIndex = Math.min(minimaxPresetTotalPages, minimaxPresetPageIndex + 1)">下一页</button>
+              </div>
+            </div>
+            <!-- 其他厂商用旧列表 -->
             <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"

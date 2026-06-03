@@ -3058,6 +3058,95 @@ textarea::-webkit-scrollbar-thumb {
   gap: 8px;
 }
 
+.voice-dialog-aliyun-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.voice-dialog-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-dialog-preset-search {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.voice-dialog-preset-filter {
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+
+.voice-dialog-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid #e3ebf5;
+  border-radius: 8px;
+  padding: 4px;
+  background: #fff;
+}
+
+.voice-dialog-preset-row-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.voice-dialog-preset-row-item:hover {
+  background: #f1f6ff;
+}
+
+.voice-dialog-preset-row-item.is-active {
+  background: #e1ecff;
+  border-color: #8ab4ff;
+}
+
+.voice-dialog-preset-name {
+  font-weight: 600;
+  color: #172033;
+}
+
+.voice-dialog-preset-id {
+  color: #60708f;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 12px;
+}
+
+.voice-dialog-preset-scene {
+  color: #4b5e7c;
+  font-size: 12px;
+  background: #f0f4fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.voice-dialog-preset-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.voice-dialog-preset-page-text {
+  color: #60708f;
+  font-size: 12px;
+}
+
 .voice-dialog-section {
   border: 1px solid #d9e4f3;
   border-radius: 14px;

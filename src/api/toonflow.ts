@@ -116,6 +116,13 @@ export class ToonflowApi {
     }
   }
 
+  /**
+   * 公开的 POST 方法，供组件直接调用任意接口
+   */
+  async postPublic<T>(path: string, body?: unknown): Promise<T> {
+    return this.post<T>(path, body);
+  }
+
   private async get<T>(path: string): Promise<T> {
     try {
       const response = await axios.get<ApiEnvelope<T>>(this.url(path), {
@@ -694,6 +701,12 @@ export class ToonflowApi {
 
   testVoiceDesignModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
     return this.post<string>("/other/testVoiceDesign", payload);
+  }
+
+  testVoiceSynthesisModel(configId: number) {
+    return this.post<{ audioUrl: string; data: any }>("/voice/preview/preview_test", {
+      configId,
+    });
   }
 
   testVoiceCloneModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string }) {
