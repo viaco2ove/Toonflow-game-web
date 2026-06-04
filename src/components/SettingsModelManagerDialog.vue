@@ -1027,7 +1027,7 @@ async function confirmBinding() {
           <label>本地安装</label>
           <div class="settings-local-model-card">
             <div class="settings-local-model-copy">
-              <div class="settings-local-model-title">MOSS-TTS-Nano 本地模型</div>
+              <div class="settings-local-model-title">MOSS-TTS-Nano 本地模型（conda）</div>
               <div class="settings-local-model-text">
                 {{ mossTtsNanoStatus?.message || '首次使用需要安装 Python 环境和模型文件。' }}
               </div>
