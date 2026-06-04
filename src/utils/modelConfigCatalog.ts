@@ -144,6 +144,15 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "moss_tts_nano",
+    label: "MOSS-TTS-Nano 本地",
+    website: "https://github.com/OpenMOSS/MOSS-TTS-Nano",
+    defaults: {
+      voice: "http://127.0.0.1:18083",
+      voice_clone: "http://127.0.0.1:18083",
+    },
+  },
+  {
     value: "other",
     label: "其他",
     defaults: {},
@@ -308,6 +317,11 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
         { value: "voice-design", label: "Voice Design (接口无模型参数)" },
       ];
     }
+    if (manufacturer === "moss_tts_nano") {
+      return [
+        { value: "moss-tts-nano-100m", label: "MOSS-TTS-Nano (本地推理)" },
+      ];
+    }
   }
 
   // 语音克隆模型选项
@@ -333,6 +347,11 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
     if (manufacturer === "ai_voice_tts") {
       return [
         { value: "clone_upload", label: "Clone Upload (本地克隆)" },
+      ];
+    }
+    if (manufacturer === "moss_tts_nano") {
+      return [
+        { value: "moss-tts-nano-100m", label: "MOSS-TTS-Nano 100M (本地推理)" },
       ];
     }
   }
@@ -374,11 +393,10 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
 
 export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind): boolean {
   if (type === "voice" && manufacturer === "ai_voice_tts") return false;
-  if (type === "text" && manufacturer === "lmstudio") return false;
-  if (type === "image" && manufacturer === "local_birefnet") return false;
-  if (type === "image" && manufacturer === "local_modnet") return false;
-  if (type === "voice" && manufacturer === "ai_voice_tts") return false;
+  if (type === "voice" && manufacturer === "moss_tts_nano") return false;
   if (type === "voice_clone" && manufacturer === "ai_voice_tts") return false;
+  if (type === "voice_clone" && manufacturer === "moss_tts_nano") return false;
+  if (type === "voice_design" && manufacturer === "moss_tts_nano") return false;
   return true;
 }
 

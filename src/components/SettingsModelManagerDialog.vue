@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
+import { ToonflowApi } from "../api/toonflow";
 import type { LocalAvatarMattingStatus, ModelConfigItem } from "../types/toonflow";
 import {
   MODEL_MANUFACTURERS,
@@ -68,7 +69,8 @@ function isAvatarMattingManufacturer(manufacturer?: string | null): boolean {
     || normalized === "aliyun_imageseg"
     || normalized === "tencent_ci"
     || normalized === "local_birefnet"
-    || normalized === "local_modnet";
+    || normalized === "local_modnet"
+    || normalized === "moss_tts_nano";
 }
 
 function isLocalBiRefNetManufacturer(manufacturer?: string | null): boolean {
@@ -77,6 +79,10 @@ function isLocalBiRefNetManufacturer(manufacturer?: string | null): boolean {
 
 function isLocalModNetManufacturer(manufacturer?: string | null): boolean {
   return String(manufacturer || "").trim().toLowerCase() === "local_modnet";
+}
+
+function isMossTtsNanoManufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim().toLowerCase() === "moss_tts_nano";
 }
 
 function isLocalAvatarMattingManufacturer(manufacturer?: string | null): boolean {
@@ -97,6 +103,9 @@ function defaultSlotManufacturer(): string {
   }
   if (props.slotKey === "storyAvatarMattingModel") {
     return "bria";
+  }
+  if (props.slotKey === "storyVoiceModel" || props.slotKey === "storyVoiceCloneModel") {
+    return "moss_tts_nano";
   }
   if (props.configType === "voice" && props.slotKey === "storyAsrModel") {
     return "aliyun_direct";
@@ -126,6 +135,9 @@ function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelTyp
   }
   if (isVoiceDesignSlot() && manufacturer === "aliyun_direct") {
     return "qwen3-tts-vd-2026-01-26";
+  }
+  if (manufacturer === "moss_tts_nano") {
+    return "moss-tts-nano-100m";
   }
   if (props.slotKey === "storyAvatarMattingModel" && manufacturer === "bria") {
     return "RMBG-2.0";
@@ -190,6 +202,10 @@ const visibleKeys = reactive<Record<number, boolean>>({});
 const localAvatarMattingStatus = ref<LocalAvatarMattingStatus | null>(null);
 const modelPreset = ref<string>("__custom__");
 const localAvatarMattingInstalling = ref(false);
+const mossTtsNanoStatus = ref<{ status: string; installed: boolean; canInstall: boolean; message: string } | null>(null);
+const mossTtsNanoInstallState = ref<"idle" | "installing" | "polling">("idle");
+let mossTtsNanoPollTimer: ReturnType<typeof setInterval> | null = null;
+const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const reasoningEffortOptions = [
   { value: "minimal", label: "minimal" },
   { value: "low", label: "low" },
@@ -223,7 +239,7 @@ const manufacturerOptions = computed(() =>
       return item.value === "aliyun_direct" || item.value === "minimax";
     }
     if (props.slotKey === "storyVoiceCloneModel") {
-      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts";
+      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts" || item.value === "moss_tts_nano";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"
@@ -232,24 +248,12 @@ const manufacturerOptions = computed(() =>
         || item.value === "local_birefnet"
         || item.value === "local_modnet";
     }
-    if (props.configType === "text") {
-      return item.value !== "ai_voice_tts"
-        && item.value !== "aliyun"
-        && item.value !== "aliyun_direct"
-        && item.value !== "bria"
-        && item.value !== "aliyun_imageseg"
-        && item.value !== "tencent_ci"
-        && item.value !== "local_birefnet"
-        && item.value !== "local_modnet"
-        && item.value !== "ai_voice_tts";
-    }
     if (props.configType === "voice") {
-      // 语音合成/识别槽位只显示相关厂商
       return item.value === "aliyun_direct"
-        || item.value === "aliyun_direct"
+        || item.value === "aliyun"
         || item.value === "ai_voice_tts"
         || item.value === "minimax"
-        || item.value === "aliyun";
+        || item.value === "moss_tts_nano";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"
@@ -276,7 +280,8 @@ const modelTypeOptions = computed(() => {
 const shouldShowModelType = computed(() => props.configType !== "image" && modelTypeOptions.value.length > 1);
 const shouldShowTokenPricing = computed(() => props.configType === "text");
 const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer));
-const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value);
+const usesMossTtsNano = computed(() => isMossTtsNanoManufacturer(form.manufacturer));
+const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
 const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
 
@@ -311,6 +316,9 @@ const apiKeyPlaceholder = computed(() => {
   if (props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer)) {
     return "本地模型无需填写";
   }
+  if (isMossTtsNanoManufacturer(form.manufacturer)) {
+    return "本地模型无需填写 API Key";
+  }
   if (!isApiKeyRequiredFor(form.manufacturer, props.configType)) {
     return "本地 ai_voice_tts 可留空";
   }
@@ -340,6 +348,9 @@ const apiKeyHint = computed(() => {
   }
   if (props.slotKey === "storyAvatarMattingModel" && form.manufacturer === "local_modnet") {
     return "本地 MODNet 不需要 Base URL 或 API Key。首次选择会提示安装 Python 依赖和模型文件，安装完成后即可直接使用。";
+  }
+  if (props.slotKey?.startsWith("story") && isMossTtsNanoManufacturer(form.manufacturer)) {
+    return "MOSS-TTS-Nano 本地模型不需要 Base URL 或 API Key。首次使用会自动下载并安装模型（约 700MB）。支持语音合成和声音克隆。";
   }
   return "";
 });
@@ -414,6 +425,48 @@ watch(
     }
   },
 );
+
+watch(
+  () => form.manufacturer,
+  async (value) => {
+    stopMossTtsNanoPoll();
+    if (!isMossTtsNanoManufacturer(value)) {
+      mossTtsNanoStatus.value = null;
+      mossTtsNanoInstallState.value = "idle";
+      return;
+    }
+    if (!showEditor.value) return;
+    try {
+      const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
+      mossTtsNanoStatus.value = s;
+      if (s?.status === "installing") {
+        startMossTtsNanoPoll();
+      } else {
+        mossTtsNanoInstallState.value = "idle";
+      }
+    } catch {
+      mossTtsNanoStatus.value = null;
+      mossTtsNanoInstallState.value = "idle";
+    }
+  },
+);
+
+watch(showEditor, async (visible) => {
+  if (!visible) {
+    stopMossTtsNanoPoll();
+    return;
+  }
+  // 打开编辑器时立即获取一次状态
+  if (isMossTtsNanoManufacturer(form.manufacturer)) {
+    try {
+      const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
+      mossTtsNanoStatus.value = s;
+      if (s?.status === "installing") {
+        startMossTtsNanoPoll();
+      }
+    } catch { /* noop */ }
+  }
+});
 
 watch(
   () => [showEditor.value, form.manufacturer, form.model] as const,
@@ -496,6 +549,84 @@ async function installLocalAvatarMattingFromButton() {
   }
 }
 
+async function installMossTtsNano() {
+  mossTtsNanoInstallState.value = "installing";
+  try {
+    await toonflowApi.postPublic("/voice/mossTtsInstall/install", {});
+    startMossTtsNanoPoll();
+  } catch (err) {
+    store.state.notice = `MOSS-TTS-Nano 安装失败: ${(err as Error).message}`;
+    mossTtsNanoInstallState.value = "idle";
+  }
+}
+
+function stopMossTtsNanoPoll() {
+  if (mossTtsNanoPollTimer) {
+    clearInterval(mossTtsNanoPollTimer);
+    mossTtsNanoPollTimer = null;
+  }
+}
+
+async function stopMossTtsNano() {
+  stopMossTtsNanoPoll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/stop", {});
+    mossTtsNanoStatus.value = s;
+  } catch {
+    // ignore
+  }
+  mossTtsNanoInstallState.value = "idle";
+}
+
+async function resetMossTtsNano() {
+  stopMossTtsNanoPoll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/reset", {});
+    mossTtsNanoStatus.value = s;
+  } catch {
+    // ignore
+  }
+  mossTtsNanoInstallState.value = "idle";
+}
+
+async function startMossTtsNanoPoll() {
+  if (mossTtsNanoPollTimer) return;
+  mossTtsNanoInstallState.value = "polling";
+  try {
+    const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
+    mossTtsNanoStatus.value = s;
+    if (s?.status !== "installing") {
+      mossTtsNanoInstallState.value = "idle";
+      return;
+    }
+  } catch {
+    mossTtsNanoInstallState.value = "idle";
+    return;
+  }
+  mossTtsNanoPollTimer = setInterval(async () => {
+    try {
+      const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
+      mossTtsNanoStatus.value = s;
+      if (s?.status === "installed") {
+        store.state.notice = "MOSS-TTS-Nano 安装完成！";
+        stopMossTtsNanoPoll();
+        mossTtsNanoInstallState.value = "idle";
+      } else if (s?.status === "failed") {
+        store.state.notice = `安装失败: ${s.message || "未知错误"}`;
+        stopMossTtsNanoPoll();
+        mossTtsNanoInstallState.value = "idle";
+      } else if (s?.status === "not_installed") {
+        stopMossTtsNanoPoll();
+        mossTtsNanoInstallState.value = "idle";
+      }
+      // installing 继续轮询
+    } catch {
+      stopMossTtsNanoPoll();
+      mossTtsNanoInstallState.value = "idle";
+    }
+  }, 3000);
+}
+
 function applyModelPreset(value: string) {
   modelPreset.value = value;
   if (value !== "__custom__") {
@@ -532,8 +663,7 @@ function useRecommendation() {
 
 function openCreate() {
   editingId.value = null;
-  // 语音克隆槽位使用 form.manufacturer，其他槽位使用 defaultSlotManufacturer
-  form.manufacturer = props.slotKey === "storyVoiceCloneModel" ? "minimax" : defaultSlotManufacturer();
+  form.manufacturer = defaultSlotManufacturer();
   form.modelType = defaultSlotModelType();
   form.model = defaultSlotModelName(form.manufacturer, form.modelType);
   form.baseUrl = defaultBaseUrlFor(form.manufacturer, props.configType, form.modelType);
@@ -891,6 +1021,63 @@ async function confirmBinding() {
             >
               {{ localAvatarMattingInstalling ? '安装中' : (localAvatarMattingStatus?.status === 'failed' ? '重新安装' : '立即安装') }}
             </button>
+          </div>
+        </div>
+        <div v-if="usesMossTtsNano" class="field">
+          <label>本地安装</label>
+          <div class="settings-local-model-card">
+            <div class="settings-local-model-copy">
+              <div class="settings-local-model-title">MOSS-TTS-Nano 本地模型</div>
+              <div class="settings-local-model-text">
+                {{ mossTtsNanoStatus?.message || '首次使用需要安装 Python 环境和模型文件。' }}
+              </div>
+            </div>
+            <!-- 未安装：显示立即安装按钮 -->
+            <button
+              v-if="mossTtsNanoStatus?.status === 'not_installed' || mossTtsNanoStatus === null"
+              class="button settings-outline-btn"
+              type="button"
+              :disabled="mossTtsNanoInstallState !== 'idle' || mossTtsNanoStatus?.canInstall === false"
+              @click="installMossTtsNano"
+            >
+              立即安装
+            </button>
+            <!-- 安装中/轮询中：显示停止 + 监听进度 -->
+            <button
+              v-else-if="mossTtsNanoStatus?.status === 'installing'"
+              class="button settings-outline-btn"
+              type="button"
+              @click="stopMossTtsNano"
+            >
+              停止安装
+            </button>
+            <!-- 已安装：显示已安装状态 -->
+            <button
+              v-else-if="mossTtsNanoStatus?.status === 'installed'"
+              class="button settings-outline-btn settings-outline-btn--success"
+              type="button"
+              disabled
+            >
+              已安装
+            </button>
+            <!-- 安装失败：显示重新安装 + 清除状态 -->
+            <div v-else-if="mossTtsNanoStatus?.status === 'failed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="mossTtsNanoInstallState !== 'idle'"
+                @click="installMossTtsNano"
+              >
+                重新安装
+              </button>
+              <button
+                class="button settings-outline-btn settings-outline-btn--warn"
+                type="button"
+                @click="resetMossTtsNano"
+              >
+                清除状态
+              </button>
+            </div>
           </div>
         </div>
         <div v-if="shouldShowRemoteConfigFields" class="field">

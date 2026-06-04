@@ -62,23 +62,24 @@ interface AliyunPresetRow {
   gender: string;
   age: string;
   language: string;
+  model: string;
+  family: string;
 }
 const aliyunPresetList = ref<AliyunPresetRow[]>([]);
 const aliyunPresetTotal = ref(0);
 const isAliyunDirectCosyVoice = computed(() => {
   const manufacturer = String(selectedModel.value?.manufacturer || "").trim();
   if (manufacturer !== "aliyun_direct") return false;
-  return isAliyunDirectCosyVoiceModel(selectedModel.value?.model);
+  const m = String(selectedModel.value?.model || "").trim();
+  // 支持 CosyVoice 全系列 + Qwen TTS 全系列
+  return m.startsWith("cosyvoice") || m.startsWith("qwen");
 });
 const aliyunPresetPage = computed(() => aliyunPresetList.value);
 const aliyunPresetTotalPages = computed(() => Math.max(1, Math.ceil(aliyunPresetTotal.value / aliyunPresetPageSize)));
-const aliyunPresetModel = ref(""); // cosyvoice 模型选择
-const aliyunPresetModels: { value: string; label: string }[] = [
-  { value: "cosyvoice-v3-flash", label: "CosyVoice v3 Flash" },
-  { value: "cosyvoice-v3-plus", label: "CosyVoice v3 Plus" },
-  { value: "cosyvoice-v3.5-flash", label: "CosyVoice v3.5 Flash" },
-  { value: "cosyvoice-v3.5-plus", label: "CosyVoice v3.5 Plus" },
-];
+const aliyunPresetModel = ref("all"); // 默认全部模型
+const aliyunPresetModels = ref<{ value: string; label: string; family: string }[]>([
+  { value: "all", label: "全部模型", family: "all" },
+]);
 function onAliyunModelChange() {
   aliyunPresetPageIndex.value = 1;
   loadAliyunPresets();
@@ -145,12 +146,9 @@ const modeSupportNote = computed(() => {
 
 function isAliyunDirectCosyVoiceModel(model?: string | null): boolean {
   const normalized = String(model || "").trim().toLowerCase();
-  return [
-    "cosyvoice-v3-flash",
-    "cosyvoice-v3-plus",
-    "cosyvoice-v3.5-flash",
-    "cosyvoice-v3.5-plus",
-  ].includes(normalized);
+  if (normalized.startsWith("cosyvoice")) return true;
+  if (normalized.startsWith("qwen")) return true;
+  return false;
 }
 
 /**
@@ -274,6 +272,16 @@ watch(
   { immediate: true },
 );
 
+// 加载阿里云模型列表
+async function loadAliyunModelList() {
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listAliyunPresets/listAliyunModels", {});
+    if (data?.items?.length) {
+      aliyunPresetModels.value = data.items;
+    }
+  } catch { /* ignore */ }
+}
+
 // 加载阿里云预设音色
 async function loadAliyunPresets() {
   if (!isAliyunDirectCosyVoice.value) {
@@ -281,8 +289,11 @@ async function loadAliyunPresets() {
     aliyunPresetTotal.value = 0;
     return;
   }
-  const model = aliyunPresetModel.value || String(selectedModel.value?.model || "").trim();
-  if (!model) return;
+  // 首次加载时拉取模型列表
+  if (aliyunPresetModels.value.length <= 1) {
+    await loadAliyunModelList();
+  }
+  const model = aliyunPresetModel.value || "all";
   try {
     const data: any = await toonflowApi.postPublic<any>("/voice/listAliyunPresets", {
       model,
@@ -362,13 +373,11 @@ watch(
 );
 
 watch(
-  [isAliyunDirectCosyVoice, () => selectedModel.value?.model, () => props.open],
+  [isAliyunDirectCosyVoice, () => props.open],
   () => {
     if (props.open && isAliyunDirectCosyVoice.value) {
-      const currentModel = String(selectedModel.value?.model || "").trim();
-      if (currentModel && aliyunPresetModel.value !== currentModel) {
-        aliyunPresetModel.value = currentModel;
-      }
+      // 默认展示全部模型，用户可手动切换
+      aliyunPresetModel.value = "all";
       aliyunPresetPageIndex.value = 1;
       loadAliyunPresets();
     }
@@ -429,7 +438,7 @@ function validate(): string | null {
   const isDirectCosyVoice = String(selectedModel.value?.manufacturer || "").trim() === "aliyun_direct"
     && isAliyunDirectCosyVoiceModel(selectedModel.value?.model);
   if (isDirectCosyVoice && !isPlayableCosyVoicePreviewText(previewText.value)) {
-    return "当前 CosyVoice 试听文本不能只包含编号、标点或空白";
+    return "当前阿里云语音试听文本不能只包含编号、标点或空白";
   }
   return null;
 }
@@ -814,7 +823,10 @@ onBeforeUnmount(() => {
                 >
                   <span class="voice-dialog-preset-name">{{ row.name }}</span>
                   <span class="voice-dialog-preset-id">{{ row.voice }}</span>
-                  <span v-if="row.scene" class="voice-dialog-preset-scene">{{ row.scene }}</span>
+                  <span v-if="row.family === 'business_preset'" class="voice-dialog-preset-scene" style="background:#e8f5e9;color:#2e7d32">预设克隆</span>
+                  <span v-else-if="row.family === 'qwen_tts'" class="voice-dialog-preset-scene" style="background:#e3f2fd;color:#1565c0">Qwen</span>
+                  <span v-else-if="row.model" class="voice-dialog-preset-scene">{{ row.model }}</span>
+                  <span v-if="row.scene && row.family !== 'business_preset'" class="voice-dialog-preset-scene">{{ row.scene }}</span>
                 </button>
               </div>
               <div v-if="aliyunPresetTotal === 0" class="voice-dialog-note">无匹配音色</div>
