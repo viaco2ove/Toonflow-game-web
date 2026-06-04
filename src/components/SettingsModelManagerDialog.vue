@@ -549,10 +549,10 @@ async function installLocalAvatarMattingFromButton() {
   }
 }
 
-async function installMossTtsNano() {
+async function installMossTtsNano(reinstall = false) {
   mossTtsNanoInstallState.value = "installing";
   try {
-    await toonflowApi.postPublic("/voice/mossTtsInstall/install", {});
+    await toonflowApi.postPublic("/voice/mossTtsInstall/install", { reinstall });
     startMossTtsNanoPoll();
   } catch (err) {
     store.state.notice = `MOSS-TTS-Nano 安装失败: ${(err as Error).message}`;
@@ -1038,7 +1038,7 @@ async function confirmBinding() {
               class="button settings-outline-btn"
               type="button"
               :disabled="mossTtsNanoInstallState !== 'idle' || mossTtsNanoStatus?.canInstall === false"
-              @click="installMossTtsNano"
+              @click="installMossTtsNano(true)"
             >
               立即安装
             </button>
@@ -1051,22 +1051,31 @@ async function confirmBinding() {
             >
               停止安装
             </button>
-            <!-- 已安装：显示已安装状态 -->
-            <button
-              v-else-if="mossTtsNanoStatus?.status === 'installed'"
-              class="button settings-outline-btn settings-outline-btn--success"
-              type="button"
-              disabled
-            >
-              已安装
-            </button>
+            <!-- 已安装：显示已安装状态 + 重新安装 -->
+            <div v-else-if="mossTtsNanoStatus?.status === 'installed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn settings-outline-btn--success"
+                type="button"
+                disabled
+              >
+                已安装
+              </button>
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="mossTtsNanoInstallState !== 'idle'"
+                @click="installMossTtsNano(true)"
+              >
+                重新安装
+              </button>
+            </div>
             <!-- 安装失败：显示重新安装 + 清除状态 -->
             <div v-else-if="mossTtsNanoStatus?.status === 'failed'" class="settings-local-model-actions">
               <button
                 class="button settings-outline-btn"
                 type="button"
                 :disabled="mossTtsNanoInstallState !== 'idle'"
-                @click="installMossTtsNano"
+                @click="installMossTtsNano(true)"
               >
                 重新安装
               </button>
