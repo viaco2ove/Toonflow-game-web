@@ -5210,7 +5210,9 @@ function createToonflowStore() {
       state.notice = "只能编辑自己的故事";
       return;
     }
-    await loadWorldForEdit(world);
+    // sessionDetail.world 可能是游玩开始时的旧快照，saveWorld 更新了 DB 但没有更新它。
+    // 必须用 world.id 重新从 DB 拉最新数据，避免用旧快照覆盖已保存的内容。
+    await loadWorldForEdit({ id: world.id } as WorldItem);
   }
 
   async function reopenPublishedWorldAsDraft(world: WorldItem) {
