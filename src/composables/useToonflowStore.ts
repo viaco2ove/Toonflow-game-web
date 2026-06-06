@@ -4854,7 +4854,7 @@ function createToonflowStore() {
   }
 
   function currentPlayerRole() {
-    return {
+    const pr = {
       ...createDefaultPlayerRole(),
       name: state.playerName,
       avatarPath: state.userAvatarPath,
@@ -4873,6 +4873,8 @@ function createToonflowStore() {
       voiceMixVoices: state.playerVoiceMixVoices,
       parameterCardJson: null,
     };
+    console.log("[currentPlayerRole] state.playerDesc:", state.playerDesc, "=> description:", pr.description);
+    return pr;
   }
 
   function currentNarratorRole() {
@@ -5210,6 +5212,7 @@ function createToonflowStore() {
       state.notice = "只能编辑自己的故事";
       return;
     }
+    console.log("[openWorldForEdit] world.playerRole.description:", world?.playerRole?.description);
     // sessionDetail.world 可能是游玩开始时的旧快照，saveWorld 更新了 DB 但没有更新它。
     // 必须用 world.id 重新从 DB 拉最新数据，避免用旧快照覆盖已保存的内容。
     await loadWorldForEdit({ id: world.id } as WorldItem);
@@ -5430,6 +5433,10 @@ function createToonflowStore() {
     }
     state.worldId = result.id;
     state.worldPublishStatus = result.publishStatus || result.settings?.publishStatus || targetStatus;
+    // 用 result 更新 sessionDetail.world，避免下次 loadWorldForEdit 从 DB 读到异步覆盖后的旧值
+    if (state.sessionDetail && Number((state.sessionDetail as any).world?.id) === result.id) {
+      (state.sessionDetail as any).world = result;
+    }
     if (reloadAfter) {
       await reloadWorldsAfterSave();
     }
