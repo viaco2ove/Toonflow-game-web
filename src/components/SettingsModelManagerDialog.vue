@@ -239,7 +239,7 @@ const manufacturerOptions = computed(() =>
       return item.value === "aliyun_direct" || item.value === "minimax";
     }
     if (props.slotKey === "storyVoiceCloneModel") {
-      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts" || item.value === "moss_tts_nano";
+      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts" || item.value === "moss_tts_nano" || item.value === "siliconflow";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"
@@ -253,7 +253,8 @@ const manufacturerOptions = computed(() =>
         || item.value === "aliyun"
         || item.value === "ai_voice_tts"
         || item.value === "minimax"
-        || item.value === "moss_tts_nano";
+        || item.value === "moss_tts_nano"
+        || item.value === "siliconflow";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"

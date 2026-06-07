@@ -135,6 +135,15 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "siliconflow",
+    label: "硅基流动 SiliconFlow",
+    website: "https://api-docs.siliconflow.cn",
+    defaults: {
+      voice: "https://api.siliconflow.cn",
+      voice_clone: "https://api.siliconflow.cn",
+    },
+  },
+  {
     value: "ai_voice_tts",
     label: "local CosyVoice(ai_voice_tts)",
     website: "https://github.com/viaco2ove/ai_voice_tts",
@@ -215,6 +224,9 @@ export function defaultBaseUrlFor(
   }
   if (type === "voice_clone" && manufacturer === "minimax") {
     return "https://api.minimaxi.com";
+  }
+  if ((type === "voice_clone" || type === "voice") && manufacturer === "siliconflow") {
+    return "https://api.siliconflow.cn";
   }
   if (type === "voice_clone" && manufacturer === "ai_voice_tts") {
     return "http://127.0.0.1:8000";
@@ -322,6 +334,12 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
         { value: "moss-tts-nano-100m", label: "MOSS-TTS-Nano (本地推理)" },
       ];
     }
+    if (manufacturer === "siliconflow") {
+      return [
+        { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B" },
+        { value: "fnlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD v0.5" },
+      ];
+    }
   }
 
   // 语音克隆模型选项
@@ -352,6 +370,12 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
     if (manufacturer === "moss_tts_nano") {
       return [
         { value: "moss-tts-nano-100m", label: "MOSS-TTS-Nano 100M (本地推理)" },
+      ];
+    }
+    if (manufacturer === "siliconflow") {
+      return [
+        { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B" },
+        { value: "IndexTeam/IndexTTS-2", label: "IndexTTS-2 (声音克隆)" },
       ];
     }
   }
@@ -385,6 +409,12 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
       { value: "speech-02-turbo", label: "Speech 02 Turbo" },
       { value: "speech-01-hd", label: "Speech 01 HD" },
       { value: "speech-01-turbo", label: "Speech 01 Turbo" },
+    ];
+  }
+  if (type === "voice" && manufacturer === "siliconflow") {
+    return [
+      { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B" },
+      { value: "fnlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD v0.5" },
     ];
   }
 
