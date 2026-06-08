@@ -7081,9 +7081,10 @@ function createToonflowStore() {
           advanced = true;
           break;
         }
-        // 小游戏模式下只处理一轮编排+发言，然后返回让前端等语音播放完成，
+        // 每次只处理一轮编排+发言，然后返回让前端等语音播放完成，
         // 下次 continueSessionNarrative 再走下一轮。
-        if (hasActiveMiniGameInCurrentSession() && shouldStreamPlan) {
+        // 无论普通模式还是小游戏模式都只走一轮，避免连续 NPC 台词互相打断。
+        if (shouldStreamPlan) {
           advanced = true;
           break;
         }
