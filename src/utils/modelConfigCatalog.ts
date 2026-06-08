@@ -375,7 +375,7 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
     if (manufacturer === "siliconflow") {
       return [
         { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B" },
-        { value: "IndexTeam/IndexTTS-2", label: "IndexTTS-2 (声音克隆)" },
+        { value: "nlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD-v0.5(声音克隆)" },
       ];
     }
   }
