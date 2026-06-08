@@ -413,8 +413,10 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
   }
   if (type === "voice" && manufacturer === "siliconflow") {
     return [
-      { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B" },
-      { value: "fnlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD v0.5" },
+      { value: "FunAudioLLM/CosyVoice2-0.5B", label: "CosyVoice2 0.5B (TTS)" },
+      { value: "fnlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD v0.5 (TTS)" },
+      { value: "FunAudioLLM/SenseVoiceSmall", label: "SenseVoice Small (ASR)" },
+      { value: "TeleAI/TeleSpeechASR", label: "TeleSpeech ASR (ASR)" },
     ];
   }
 
