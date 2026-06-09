@@ -1656,6 +1656,9 @@ const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
 const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
 const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
 const runtimeVoiceWarmCache = new Set<string>();
+/** 播放锁已移除：根因是 Watch2 在 voicing 状态时强制改为 waiting_next，
+ *  导致语音播放期间就触发下一轮编排，新台词到达后 stopRuntimeVoicePlayback
+ *  打断当前语音。修复 Watch2 后不再需要此锁。 */
 const revealedMessages = ref<MessageItem[]>([]);
 
 function resetVoiceHoldState() {
@@ -2106,6 +2109,10 @@ watch(
     }
     const newMessages = nextMessages.slice(revealedKeys.length);
     if (!newMessages.length) return;
+    WebDebugLogUtil.log("[voice时序] Watch1 检测到新消息", {
+      新消息数: newMessages.length,
+      新消息角色列表: newMessages.map(m => `${m.role}(${m.id})`),
+    });
     for (const message of newMessages) {
       if (cancelled) return;
       // 流式台词在首个 delta 返回前，只是一个空占位。
@@ -2121,6 +2128,8 @@ watch(
       if (isRuntimeRetryMessage(message)) {
         continue;
       }
+      // 播放锁已移除：根因修复在 Watch2 中——voicing 状态不再被强制改为 waiting_next，
+      // 确保语音播完后才触发下一轮编排，新台词不会在语音播放期间到达。
       await waitForMessageReveal(messageKey, () => cancelled);
     }
   },
@@ -2171,7 +2180,10 @@ watch(
     if (latest.roleType === "player" && (canPlayerSpeak.value || status !== "waiting_next")) {
       return;
     }
-    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 语音播放中（voicing）时绝不能强制改为 waiting_next，
+    // 否则 Watch2 会在语音还没播完时就触发下一轮编排，
+    // 导致新台词到达后 stopRuntimeVoicePlayback 打断当前语音。
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
@@ -2185,6 +2197,13 @@ watch(
     if (status !== "waiting_next") {
       return;
     }
+    WebDebugLogUtil.log("[voice时序] Watch 检测到 waiting_next，准备 auto_advancing", {
+      消息id: latest.id,
+      消息角色: latest.role,
+      消息内容: messageDisplayContent(latest)?.slice(0, 40),
+      canPlayerSpeak: canPlayerSpeak.value,
+      isMiniGameActive: store.hasActiveMiniGameInCurrentSession(),
+    });
     const key = messageUiKey(latest);
     if (!key || debugAutoAdvancing.value) {
       return;
@@ -2279,7 +2298,8 @@ watch(
     const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
     const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
     const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
-    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 语音播放中（voicing）时不能强制改为其他状态，防止打断正在播放的语音
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
@@ -2580,6 +2600,13 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
     return;
   }
   store.setRuntimeMessageStatus(currentMessage.id, "revealing");
+  WebDebugLogUtil.log("[voice时序] waitForMessageReveal revealing", {
+    消息id: currentMessage.id,
+    消息角色: currentMessage.role,
+    消息内容: messageDisplayContent(currentMessage)?.slice(0, 40),
+    是否流式: isStreamingRuntimeMessage(currentMessage),
+    autoVoice: autoVoice.value,
+  });
   let streamedSentenceCount = 0;
   let streamedVoicePlayed = false;
   if (isStreamingRuntimeMessage(currentMessage)) {
@@ -2592,12 +2619,24 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
         streamedSentenceCount += 1;
         if (!sentence) continue;
         store.setRuntimeMessageStatus(currentMessage.id, "voicing");
+        WebDebugLogUtil.log("[voice时序] 流式逐句播放", {
+          消息id: currentMessage.id,
+          句序号: streamedSentenceCount,
+          句内容: sentence?.slice(0, 30),
+        });
         const played = await playMessageAudio(currentMessage, false, true, sentence);
         streamedVoicePlayed = streamedVoicePlayed || played;
       }
       await sleep(120);
     }
-    if (isCancelled()) return;
+    if (isCancelled()) {
+      // cancel 时仍需推进状态，否则消息会卡在 voicing 导致后续编排永远不触发
+      currentMessage = latestMessageByKey(messageKey) || currentMessage;
+      if (currentMessage.roleType !== "player") {
+        store.setRuntimeMessageStatus(currentMessage.id, "waiting_next");
+      }
+      return;
+    }
     currentMessage = latestMessageByKey(messageKey) || currentMessage;
     const sentences = runtimeStreamSentences(currentMessage);
     while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
@@ -2605,6 +2644,11 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
       streamedSentenceCount += 1;
       if (!sentence) continue;
       store.setRuntimeMessageStatus(currentMessage.id, "voicing");
+      WebDebugLogUtil.log("[voice时序] 流式尾句播放", {
+        消息id: currentMessage.id,
+        句序号: streamedSentenceCount,
+        句内容: sentence?.slice(0, 30),
+      });
       const played = await playMessageAudio(currentMessage, false, true, sentence);
       streamedVoicePlayed = streamedVoicePlayed || played;
     }
@@ -2622,19 +2666,46 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
   const nextStatusAfterVoice = (canPlayerSpeak.value && !miniGameContinue) ? "waiting_player" : "waiting_next";
   if (!autoVoice.value) {
     store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+    WebDebugLogUtil.log("[voice时序] 静音模式等待", {
+      消息id: currentMessage.id,
+      设为状态: nextStatusAfterVoice,
+      等待ms: estimateRevealDelayMs(messageDisplayContent(currentMessage)),
+    });
     await sleep(estimateRevealDelayMs(messageDisplayContent(currentMessage)));
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
     store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+    WebDebugLogUtil.log("[voice时序] 流式播放完成", {
+      消息id: currentMessage.id,
+      设为状态: nextStatusAfterVoice,
+      streamedVoicePlayed,
+      streamedSentenceCount,
+    });
     await sleep(260);
     return;
   }
-  if (isCancelled()) return;
+  if (isCancelled()) {
+    // cancel 时仍需推进状态
+    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+    return;
+  }
   store.setRuntimeMessageStatus(currentMessage.id, "voicing");
+  WebDebugLogUtil.log("[voice时序] waitForMessageReveal voicing (非流式)", {
+    消息id: currentMessage.id,
+    消息角色: currentMessage.role,
+    消息内容: messageDisplayContent(currentMessage)?.slice(0, 40),
+  });
   const played = await playMessageAudio(currentMessage, false, true);
-  if (isCancelled()) return;
-  store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+  // 即使 cancel 也推进状态，避免消息卡在 voicing
+  const nextStatusAfterVoiceFinal = (canPlayerSpeak.value && !miniGameContinue) ? "waiting_player" : "waiting_next";
+  store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoiceFinal);
+  WebDebugLogUtil.log("[voice时序] waitForMessageReveal 播放完成", {
+    消息id: currentMessage.id,
+    消息角色: currentMessage.role,
+    played,
+    设为状态: nextStatusAfterVoiceFinal,
+  });
   // 小游戏模式下，旁白语音播放完后需要额外等待一段时间，
   // 确保语音完全播放完后再触发下一轮编排，避免旁白和陪练回合打架。
   // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
@@ -2643,6 +2714,12 @@ async function waitForMessageReveal(messageKey: string, isCancelled: () => boole
 }
 
 function stopRuntimeVoicePlayback() {
+  WebDebugLogUtil.log("[voice打断] stopRuntimeVoicePlayback 被调用", {
+    调用栈: new Error().stack?.split("\n").slice(1, 5).map(s => s.trim()),
+    runtimeVoiceRequestId: runtimeVoiceRequestId + 1,
+    当前播放的消息key: runtimeVoiceMessageKey.value,
+    当前播放阶段: runtimeVoicePhase.value,
+  });
   runtimeVoiceRequestId += 1;
   runtimeVoiceResolve?.(false);
   runtimeVoiceResolve = null;
@@ -3077,6 +3154,13 @@ async function playMessageAudioWithBinding(
   manual: boolean,
   waitForCompletion: boolean,
 ): Promise<boolean> {
+  WebDebugLogUtil.log("[voice打断] playMessageAudioWithBinding 开始", {
+    消息id: message.id,
+    消息角色: message.role,
+    消息内容: messageDisplayContent(message)?.slice(0, 40),
+    waitForCompletion,
+    当前播放消息key: runtimeVoiceMessageKey.value,
+  });
   stopRuntimeVoicePlayback();
   const requestId = runtimeVoiceRequestId;
   if (manual) {
@@ -3141,6 +3225,13 @@ async function playMessageAudio(
   waitForCompletion = false,
   overrideContent?: string,
 ): Promise<boolean> {
+  WebDebugLogUtil.log("[voice时序] playMessageAudio 入口", {
+    消息id: message.id,
+    消息角色: message.role,
+    消息内容: (overrideContent ?? messageDisplayContent(message))?.slice(0, 40),
+    manual,
+    waitForCompletion,
+  });
   const playableContent = overrideContent ?? messageDisplayContent(message);
   const speakable = normalizePlayableSpeechText(playableContent);
   if (!speakable) {

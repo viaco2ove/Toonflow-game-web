@@ -1407,6 +1407,10 @@ function createToonflowStore() {
    * - 但只做预取，不在这里直接改 UI 或改回合状态。
    */
   function prefetchNextSessionOrchestration(triggerMessageId: number) {
+    WebDebugLogUtil.log("[voice时序] prefetchNextSessionOrchestration 触发", {
+      triggerMessageId,
+      timestamp: Date.now(),
+    });
     const sessionId = String(state.currentSessionId || "").trim();
     if (!sessionId || !Number.isFinite(Number(triggerMessageId)) || Number(triggerMessageId) <= 0) {
       return;
@@ -7057,6 +7061,11 @@ function createToonflowStore() {
 
         // 小游戏模式下走专用编排接口，获取完整的 plan（含 eventType、presetContent 等）；
         // 普通模式走标准编排接口。
+        WebDebugLogUtil.log("[voice时序] performContinueSessionNarrative 开始编排", {
+          step,
+          isMiniGameActive,
+          当前消息数: conversationMessages().length,
+        });
         const orchestration = isMiniGameActive
           ? await resolveMinigameOrchestration()
           : await resolveSessionOrchestration(Number(conversationMessages().slice(-1)[0]?.id || 0));
@@ -7072,7 +7081,16 @@ function createToonflowStore() {
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         await refreshSessionStoryInfo();
         if (shouldStreamPlan) {
+          WebDebugLogUtil.log("[voice时序] streamSessionPlan 开始", {
+            step,
+            消息数: conversationMessages().length,
+          });
           await streamSessionPlan(orchestration.plan as DebugNarrativePlan, conversationMessages());
+          WebDebugLogUtil.log("[voice时序] streamSessionPlan 完成", {
+            step,
+            消息数: conversationMessages().length,
+            最新消息id: conversationMessages().slice(-1)[0]?.id,
+          });
         }
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
@@ -7085,9 +7103,16 @@ function createToonflowStore() {
         // 下次 continueSessionNarrative 再走下一轮。
         // 无论普通模式还是小游戏模式都只走一轮，避免连续 NPC 台词互相打断。
         if (shouldStreamPlan) {
+          WebDebugLogUtil.log("[voice时序] shouldStreamPlan=true，break 退出 for 循环", {
+            step,
+            canPlayerSpeakNow,
+            latestStatus,
+          });
           advanced = true;
           break;
         }
+        // 非流式编排（如系统指令）可以继续 step，但最多3轮安全限制，
+        // 防止死循环或一次产出过多消息导致前端语音互相打断。
       }
       if (!advanced) {
         throw new Error("自动推进没有产出新内容");
@@ -7117,6 +7142,12 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
+    WebDebugLogUtil.log("[voice时序] continueSessionNarrative 入口", {
+      currentSessionId: state.currentSessionId,
+      hasMiniGame: hasActiveMiniGameInCurrentSession(),
+      miniGameVoiceWaitEnd: state.miniGameVoiceWaitEnd,
+      消息数: conversationMessages().length,
+    });
     // 小游戏模式下需要等待语音播放完成（或最小等待时间）后再继续编排
     // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
     //       没开语音-》台词获取完（最小等待时间3s）-》获取当前台词
