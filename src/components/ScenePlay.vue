@@ -2107,7 +2107,15 @@ watch(
       }
       // 播放锁已移除：根因修复在 Watch2 中——voicing 状态不再被强制改为 waiting_next，
       // 确保语音播完后才触发下一轮编排，新台词不会在语音播放期间到达。
-      await waitForMessageReveal(messageKey, () => cancelled);
+      await waitForMessageReveal(messageKey, () => cancelled, {
+        autoVoice: () => autoVoice.value,
+        canPlayerSpeak: () => canPlayerSpeak.value,
+        latestMessageByKey,
+        messageDisplayContent,
+        isStreamingRuntimeMessage,
+        isRuntimeRetryMessage,
+        runtimeStreamSentences,
+      });
     }
   },
   { flush: "post", immediate: true },

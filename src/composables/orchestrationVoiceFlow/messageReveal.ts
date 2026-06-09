@@ -26,17 +26,45 @@ function getStore() {
   return useToonflowStore();
 }
 
-// ============== 计算属性 ==============
-const autoVoice = computed(() => getStore().state.autoVoice);
+// ============== 类型定义 ==============
+export type MessageRevealContext = {
+  autoVoice?: () => boolean;
+  canPlayerSpeak?: () => boolean;
+  latestMessageByKey?: (messageKey: string) => any | null;
+  messageDisplayContent?: (message: any) => string;
+  isStreamingRuntimeMessage?: (message: any) => boolean;
+  isRuntimeRetryMessage?: (message: any) => boolean;
+  runtimeStreamSentences?: (message: any) => string[];
+};
+
+function resolveAutoVoice(context?: MessageRevealContext): boolean {
+  const value = context?.autoVoice?.();
+  if (typeof value === "boolean") return value;
+  return Boolean((getStore().state as any).autoVoice);
+}
+
+function resolveCanPlayerSpeak(context?: MessageRevealContext): boolean {
+  const value = context?.canPlayerSpeak?.();
+  if (typeof value === "boolean") return value;
+  return canSpeak();
+}
 
 // ============== 消息揭示流程 ==============
 /**
  * 等待消息揭示完成（包括流式逐句播放）
  */
-export async function waitForMessageReveal(messageKey: string, isCancelled: () => boolean): Promise<void> {
-  let currentMessage = latestMessageByKey(messageKey);
+export async function waitForMessageReveal(messageKey: string, isCancelled: () => boolean, context?: MessageRevealContext): Promise<void> {
+  const getLatest = context?.latestMessageByKey || latestMessageByKey;
+  const getContent = context?.messageDisplayContent || messageDisplayContent;
+  const isStreamingMsg = context?.isStreamingRuntimeMessage || isStreamingRuntimeMessage;
+  const isRetryMsg = context?.isRuntimeRetryMessage || isRuntimeRetryMessage;
+  const getSentences = context?.runtimeStreamSentences || runtimeStreamSentences;
+  const isAutoVoiceEnabled = () => resolveAutoVoice(context);
+  const canSpeak = () => resolveCanPlayerSpeak(context);
+
+  let currentMessage = getLatest(messageKey);
   if (!currentMessage) return;
-  if (isRuntimeRetryMessage(currentMessage)) {
+  if (isRetryMsg(currentMessage)) {
     await sleep(120);
     return;
   }
@@ -44,18 +72,18 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   WebDebugLogUtil.log("[voice时序] waitForMessageReveal revealing", {
     消息id: currentMessage.id,
     消息角色: currentMessage.role,
-    消息内容: messageDisplayContent(currentMessage)?.slice(0, 40),
-    是否流式: isStreamingRuntimeMessage(currentMessage),
-    autoVoice: autoVoice.value,
+    消息内容: getContent(currentMessage)?.slice(0, 40),
+    是否流式: isStreamingMsg(currentMessage),
+    autoVoice: isAutoVoiceEnabled(),
   });
   let streamedSentenceCount = 0;
   let streamedVoicePlayed = false;
-  if (isStreamingRuntimeMessage(currentMessage)) {
+  if (isStreamingMsg(currentMessage)) {
     while (!isCancelled()) {
-      currentMessage = latestMessageByKey(messageKey);
-      if (!currentMessage || !isStreamingRuntimeMessage(currentMessage)) break;
-      const sentences = runtimeStreamSentences(currentMessage);
-      while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
+      currentMessage = getLatest(messageKey);
+      if (!currentMessage || !isStreamingMsg(currentMessage)) break;
+      const sentences = getSentences(currentMessage);
+      while (!isCancelled() && isAutoVoiceEnabled() && streamedSentenceCount < sentences.length) {
         const sentence = sentences[streamedSentenceCount];
         streamedSentenceCount += 1;
         if (!sentence) continue;
@@ -72,15 +100,15 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     }
     if (isCancelled()) {
       // cancel 时仍需推进状态，否则消息会卡在 voicing 导致后续编排永远不触发
-      currentMessage = latestMessageByKey(messageKey) || currentMessage;
+      currentMessage = getLatest(messageKey) || currentMessage;
       if (currentMessage.roleType !== "player") {
         getStore().setRuntimeMessageStatus(currentMessage.id, "waiting_next");
       }
       return;
     }
-    currentMessage = latestMessageByKey(messageKey) || currentMessage;
-    const sentences = runtimeStreamSentences(currentMessage);
-    while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
+    currentMessage = getLatest(messageKey) || currentMessage;
+    const sentences = getSentences(currentMessage);
+    while (!isCancelled() && isAutoVoiceEnabled() && streamedSentenceCount < sentences.length) {
       const sentence = sentences[streamedSentenceCount];
       streamedSentenceCount += 1;
       if (!sentence) continue;
@@ -94,7 +122,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
       streamedVoicePlayed = streamedVoicePlayed || played;
     }
   }
-  currentMessage = latestMessageByKey(messageKey) || currentMessage;
+  currentMessage = getLatest(messageKey) || currentMessage;
   if (currentMessage.roleType === "player") {
     getStore().setRuntimeMessageStatus(currentMessage.id, "waiting_player");
     await sleep(180);
@@ -104,15 +132,15 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   const isMiniGameActive = getStore().hasActiveMiniGameInCurrentSession();
   const isMiniGameMsg = String(currentMessage.eventType || "").includes("on_mini_game") && String(currentMessage.eventType || "") !== "on_mini_game_finish";
   const miniGameContinue = isMiniGameActive && isMiniGameMsg;
-  const nextStatusAfterVoice = (canPlayerSpeak() && !miniGameContinue) ? "waiting_player" : "waiting_next";
-  if (!autoVoice.value) {
+  const nextStatusAfterVoice = (canSpeak() && !miniGameContinue) ? "waiting_player" : "waiting_next";
+  if (!isAutoVoiceEnabled()) {
     getStore().setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     WebDebugLogUtil.log("[voice时序] 静音模式等待", {
       消息id: currentMessage.id,
       设为状态: nextStatusAfterVoice,
-      等待ms: estimateRevealDelayMs(messageDisplayContent(currentMessage)),
+      等待ms: estimateRevealDelayMs(getContent(currentMessage)),
     });
-    await sleep(estimateRevealDelayMs(messageDisplayContent(currentMessage)));
+    await sleep(estimateRevealDelayMs(getContent(currentMessage)));
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
@@ -135,11 +163,11 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   WebDebugLogUtil.log("[voice时序] waitForMessageReveal voicing (非流式)", {
     消息id: currentMessage.id,
     消息角色: currentMessage.role,
-    消息内容: messageDisplayContent(currentMessage)?.slice(0, 40),
+    消息内容: getContent(currentMessage)?.slice(0, 40),
   });
   const played = await playMessageAudio(currentMessage, false, true);
   // 即使 cancel 也推进状态，避免消息卡在 voicing
-  const nextStatusAfterVoiceFinal = (canPlayerSpeak() && !miniGameContinue) ? "waiting_player" : "waiting_next";
+  const nextStatusAfterVoiceFinal = (canSpeak() && !miniGameContinue) ? "waiting_player" : "waiting_next";
   getStore().setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoiceFinal);
   WebDebugLogUtil.log("[voice时序] waitForMessageReveal 播放完成", {
     消息id: currentMessage.id,
@@ -151,5 +179,5 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   // 确保语音完全播放完后再触发下一轮编排，避免旁白和陪练回合打架。
   // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
   const miniGameExtraWait = 260;
-  await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
+  await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(getContent(currentMessage)));
 }
