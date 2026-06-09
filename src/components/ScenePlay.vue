@@ -2164,6 +2164,8 @@ watch(
     canPlayerSpeak.value,
     latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
     latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
+    // 必须 watch status 才能在 status 从 streaming → waiting_next 切换时触发自动推进
+    latestRevealedMessage.value ? runtimeMessageStatus(latestRevealedMessage.value) : "",
     runtimeVoiceMessageKey.value,
     runtimeVoicePhase.value,
   ],

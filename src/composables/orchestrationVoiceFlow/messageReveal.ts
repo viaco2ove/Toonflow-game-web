@@ -247,6 +247,9 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
       设为状态: nextStatusAfterVoice,
       等待ms: delayMs,
     });
+    // 静音模式也要清理指示器，否则尾部圆点会一直闪
+    clearRuntimeVoiceIndicator();
+    endMessagePlayback(messageKey);
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
