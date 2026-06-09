@@ -206,19 +206,12 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     }
   }
   currentMessage = getLatest(messageKey) || currentMessage;
-  // 如果 reveal 期间消息被 commit 替换（临时 id → 后端 id），messageKey 找不到，
-  // 但播放仍要继续。检查 store 里有没有相同 createTime 的最新消息
-  if (!currentMessage || (currentMessage && currentMessage !== getLatest(messageKey))) {
-    const store = getStore();
-    const latestNonPlayer = [...store.state.messages].reverse().find((m: any) => m.roleType !== "player");
-    if (latestNonPlayer) {
-      currentMessage = latestNonPlayer;
-    }
-  }
+  // 如果当前 messageKey 在 store 里已经找不到（比如消息被 commit 替换 id 后），
+  // 不要 fallback 到其他 message——那会把这一轮 reveal 的状态错误地写到下一条新消息上，
+  // 导致 Watch 立刻触发下一轮编排，造成"上一条语音还没播完就生成下一条"的连锁问题。
+  // 这里直接清理并退出，新的消息会由 Watch1 触发新的 reveal 循环来处理。
   if (!currentMessage) {
-    // 消息可能在 reveal 过程中被替换（commit 后客户端临时 id 替换为后端 id），
-    // 这里没拿到就直接清理并退出。
-    WebDebugLogUtil.log("[voice时序] waitForMessageReveal 找不到消息", { messageKey });
+    WebDebugLogUtil.log("[voice时序] waitForMessageReveal 找不到消息，直接退出", { messageKey });
     clearRuntimeVoiceIndicator();
     endMessagePlayback(messageKey);
     return;

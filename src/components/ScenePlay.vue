@@ -2203,7 +2203,10 @@ watch(
     // 语音播放中（voicing）时绝不能强制改为 waiting_next，
     // 否则 Watch2 会在语音还没播完时就触发下一轮编排，
     // 导致新台词到达后 stopRuntimeVoicePlayback 打断当前语音。
-    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
+    // 注意：runtimeVoicePhase 不为空说明"有消息正在播放/加载语音"——即使在播的不是 latest，
+    // 也不能把 latest 直接推进，否则会触发下一轮编排，连锁打断当前播放。
+    const anyVoiceActive = !!runtimeVoicePhase.value;
+    if (!miniGameShouldContinue && !anyVoiceActive && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
@@ -2215,6 +2218,16 @@ watch(
       return;
     }
     if (status !== "waiting_next") {
+      return;
+    }
+    // 如果当前还有任何消息处于语音 loading/playing/streaming 阶段，
+    // 不要触发下一轮编排——必须等当前语音播完，否则新台词到达会打断当前语音。
+    if (runtimeVoicePhase.value) {
+      WebDebugLogUtil.log("[voice时序] Watch 检测到 waiting_next，但有语音正在播放，跳过 auto_advancing", {
+        消息id: latest.id,
+        当前播放消息key: runtimeVoiceMessageKey.value,
+        当前播放阶段: runtimeVoicePhase.value,
+      });
       return;
     }
     WebDebugLogUtil.log("[voice时序] Watch 检测到 waiting_next，准备 auto_advancing", {
@@ -3360,7 +3373,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="figureKey" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div

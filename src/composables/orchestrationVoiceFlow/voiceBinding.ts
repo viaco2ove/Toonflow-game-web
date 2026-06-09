@@ -79,7 +79,7 @@ export function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | n
 
 export function findMessageRole(message: MessageItem): StoryRole | null {
   const store = getStore();
-  const roleCards = store.state.roleCards;
+  const roleCards = Array.isArray(store.state.roleCards) ? store.state.roleCards : [];
   if (message.roleType === "player" || message.roleType === "narrator") return null;
   const roleName = String(message.role || "").trim();
   return roleCards.find((role: StoryRole) => {
