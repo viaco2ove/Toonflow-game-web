@@ -14,8 +14,7 @@
  * 当前台词，当前台词是否已完全生成，
  * 拆分句子arr ,每个拆分句的状态。逐句串行TTS。
  * 判断是否把台词最后一个拆分句 播放完毕！！！
- * 生成和播放过程中：
- * 。-》. -》。
+ * 生成和播放过程中：。-》. -》。
  * 尾部圆点指示器	✅ 有（金黄色脉冲点 + loading 时圆点数切换）
  *
  * 重听：
@@ -421,7 +420,7 @@ export async function playMessageAudioWithBinding(
   }
   const segments = splitSpeechSegments(speakable);
   if (!segments.length) return false;
-  setRuntimeVoiceIndicator(message, "loading");
+  setRuntimeVoiceIndicator(message, "loading", messageUiKey(message));
   for (const segment of segments) {
     let segmentPlayed = false;
     let lastError: unknown = null;
@@ -430,7 +429,7 @@ export async function playMessageAudioWithBinding(
       let shouldRetry = true;
       if (requestId !== runtimeVoiceRequestId) return false;
       try {
-        setRuntimeVoiceIndicator(message, "loading");
+        setRuntimeVoiceIndicator(message, "loading", messageUiKey(message));
         const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
         if (WebDebugLogUtil.isEnabled()) {
           console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
@@ -438,7 +437,7 @@ export async function playMessageAudioWithBinding(
         if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
         const blob = await fetchRuntimeVoiceBlob(audioUrl);
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
-          setRuntimeVoiceIndicator(message, "playing");
+          setRuntimeVoiceIndicator(message, "playing", messageUiKey(message));
         });
         if (getStore().hasActiveMiniGameInCurrentSession()) {
           WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob", segmentPlayed);

@@ -352,8 +352,11 @@ function runtimeStreamSentences(message: MessageItem | null | undefined): string
 function messageDisplayContent(message: MessageItem | null | undefined): string {
   if (!message) return "";
   const content = scalarText(message.content);
-  // 如果正在为这条消息打字，返回打字机显示的文本
-  if (typewriterMessageId.value === messageUiKey(message) && isTyping.value) {
+  // 如果正在为这条消息打字，返回打字机显示的文本。
+  // useToonflowStore 里启动 typewriter 时使用的是 String(message.id)，
+  // ScenePlay 的 UI key 则包含 session/createTime/roleType，所以这里兼容两种 key。
+  const typingKey = typewriterMessageId.value;
+  if (isTyping.value && (typingKey === messageUiKey(message) || typingKey === String(message.id))) {
     return typewriterDisplayText.value;
   }
   if (content) return content;
@@ -365,7 +368,8 @@ function messageDisplayContent(message: MessageItem | null | undefined): string 
  */
 function isMessageTyping(message: MessageItem | null | undefined): boolean {
   if (!message) return false;
-  return typewriterMessageId.value === messageUiKey(message) && isTyping.value;
+  const typingKey = typewriterMessageId.value;
+  return isTyping.value && (typingKey === messageUiKey(message) || typingKey === String(message.id));
 }
 
 function runtimeMessageStatus(message: MessageItem | null | undefined): string {
@@ -1991,7 +1995,12 @@ watch(
       runtimeVoiceIndicator.value = ".";
       return;
     }
-    const frames = phase === "playing" ? [".", "。", "."] : [".", "。"];
+    // streaming/generating -> 3 帧，loading/playing -> 2 帧
+    const frames = phase === "streaming"
+      ? [".", "..", "..."]
+      : phase === "playing"
+        ? [".", "。", "."]
+        : [".", "。"];
     let index = 0;
     runtimeVoiceIndicator.value = frames[index];
     setRuntimeVoiceIndicatorTimer(window.setInterval(() => {
@@ -2092,18 +2101,17 @@ watch(
     });
     for (const message of newMessages) {
       if (cancelled) return;
-      // 流式台词在首个 delta 返回前，只是一个空占位。
-      // 这里先不把它塞进聊天框，避免"编排接口刚返回就先出现获取台词中气泡"的假象。
-      if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
-        continue;
-      }
-      const messageKey = messageUiKey(message);
-      revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
-      await nextTick();
-      const viewport = messageViewport.value;
-      if (viewport) viewport.scrollTop = viewport.scrollHeight;
       if (isRuntimeRetryMessage(message)) {
         continue;
+      }
+      // 把流式消息也先入框（即便 content 还空），目的是让"生成中"圆点指示器
+      // 能立刻挂在新消息尾部。当首个 delta 到达时内容会自然出现。
+      const messageKey = messageUiKey(message);
+      if (!revealedMessages.value.some((existing) => messageUiKey(existing) === messageKey)) {
+        revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
+        await nextTick();
+        const viewport = messageViewport.value;
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
       }
       // 播放锁已移除：根因修复在 Watch2 中——voicing 状态不再被强制改为 waiting_next，
       // 确保语音播完后才触发下一轮编排，新台词不会在语音播放期间到达。
@@ -3374,7 +3382,10 @@ onBeforeUnmount(() => {
                   <span
                     v-if="messageVoiceTail(message)"
                     class="play-bubble-voice-tail"
-                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                    :class="{
+                      'is-playing': runtimeVoicePhase === 'playing',
+                      'is-streaming': runtimeVoicePhase === 'streaming',
+                    }"
                   >
                     {{ messageVoiceTail(message) }}
                   </span>
@@ -3463,7 +3474,10 @@ onBeforeUnmount(() => {
                   <span
                     v-if="messageVoiceTail(currentLiveMessage)"
                     class="play-bubble-voice-tail"
-                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                    :class="{
+                      'is-playing': runtimeVoicePhase === 'playing',
+                      'is-streaming': runtimeVoicePhase === 'streaming',
+                    }"
                   >
                     {{ messageVoiceTail(currentLiveMessage) }}
                   </span>

@@ -12,6 +12,7 @@ import { WebDebugLogUtil } from "../../utils/WebDebugLogUtil";
 import {
   sleep,
   latestMessageByKey,
+  messageUiKey,
   messageDisplayContent,
   isStreamingRuntimeMessage,
   isRuntimeRetryMessage,
@@ -20,6 +21,7 @@ import {
   canPlayerSpeak,
 } from "./textUtils";
 import { playMessageAudio } from "./voiceGenPlay";
+import { setRuntimeVoiceIndicator, clearRuntimeVoiceIndicator } from "./state";
 
 // ============== Store 延迟获取 ==============
 function getStore() {
@@ -69,6 +71,10 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     return;
   }
   getStore().setRuntimeMessageStatus(currentMessage.id, "revealing");
+  // 显示出"加载中"指示器（按字数 / 圆点切换）
+  if (isStreamingMsg(currentMessage)) {
+    setRuntimeVoiceIndicator(currentMessage, "streaming", messageUiKey(currentMessage));
+  }
   WebDebugLogUtil.log("[voice时序] waitForMessageReveal revealing", {
     消息id: currentMessage.id,
     消息角色: currentMessage.role,
@@ -180,4 +186,6 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
   const miniGameExtraWait = 260;
   await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(getContent(currentMessage)));
+  // 全部完成：清掉指示器（金黄色脉冲点停止）
+  clearRuntimeVoiceIndicator();
 }

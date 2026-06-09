@@ -6288,7 +6288,11 @@ function createToonflowStore() {
           accumulated += text;
           // 启动打字机动画（逐字追加显示）
           startTypewriter(String(streamingMessage.id), accumulated);
-          // 不再直接更新 content，让打字机动画控制显示
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
           return;
         }
         if (event.type === "done") {
@@ -6299,8 +6303,6 @@ function createToonflowStore() {
           const finalContent = resolveStreamDoneContent(eventData, finalMessageRecord, accumulated);
           // 确保打字机动画显示完整内容
           startTypewriter(String(streamingMessage.id), finalContent);
-          // 等待一小段时间让打字机完成，然后更新消息
-          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessageRecord.role || message.role || ""),
@@ -6312,8 +6314,6 @@ function createToonflowStore() {
               status: "generated",
             }),
           }), true);
-          // 清理打字机状态
-          stopTypewriter();
           return;
         }
         if (event.type === "sentence") {
@@ -6794,7 +6794,11 @@ function createToonflowStore() {
           accumulated += text;
           // 启动打字机动画（逐字追加显示）
           startTypewriter(String(streamingMessage.id), accumulated);
-          // 不再直接更新 content，让打字机动画控制显示
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
           return;
         }
         if (event.type === "done") {
@@ -6965,7 +6969,11 @@ function createToonflowStore() {
           accumulated += text;
           // 启动打字机动画（逐字追加显示）
           startTypewriter(String(streamingMessage.id), accumulated);
-          // 不再直接更新 content，让打字机动画控制显示
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
+          updateMessageById(streamingMessage.id, (message) => ({
+            ...message,
+            content: accumulated,
+          }));
           return;
         }
         if (event.type === "done") {

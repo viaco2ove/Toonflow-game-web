@@ -7,7 +7,7 @@ import { ref } from "vue";
 import type { MessageItem } from "../../types/toonflow";
 
 // ============== 类型定义 ==============
-export type VoiceIndicatorPhase = "" | "loading" | "playing";
+export type VoiceIndicatorPhase = "" | "streaming" | "loading" | "playing";
 
 // ============== Reactive 状态 ==============
 /** 当前播放语音的消息 key */
@@ -56,13 +56,15 @@ export function clearRuntimeVoiceIndicator() {
   }
 }
 
-export function setRuntimeVoiceIndicator(message: MessageItem | null, phase: VoiceIndicatorPhase) {
+export function setRuntimeVoiceIndicator(message: MessageItem | null, phase: VoiceIndicatorPhase, computedKey?: string) {
   if (!message || !phase) {
     clearRuntimeVoiceIndicator();
     return;
   }
-  // 内联 messageUiKey 逻辑，避免循环依赖
-  runtimeVoiceMessageKey.value = `${message.id}_${message.createTime}_${message.roleType || ""}`;
+  // 默认使用 message.id 拼一个 key（无 sessionId）作为内部表示；
+  // UI 渲染时会同时匹配 sessionId-included key 和这个 key，所以这里保持简单。
+  // 若调用方提供了 computedKey（建议），则用其作为唯一 key。
+  runtimeVoiceMessageKey.value = computedKey || `${message.id}_${message.createTime}_${message.roleType || ""}`;
   runtimeVoicePhase.value = phase;
 }
 

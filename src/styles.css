@@ -4566,9 +4566,15 @@ textarea::-webkit-scrollbar-thumb {
   font-weight: 900;
 }
 
-.play-bubble-voice-tail.is-playing {
+.play-bubble-voice-tail.is-playing,
+.play-bubble-voice-tail.is-streaming {
   color: #f0a91e;
   animation: play-voice-tail-pulse 0.9s ease-in-out infinite;
+}
+
+.play-bubble-voice-tail.is-streaming {
+  /* 生成阶段（流式 NDJSON）使用三帧"." ".." "..."，节奏稍快以表现"加载"感 */
+  animation-duration: 0.7s;
 }
 
 .play-message-loading {
