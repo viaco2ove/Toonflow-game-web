@@ -141,7 +141,7 @@ export function estimatePlaybackTimeoutMs(text: string): number {
 export function estimateRevealDelayMs(text: string): number {
   const normalized = sanitizeSpeechText(text);
   const estimated = normalized.length * 90 + 1200;
-  return Math.max(1400, Math.min(4800, estimated));
+  return Math.max(500, Math.min(1800, estimated));
 }
 
 // ============== 文本分句 ==============

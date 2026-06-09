@@ -129,7 +129,20 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   if (isStreamingMsg(currentMessage)) {
     while (!isCancelled()) {
       currentMessage = getLatest(messageKey);
-      if (!currentMessage || !isStreamingMsg(currentMessage)) break;
+      if (!currentMessage) {
+        WebDebugLogUtil.log("[voice时序] 流式外层 while break - getLatest 返回 null", { messageKey });
+        break;
+      }
+      if (!isStreamingMsg(currentMessage)) {
+        WebDebugLogUtil.log("[voice时序] 流式外层 while break - 消息不再是 streaming 状态", {
+          messageKey,
+          messageId: currentMessage.id,
+          status: (currentMessage as any).meta?.status,
+          streaming: (currentMessage as any).meta?.streaming,
+          contentLength: (currentMessage.content || "").length,
+        });
+        break;
+      }
       // 流式生成中：每轮 tick 打印一次 snapshot，看到 content / sentences 增量
       logMessageSnapshot("streaming-tick", currentMessage, getSentences(currentMessage), messageKey);
       const sentences = getSentences(currentMessage);
@@ -221,13 +234,19 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   const miniGameContinue = isMiniGameActive && isMiniGameMsg;
   const nextStatusAfterVoice = (canSpeak() && !miniGameContinue) ? "waiting_player" : "waiting_next";
   if (!isAutoVoiceEnabled()) {
+    var delayMs = estimateRevealDelayMs(getContent(currentMessage));
     getStore().setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
-    WebDebugLogUtil.log("[voice时序] 静音模式等待", {
+    WebDebugLogUtil.log("[voice时序] 静音模式等待开始", {
       消息id: currentMessage.id,
       设为状态: nextStatusAfterVoice,
-      等待ms: estimateRevealDelayMs(getContent(currentMessage)),
+      等待ms: delayMs,
     });
-    await sleep(estimateRevealDelayMs(getContent(currentMessage)));
+    await sleep(delayMs);
+     WebDebugLogUtil.log("[voice时序] 静音模式等待结束", {
+      消息id: currentMessage.id,
+      设为状态: nextStatusAfterVoice,
+      等待ms: delayMs,
+    });
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {

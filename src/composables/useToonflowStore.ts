@@ -7100,6 +7100,22 @@ function createToonflowStore() {
         }
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         await refreshSessionStoryInfo();
+        // 如果 plan.roleType === "player" 且不需要走 streamSessionPlan，
+        // 说明这一轮编排明确把发言权交还给用户。前端需要主动设 awaitUser 兜底，
+        // 否则 storyInfo 慢一拍时用户输入框会持续灰着。
+        if (!shouldStreamPlan) {
+          const planRoleType = String(orchestration.plan?.roleType || "").trim().toLowerCase();
+          if (planRoleType === "player") {
+            WebDebugLogUtil.log("[voice时序] orchestration 返回 player，本地兜底 awaitUser", {
+              plan: orchestration.plan,
+            });
+            // 强制本地兜底：让 sessionCanPlayerSpeak 立即为 true
+            applyAwaitUserTurnFromPlan({
+              ...(orchestration.plan as any),
+              awaitUser: true,
+            });
+          }
+        }
         if (shouldStreamPlan) {
           WebDebugLogUtil.log("[voice时序] streamSessionPlan 开始", {
             step,
