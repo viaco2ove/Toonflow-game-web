@@ -1654,7 +1654,9 @@ function resetVoiceHoldState() {
   voiceHoldPointerId.value = null;
 }
 
-const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
+// 用 message.id 拼接，避免 message.content/meta 频繁更新触发 watcher 重启。
+// 只关心"哪些消息 ID 出现在列表里"，不关心每条消息内部字段变化。
+const liveMessageKeys = computed(() => messages.value.map((m) => String(m.id)).join("|"));
 const liveMessageProgressFingerprint = computed(() => messages.value.map((message) => [
   messageUiKey(message),
   messageDisplayContent(message),
@@ -2064,13 +2066,34 @@ watch(
   { flush: "post", immediate: true },
 );
 
+// 全局递增 token：仅当 sessionId / playMode / debugLoading 真的变化时才 ++，
+// 让 reveal 流程中的 cancel 判定更稳定，避免 message 内容更新触发 watcher 重启误中断。
+let revealRunToken = 0;
+let revealRunActive = 0; // 当前活跃 reveal 任务的 token
+let revealRunGuardSessionId = "";
+let revealRunGuardPlayMode = "";
+let revealRunGuardDebugLoading = false;
+
 watch(
   () => [store.state.currentSessionId, liveMessageKeys.value, autoVoice.value, playMode.value, debugLoading.value],
   async (_, __, onCleanup) => {
-    let cancelled = false;
+    // 只有真正的"上下文切换"才视为取消：sessionId、playMode、debugLoading 变化
+    const sid = store.state.currentSessionId;
+    const pm = playMode.value;
+    const dl = debugLoading.value;
+    const contextChanged = sid !== revealRunGuardSessionId || pm !== revealRunGuardPlayMode || dl !== revealRunGuardDebugLoading;
+    if (contextChanged) {
+      revealRunToken += 1;
+      revealRunGuardSessionId = sid;
+      revealRunGuardPlayMode = pm;
+      revealRunGuardDebugLoading = dl;
+    }
+    const myToken = revealRunActive = revealRunToken;
     onCleanup(() => {
-      cancelled = true;
+      // 仅 token 变化（真实上下文切换）时认为本次 reveal 被取消
     });
+    const isCancelled = () => myToken !== revealRunActive;
+
     if (playMode.value === "history") {
       revealedMessages.value = [...messages.value];
       return;
@@ -2098,9 +2121,11 @@ watch(
     WebDebugLogUtil.log("[voice时序] Watch1 检测到新消息", {
       新消息数: newMessages.length,
       新消息角色列表: newMessages.map(m => `${m.role}(${m.id})`),
+      myToken,
+      revealRunActive,
     });
     for (const message of newMessages) {
-      if (cancelled) return;
+      if (isCancelled()) return;
       if (isRuntimeRetryMessage(message)) {
         continue;
       }
@@ -2115,7 +2140,7 @@ watch(
       }
       // 播放锁已移除：根因修复在 Watch2 中——voicing 状态不再被强制改为 waiting_next，
       // 确保语音播完后才触发下一轮编排，新台词不会在语音播放期间到达。
-      await waitForMessageReveal(messageKey, () => cancelled, {
+      await waitForMessageReveal(messageKey, isCancelled, {
         autoVoice: () => autoVoice.value,
         canPlayerSpeak: () => canPlayerSpeak.value,
         latestMessageByKey,
@@ -2836,8 +2861,26 @@ function continueFromPlayback() {
 }
 
 function messageVoiceTail(message: MessageItem): string {
-  if (runtimeVoiceMessageKey.value !== messageUiKey(message) || !runtimeVoicePhase.value) return "";
-  return runtimeVoiceIndicator.value;
+  if (!runtimeVoicePhase.value) return "";
+  const phaseKey = runtimeVoiceMessageKey.value;
+  const uiKey = messageUiKey(message);
+  const idKey = String(message.id);
+  const idRoleKey = `${message.id}_${message.createTime}_${message.roleType || ""}`;
+  // 兼容三种 key 命名：完整 sessionId-key、message.id、id_createTime_roleType
+  const matched = phaseKey === uiKey || phaseKey === idKey || phaseKey === idRoleKey;
+  if (matched) {
+    return runtimeVoiceIndicator.value;
+  }
+  // 兜底：如果当前消息是最后一条非 player 消息，且 runtimeVoiceMessageKey 不为空，
+  // 说明 message id 在 commit 后被替换了（临时 id → 后端 id），
+  // 此时把 indicator 挂到这条最新消息上避免视觉断层。
+  if (phaseKey && message.roleType !== "player") {
+    const lastNonPlayer = [...messages.value].reverse().find((m) => m.roleType !== "player");
+    if (lastNonPlayer && messageUiKey(lastNonPlayer) === uiKey) {
+      return runtimeVoiceIndicator.value;
+    }
+  }
+  return "";
 }
 
 function retryFailedPlayerMessage(message: MessageItem) {
@@ -3379,12 +3422,15 @@ onBeforeUnmount(() => {
                   <span v-else class="play-bubble-content">
                     {{ messageDisplayContent(message) || "（空消息）" }}<span v-if="isMessageTyping(message)" class="typing-cursor"></span>
                   </span>
+                  <!-- 尾部圆点指示器：在生成中（streaming）、加载语音（loading）、播放语音（playing）阶段都显示，
+                       即使消息还处于 showRuntimeMessageLoading（"获取台词中…"）也要显示 -->
                   <span
                     v-if="messageVoiceTail(message)"
                     class="play-bubble-voice-tail"
                     :class="{
                       'is-playing': runtimeVoicePhase === 'playing',
                       'is-streaming': runtimeVoicePhase === 'streaming',
+                      'is-loading': runtimeVoicePhase === 'loading',
                     }"
                   >
                     {{ messageVoiceTail(message) }}
@@ -3477,6 +3523,7 @@ onBeforeUnmount(() => {
                     :class="{
                       'is-playing': runtimeVoicePhase === 'playing',
                       'is-streaming': runtimeVoicePhase === 'streaming',
+                      'is-loading': runtimeVoicePhase === 'loading',
                     }"
                   >
                     {{ messageVoiceTail(currentLiveMessage) }}

@@ -259,7 +259,9 @@ export function stopRuntimeVoicePlayback() {
   runtimeVoiceRequestId += 1;
   runtimeVoiceResolve?.(false);
   runtimeVoiceResolve = null;
-  clearRuntimeVoiceIndicator();
+  // 注意：不在这里清空指示器。指示器状态由 messageReveal/playMessageAudio 的
+  // streaming/loading/playing 阶段显式管理；stopRuntimeVoicePlayback 只是打断
+  // 当前播放，下一个阶段会自己重新 setRuntimeVoiceIndicator 覆盖。
   if (runtimeVoicePlayer) {
     runtimeVoicePlayer.pause();
     runtimeVoicePlayer.currentTime = 0;

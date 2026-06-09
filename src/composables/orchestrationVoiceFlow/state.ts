@@ -5,6 +5,7 @@
  */
 import { ref } from "vue";
 import type { MessageItem } from "../../types/toonflow";
+import { WebDebugLogUtil } from "../../utils/WebDebugLogUtil";
 
 // ============== 类型定义 ==============
 export type VoiceIndicatorPhase = "" | "streaming" | "loading" | "playing";
@@ -18,6 +19,36 @@ export const runtimeVoicePhase = ref<VoiceIndicatorPhase>("");
 export const runtimeVoiceIndicator = ref(".");
 /** 语音指示器定时器 */
 export let runtimeVoiceIndicatorTimer = 0;
+
+// ============== 指示器阶段调试：记录开始时间和累计时长 ==============
+const phaseStartedAt = new Map<VoiceIndicatorPhase, number>();
+const phaseAccumMs = new Map<VoiceIndicatorPhase, number>();
+const phaseStartCount = new Map<VoiceIndicatorPhase, number>();
+
+function markPhaseStart(phase: VoiceIndicatorPhase) {
+  phaseStartedAt.set(phase, performance.now());
+  phaseStartCount.set(phase, (phaseStartCount.get(phase) || 0) + 1);
+  WebDebugLogUtil.log("[indicator:start]", {
+    phase,
+    startCount: phaseStartCount.get(phase),
+    timestamp: Date.now(),
+  });
+}
+
+function markPhaseEnd(phase: VoiceIndicatorPhase) {
+  const startedAt = phaseStartedAt.get(phase);
+  if (startedAt == null) return;
+  const elapsed = performance.now() - startedAt;
+  phaseStartedAt.delete(phase);
+  phaseAccumMs.set(phase, (phaseAccumMs.get(phase) || 0) + elapsed);
+  WebDebugLogUtil.log("[indicator:end]", {
+    phase,
+    elapsedMs: Math.round(elapsed),
+    accumMs: Math.round(phaseAccumMs.get(phase) || 0),
+    startCount: phaseStartCount.get(phase) || 0,
+    timestamp: Date.now(),
+  });
+}
 
 // ============== 语音指示器定时器管理 ==============
 export function getRuntimeVoiceIndicatorTimer(): number {
@@ -47,6 +78,16 @@ export const isTyping = ref(false);
 
 // ============== 状态清理函数 ==============
 export function clearRuntimeVoiceIndicator() {
+  const prevKey = runtimeVoiceMessageKey.value;
+  const prevPhase = runtimeVoicePhase.value;
+  // 当前已经是空状态，无需重复打印
+  if (!prevKey && !prevPhase) {
+    return;
+  }
+  // 如果当前还有进行中的阶段，结束它
+  if (prevPhase) {
+    markPhaseEnd(prevPhase);
+  }
   runtimeVoiceMessageKey.value = "";
   runtimeVoicePhase.value = "";
   runtimeVoiceIndicator.value = ".";
@@ -54,6 +95,11 @@ export function clearRuntimeVoiceIndicator() {
     window.clearInterval(runtimeVoiceIndicatorTimer);
     runtimeVoiceIndicatorTimer = 0;
   }
+  WebDebugLogUtil.log("[indicator:clear]", {
+    prevKey,
+    prevPhase,
+    timestamp: Date.now(),
+  });
 }
 
 export function setRuntimeVoiceIndicator(message: MessageItem | null, phase: VoiceIndicatorPhase, computedKey?: string) {
@@ -61,11 +107,31 @@ export function setRuntimeVoiceIndicator(message: MessageItem | null, phase: Voi
     clearRuntimeVoiceIndicator();
     return;
   }
-  // 默认使用 message.id 拼一个 key（无 sessionId）作为内部表示；
-  // UI 渲染时会同时匹配 sessionId-included key 和这个 key，所以这里保持简单。
-  // 若调用方提供了 computedKey（建议），则用其作为唯一 key。
-  runtimeVoiceMessageKey.value = computedKey || `${message.id}_${message.createTime}_${message.roleType || ""}`;
+  const nextKey = computedKey || `${message.id}_${message.createTime}_${message.roleType || ""}`;
+  const prevKey = runtimeVoiceMessageKey.value;
+  const prevPhase = runtimeVoicePhase.value;
+  // 同 key 同 phase，直接静默忽略，避免日志噪音
+  if (prevKey === nextKey && prevPhase === phase) {
+    return;
+  }
+  // 如果切换到不同阶段，先结束上一个
+  if (prevPhase && prevPhase !== phase) {
+    markPhaseEnd(prevPhase);
+  }
+  runtimeVoiceMessageKey.value = nextKey;
   runtimeVoicePhase.value = phase;
+  // 进入新阶段就开始计时
+  if (!phaseStartedAt.has(phase)) {
+    markPhaseStart(phase);
+  }
+  WebDebugLogUtil.log("[indicator:set]", {
+    phase,
+    prevPhase,
+    key: nextKey,
+    messageId: message.id,
+    role: message.role,
+    timestamp: Date.now(),
+  });
 }
 
 // ============== 打字机动画函数 ==============

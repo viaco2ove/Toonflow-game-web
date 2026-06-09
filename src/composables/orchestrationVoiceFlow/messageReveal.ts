@@ -22,6 +22,16 @@ import {
 } from "./textUtils";
 import { playMessageAudio } from "./voiceGenPlay";
 import { setRuntimeVoiceIndicator, clearRuntimeVoiceIndicator } from "./state";
+import {
+  startMessagePlayback,
+  startSentencePlayback,
+  finishSentencePlayback,
+  handleStreamSentence,
+  isAllSentencesPlayed,
+  isLastSentencePlayed,
+  getMessagePlaybackState,
+  endMessagePlayback,
+} from "./streamlinesSteamGen";
 
 // ============== Store 延迟获取 ==============
 function getStore() {
@@ -51,6 +61,34 @@ function resolveCanPlayerSpeak(context?: MessageRevealContext): boolean {
   return canSpeak();
 }
 
+/**
+ * 输出消息（开场白/台词）当前的完整文本 + 拆分句子数组 + 每个句子状态
+ */
+function logMessageSnapshot(tag: string, currentMessage: any, sentences: string[], messageKey: string) {
+  const playbackState = getMessagePlaybackState(messageKey);
+  // 播放状态表里的 sentences（来自 handleStreamSentence 注册的）
+  const recordedSentences = playbackState?.sentences ?? [];
+  const sentenceStates = sentences.map((s, idx) => ({
+    序号: idx + 1,
+    内容: s,
+    状态: recordedSentences[idx]?.status ?? "pending",
+    已注册播放: !!recordedSentences[idx],
+  }));
+  WebDebugLogUtil.log(`[snapshot:${tag}]`, {
+    消息id: currentMessage?.id,
+    消息角色: currentMessage?.role,
+    完整文本: currentMessage?.content || "",
+    完整文本长度: (currentMessage?.content || "").length,
+    拆分句总数: sentences.length,
+    已注册播放数: recordedSentences.length,
+    已播完: playbackState?.playedCount ?? 0,
+    最后一句已播完: playbackState?.lastSentencePlayed ?? false,
+    全部已播完: isAllSentencesPlayed(messageKey),
+    拆分句列表: sentenceStates,
+    timestamp: Date.now(),
+  });
+}
+
 // ============== 消息揭示流程 ==============
 /**
  * 等待消息揭示完成（包括流式逐句播放）
@@ -71,6 +109,8 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     return;
   }
   getStore().setRuntimeMessageStatus(currentMessage.id, "revealing");
+  // 注册一次播放状态（用于追踪每句的 pending/playing/played/failed）
+  startMessagePlayback(messageKey);
   // 显示出"加载中"指示器（按字数 / 圆点切换）
   if (isStreamingMsg(currentMessage)) {
     setRuntimeVoiceIndicator(currentMessage, "streaming", messageUiKey(currentMessage));
@@ -82,53 +122,94 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     是否流式: isStreamingMsg(currentMessage),
     autoVoice: isAutoVoiceEnabled(),
   });
+  // 初始 snapshot
+  logMessageSnapshot("revealing", currentMessage, getSentences(currentMessage), messageKey);
   let streamedSentenceCount = 0;
   let streamedVoicePlayed = false;
   if (isStreamingMsg(currentMessage)) {
     while (!isCancelled()) {
       currentMessage = getLatest(messageKey);
       if (!currentMessage || !isStreamingMsg(currentMessage)) break;
+      // 流式生成中：每轮 tick 打印一次 snapshot，看到 content / sentences 增量
+      logMessageSnapshot("streaming-tick", currentMessage, getSentences(currentMessage), messageKey);
       const sentences = getSentences(currentMessage);
       while (!isCancelled() && isAutoVoiceEnabled() && streamedSentenceCount < sentences.length) {
         const sentence = sentences[streamedSentenceCount];
+        const sentenceIndex = streamedSentenceCount; // 0-based
         streamedSentenceCount += 1;
         if (!sentence) continue;
+        // 把这个 sentence 写入播放状态追踪表（pending）
+        handleStreamSentence(sentence, messageKey);
         getStore().setRuntimeMessageStatus(currentMessage.id, "voicing");
         WebDebugLogUtil.log("[voice时序] 流式逐句播放", {
           消息id: currentMessage.id,
           句序号: streamedSentenceCount,
           句内容: sentence?.slice(0, 30),
         });
+        startSentencePlayback(messageKey, sentenceIndex);
         const played = await playMessageAudio(currentMessage, false, true, sentence);
+        finishSentencePlayback(messageKey, sentenceIndex, played);
         streamedVoicePlayed = streamedVoicePlayed || played;
+        logMessageSnapshot(`after-sentence-${sentenceIndex + 1}`, currentMessage, sentences, messageKey);
       }
       await sleep(120);
     }
     if (isCancelled()) {
       // cancel 时仍需推进状态，否则消息会卡在 voicing 导致后续编排永远不触发
       currentMessage = getLatest(messageKey) || currentMessage;
+      WebDebugLogUtil.log("[voice打断] waitForMessageReveal cancelled", {
+        messageKey,
+        消息id: currentMessage?.id,
+        位置: "流式分句循环中被取消",
+        调用栈: new Error().stack || "no stack",
+      });
       if (currentMessage.roleType !== "player") {
         getStore().setRuntimeMessageStatus(currentMessage.id, "waiting_next");
       }
+      logMessageSnapshot("cancelled", currentMessage, getSentences(currentMessage), messageKey);
+      clearRuntimeVoiceIndicator();
+      endMessagePlayback(messageKey);
       return;
     }
     currentMessage = getLatest(messageKey) || currentMessage;
     const sentences = getSentences(currentMessage);
     while (!isCancelled() && isAutoVoiceEnabled() && streamedSentenceCount < sentences.length) {
       const sentence = sentences[streamedSentenceCount];
+      const sentenceIndex = streamedSentenceCount;
       streamedSentenceCount += 1;
       if (!sentence) continue;
+      handleStreamSentence(sentence, messageKey);
       getStore().setRuntimeMessageStatus(currentMessage.id, "voicing");
       WebDebugLogUtil.log("[voice时序] 流式尾句播放", {
         消息id: currentMessage.id,
         句序号: streamedSentenceCount,
         句内容: sentence?.slice(0, 30),
       });
+      startSentencePlayback(messageKey, sentenceIndex);
       const played = await playMessageAudio(currentMessage, false, true, sentence);
+      finishSentencePlayback(messageKey, sentenceIndex, played);
       streamedVoicePlayed = streamedVoicePlayed || played;
+      logMessageSnapshot(`after-tail-sentence-${sentenceIndex + 1}`, currentMessage, sentences, messageKey);
     }
   }
   currentMessage = getLatest(messageKey) || currentMessage;
+  // 如果 reveal 期间消息被 commit 替换（临时 id → 后端 id），messageKey 找不到，
+  // 但播放仍要继续。检查 store 里有没有相同 createTime 的最新消息
+  if (!currentMessage || (currentMessage && currentMessage !== getLatest(messageKey))) {
+    const store = getStore();
+    const latestNonPlayer = [...store.state.messages].reverse().find((m: any) => m.roleType !== "player");
+    if (latestNonPlayer) {
+      currentMessage = latestNonPlayer;
+    }
+  }
+  if (!currentMessage) {
+    // 消息可能在 reveal 过程中被替换（commit 后客户端临时 id 替换为后端 id），
+    // 这里没拿到就直接清理并退出。
+    WebDebugLogUtil.log("[voice时序] waitForMessageReveal 找不到消息", { messageKey });
+    clearRuntimeVoiceIndicator();
+    endMessagePlayback(messageKey);
+    return;
+  }
   if (currentMessage.roleType === "player") {
     getStore().setRuntimeMessageStatus(currentMessage.id, "waiting_player");
     await sleep(180);
@@ -157,12 +238,17 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
       streamedVoicePlayed,
       streamedSentenceCount,
     });
+    logMessageSnapshot("stream-done", currentMessage, getSentences(currentMessage), messageKey);
+    clearRuntimeVoiceIndicator();
+    endMessagePlayback(messageKey);
     await sleep(260);
     return;
   }
   if (isCancelled()) {
     // cancel 时仍需推进状态
     getStore().setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
+    clearRuntimeVoiceIndicator();
+    endMessagePlayback(messageKey);
     return;
   }
   getStore().setRuntimeMessageStatus(currentMessage.id, "voicing");
@@ -187,5 +273,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   const miniGameExtraWait = 260;
   await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(getContent(currentMessage)));
   // 全部完成：清掉指示器（金黄色脉冲点停止）
+  logMessageSnapshot("non-stream-done", currentMessage, getSentences(currentMessage), messageKey);
   clearRuntimeVoiceIndicator();
+  endMessagePlayback(messageKey);
 }

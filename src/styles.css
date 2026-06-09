@@ -4567,7 +4567,8 @@ textarea::-webkit-scrollbar-thumb {
 }
 
 .play-bubble-voice-tail.is-playing,
-.play-bubble-voice-tail.is-streaming {
+.play-bubble-voice-tail.is-streaming,
+.play-bubble-voice-tail.is-loading {
   color: #f0a91e;
   animation: play-voice-tail-pulse 0.9s ease-in-out infinite;
 }
@@ -4575,6 +4576,12 @@ textarea::-webkit-scrollbar-thumb {
 .play-bubble-voice-tail.is-streaming {
   /* 生成阶段（流式 NDJSON）使用三帧"." ".." "..."，节奏稍快以表现"加载"感 */
   animation-duration: 0.7s;
+}
+
+.play-bubble-voice-tail.is-loading {
+  /* 加载语音阶段（TTS 合成中）颜色偏蓝以示区分 */
+  color: #4d75c7;
+  animation-duration: 0.8s;
 }
 
 .play-message-loading {

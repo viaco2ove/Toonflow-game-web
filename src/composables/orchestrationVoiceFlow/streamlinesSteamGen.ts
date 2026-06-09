@@ -26,6 +26,15 @@
  * 加载中效果：。-》. -》。
  * 尾部圆点指示器	✅ 有（金黄色脉冲点 + loading 时圆点数切换）
  *
+ * ## 流程
+ * 台词开始：首先加载台词前 先出现“。。。”
+ * 加载过程：流式逐字追加显示
+ * 加载完成：马上显示 语音生成中效果，同时进行预编排
+ * voiceGenPlay.ts 负责语音生成中效果
+ * 语音播放中：马上显示语音播放中效果
+ * voiceGenPlay.ts 显示播放中效果
+ * 全部拆分句都播放完毕。然后进行下一轮的正式编排
+ *
  */
 import { ref, computed } from "vue";
 import { useToonflowStore } from "../useToonflowStore";
@@ -100,7 +109,9 @@ export function handleStreamDelta(messageId: string, deltaText: string) {
   WebDebugLogUtil.log("[typewriter] delta", {
     messageId,
     deltaText,
+    accumulatedSoFar: accumulatedText.value,
     totalLength: accumulatedText.value.length,
+    timestamp: Date.now(),
   });
 }
 
@@ -127,8 +138,8 @@ export function handleStreamDone(messageId: string, finalContent: string) {
 /**
  * 处理流式句子事件（用于语音播放）
  */
-export function handleStreamSentence(sentence: string): number {
-  const messageId = streamingMessageId.value;
+export function handleStreamSentence(sentence: string, overrideMessageKey?: string): number {
+  const messageId = overrideMessageKey || streamingMessageId.value;
   if (!messageId || !sentence) return -1;
 
   // 获取或创建消息播放状态
@@ -153,8 +164,15 @@ export function handleStreamSentence(sentence: string): number {
 
   WebDebugLogUtil.log("[typewriter] sentence added", {
     messageId,
-    sentence: sentence.slice(0, 30),
+    sentence,
+    sentenceLength: sentence.length,
     totalSentences: state.sentences.length,
+    sentencesSnapshot: state.sentences.map((s, idx) => ({
+      序号: idx + 1,
+      内容: s.sentence,
+      状态: s.status,
+    })),
+    timestamp: Date.now(),
   });
 
   return state.sentences.length - 1;
