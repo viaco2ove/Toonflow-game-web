@@ -3,17 +3,22 @@
  *
  * 职责：提供文本处理相关的工具函数
  */
-import { computed } from "vue";
-import { useToonflowStore } from "../useToonflowStore";
 import type { MessageItem } from "../../types/toonflow";
 
 const RUNTIME_VOICE_CACHE_LIMIT = 60;
 
-// ============== Store 引用 ==============
-const store = useToonflowStore();
+// ============== Store 延迟获取 ==============
+// 避免循环依赖：useToonflowStore 在函数内部延迟获取
+import { useToonflowStore } from "../useToonflowStore";
 
-// ============== 计算属性 ==============
-const messages = computed(() => store.state.messages);
+let cachedStore: ReturnType<typeof useToonflowStore> | null = null;
+
+function getStore() {
+  if (!cachedStore) {
+    cachedStore = useToonflowStore();
+  }
+  return cachedStore;
+}
 
 // ============== 辅助函数 ==============
 export function sleep(ms: number) {
@@ -21,11 +26,14 @@ export function sleep(ms: number) {
 }
 
 export function messageUiKey(message: MessageItem): string {
+  const store = getStore();
   return `${store.state.currentSessionId}_${message.id}_${message.createTime}_${message.roleType || ""}`;
 }
 
 export function latestMessageByKey(messageKey: string): MessageItem | null {
-  return messages.value.find((message) => messageUiKey(message) === messageKey) || null;
+  const store = getStore();
+  const messages = store.state.messages;
+  return messages.find((message: MessageItem) => messageUiKey(message) === messageKey) || null;
 }
 
 export function messageDisplayContent(message: MessageItem): string {
@@ -52,10 +60,12 @@ export function runtimeMessageStatus(message: MessageItem): string {
 }
 
 export function canPlayerSpeak(): boolean {
+  const store = getStore();
   return !!store.state.canPlayerSpeak;
 }
 
 export function hasActiveMiniGame(): boolean {
+  const store = getStore();
   return store.hasActiveMiniGameInCurrentSession();
 }
 

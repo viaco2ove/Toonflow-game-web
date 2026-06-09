@@ -3,21 +3,22 @@
  *
  * 职责：管理角色语音绑定的配置和解析
  */
-import { computed } from "vue";
 import { useToonflowStore } from "../useToonflowStore";
 import type { MessageItem, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../../types/toonflow";
-import { normalizeBindingMixVoices, runtimeVoiceBindingKey as computeRuntimeVoiceBindingKey } from "./textUtils";
 
-// ============== Store 引用 ==============
-const store = useToonflowStore();
-
-// ============== 计算属性 ==============
-const roleCards = computed(() => store.state.roleCards);
-const currentWorld = computed(() => store.state.sessionDetail?.world || null);
+// ============== Store 延迟获取 ==============
+let cachedStore: ReturnType<typeof useToonflowStore> | null = null;
+function getStore() {
+  if (!cachedStore) {
+    cachedStore = useToonflowStore();
+  }
+  return cachedStore;
+}
 
 // ============== 辅助函数 ==============
 export function runtimeStoryVoiceConfigId(): number | null {
-  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceModel")?.configId;
+  const store = getStore();
+  const value = store.state.settingsAiModelMap.find((item: any) => item.key === "storyVoiceModel")?.configId;
   return value && value > 0 ? value : null;
 }
 
@@ -31,9 +32,12 @@ export function inferFallbackPreset(roleType: string, name = "", description = "
 }
 
 export function narratorVoiceBinding(): VoiceBindingDraft | null {
-  const settings = currentWorld.value?.settings;
-  const narratorRole = currentWorld.value?.narratorRole;
-  const debugConfigId = store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null;
+  const store = getStore();
+  const sessionDetail = store.state.sessionDetail;
+  const world = sessionDetail?.world || null;
+  const settings = world?.settings;
+  const narratorRole = world?.narratorRole;
+  const debugConfigId = store.state.debugMode && !world ? runtimeStoryVoiceConfigId() : null;
   const configId = settings?.narratorVoiceConfigId ?? narratorRole?.voiceConfigId ?? debugConfigId;
   const normalizedMode = settings?.narratorVoiceMode || narratorRole?.voiceMode || store.state.narratorVoiceMode || "text";
   const presetId = settings?.narratorVoicePresetId || narratorRole?.voicePresetId || store.state.narratorVoicePresetId || "";
@@ -53,7 +57,10 @@ export function narratorVoiceBinding(): VoiceBindingDraft | null {
 
 export function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
   if (!role) return null;
-  const configId = role.voiceConfigId ?? (store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null);
+  const store = getStore();
+  const sessionDetail = store.state.sessionDetail;
+  const world = sessionDetail?.world || null;
+  const configId = role.voiceConfigId ?? (store.state.debugMode && !world ? runtimeStoryVoiceConfigId() : null);
   const mode = role.voiceMode || "text";
   const presetId = role.voicePresetId || (mode === "text" ? inferFallbackPreset(role.roleType, role.name, role.description) : "");
   return createVoiceBindingDraft({
@@ -71,12 +78,14 @@ export function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | n
 }
 
 export function findMessageRole(message: MessageItem): StoryRole | null {
+  const store = getStore();
+  const roleCards = store.state.roleCards;
   if (message.roleType === "player" || message.roleType === "narrator") return null;
   const roleName = String(message.role || "").trim();
-  return roleCards.value.find((role) => {
+  return roleCards.find((role: StoryRole) => {
     if (!roleName) return role.roleType === message.roleType;
     return role.name === roleName || role.id === roleName;
-  }) || roleCards.value.find((role) => role.roleType === message.roleType) || null;
+  }) || roleCards.find((role: StoryRole) => role.roleType === message.roleType) || null;
 }
 
 export function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {
@@ -86,6 +95,7 @@ export function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDr
 }
 
 export function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: VoiceBindingDraft | null): VoiceBindingDraft | null {
+  const store = getStore();
   if (message.roleType === "player") return null;
   if (message.roleType === "narrator") {
     return createVoiceBindingDraft({
@@ -114,7 +124,10 @@ export function resolveFallbackVoiceBinding(message: MessageItem, originalBindin
 
 // ============== 缓存键函数 ==============
 export function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
-  const runtimeContextKey = binding.configId || currentWorld.value?.id || store.state.currentSessionId || "runtime";
+  const store = getStore();
+  const sessionDetail = store.state.sessionDetail;
+  const world = sessionDetail?.world || null;
+  const runtimeContextKey = binding.configId || world?.id || store.state.currentSessionId || "runtime";
   return [
     runtimeContextKey,
     binding.roleId || "",
@@ -123,7 +136,7 @@ export function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
     binding.referenceAudioPath || "",
     binding.referenceText || "",
     binding.promptText || "",
-    (binding.mixVoices || []).map((item) => `${item.voiceId}:${item.weight}`).join(";"),
+    (binding.mixVoices || []).map((item: VoiceMixItem) => `${item.voiceId}:${item.weight}`).join(";"),
   ].join("|");
 }
 
@@ -157,7 +170,7 @@ export function createVoiceBindingDraft(source: {
     mixVoices: normalizeBindingMixVoices(source.mixVoices),
   };
   if (draft.mode === "clone" && !draft.referenceAudioPath) return null;
-  if (draft.mode === "mix" && !(draft.mixVoices || []).some((item) => item.voiceId.trim())) return null;
+  if (draft.mode === "mix" && !(draft.mixVoices || []).some((item: VoiceMixItem) => item.voiceId.trim())) return null;
   if (draft.mode === "prompt_voice" && !draft.promptText) return null;
   if (draft.mode === "text" && !draft.presetId) return null;
   return draft;
@@ -165,8 +178,8 @@ export function createVoiceBindingDraft(source: {
 
 export function normalizeBindingMixVoices(input?: VoiceMixItem[] | null): VoiceMixItem[] {
   return (input || [])
-    .filter((item) => String(item.voiceId || "").trim())
-    .map((item) => ({
+    .filter((item: VoiceMixItem) => String(item.voiceId || "").trim())
+    .map((item: VoiceMixItem) => ({
       voiceId: String(item.voiceId || "").trim(),
       weight: Number.isFinite(Number(item.weight)) ? Number(item.weight) : 0.7,
     }));

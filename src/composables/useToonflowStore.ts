@@ -43,6 +43,7 @@ import {
 import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 import { manufacturerLabel } from "../utils/modelConfigCatalog";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
+import { startTypewriter, stopTypewriter, clearAllTypewriterState } from "./orchestrationVoiceFlow/state";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -6285,10 +6286,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
-          updateMessageById(streamingMessage.id, (message) => ({
-            ...message,
-            content: accumulated,
-          }));
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 不再直接更新 content，让打字机动画控制显示
           return;
         }
         if (event.type === "done") {
@@ -6297,6 +6297,10 @@ function createToonflowStore() {
           finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalMessageRecord = finalMessage || {};
           const finalContent = resolveStreamDoneContent(eventData, finalMessageRecord, accumulated);
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
+          // 等待一小段时间让打字机完成，然后更新消息
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessageRecord.role || message.role || ""),
@@ -6308,6 +6312,8 @@ function createToonflowStore() {
               status: "generated",
             }),
           }), true);
+          // 清理打字机状态
+          stopTypewriter();
           return;
         }
         if (event.type === "sentence") {
@@ -6786,10 +6792,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
-          updateMessageById(streamingMessage.id, (message) => ({
-            ...message,
-            content: accumulated,
-          }));
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 不再直接更新 content，让打字机动画控制显示
           return;
         }
         if (event.type === "done") {
@@ -6799,6 +6804,10 @@ function createToonflowStore() {
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
           const eventType = String(finalMessage?.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT).trim();
           const roleType = String(finalMessage?.roleType || streamingMessage.roleType || "narrator").trim();
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
+          // 等待一小段时间让打字机完成
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           // 打 tag：台词生成完成（只在小游戏模式中打印）
           if (hasActiveMiniGameInCurrentSession()) {
             if (roleType === "narrator" && eventType.startsWith("on_mini_game")) {
@@ -6954,10 +6963,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
-          updateMessageById(streamingMessage.id, (message) => ({
-            ...message,
-            content: accumulated,
-          }));
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 不再直接更新 content，让打字机动画控制显示
           return;
         }
         if (event.type === "done") {
@@ -6965,6 +6973,10 @@ function createToonflowStore() {
           const eventData = (event.data || {}) as Record<string, unknown>;
           finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
+          // 等待一小段时间让打字机完成
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessage?.role || message.role || ""),

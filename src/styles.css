@@ -5912,3 +5912,51 @@ body.android-device .nav {
   flex-shrink: 0;
   padding-bottom: calc(12px + var(--android-inset-bottom, 0px));
 }
+
+/* ============== 打字机动画样式 ============== */
+/* 打字机闪烁光标 */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: typing-cursor-blink 0.8s ease-in-out infinite;
+}
+
+@keyframes typing-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 打字机容器（用于显示带光标的文本） */
+.typewriter-container {
+  display: inline;
+}
+
+.typewriter-container::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: typing-cursor-blink 0.8s ease-in-out infinite;
+}
+
+/* 流式消息正在打字时的样式 */
+.play-bubble.is-typing .play-bubble-content {
+  /* 可选：轻微的背景色提示正在输入 */
+}
+
+/* 打字完成后的过渡效果 */
+.play-bubble.typing-complete .typing-cursor {
+  animation: typing-cursor-fadeout 0.3s ease-out forwards;
+}
+
+@keyframes typing-cursor-fadeout {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}

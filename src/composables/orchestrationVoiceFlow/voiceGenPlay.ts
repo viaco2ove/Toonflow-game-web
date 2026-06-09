@@ -56,8 +56,10 @@ import {
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
 const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
 
-// ============== Store 引用 ==============
-const store = useToonflowStore();
+// ============== Store 延迟获取 ==============
+function getStore() {
+  return useToonflowStore();
+}
 
 // ============== 缓存变量 ==============
 /** 运行时语音播放器实例 */
@@ -69,22 +71,22 @@ let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
 /** 运行时语音请求 ID（用于打断控制） */
 let runtimeVoiceRequestId = 0;
 /** 运行时语音预览 URL 缓存 */
-const runtimeVoicePreviewCache = new Map<string, string>();
+export const runtimeVoicePreviewCache = new Map<string, string>();
 /** 运行时语音预览请求去重 */
-const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
+export const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
 /** 运行时语音 Blob 缓存 */
-const runtimeVoiceBlobCache = new Map<string, Blob>();
+export const runtimeVoiceBlobCache = new Map<string, Blob>();
 /** 运行时语音降级绑定缓存 */
-const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
+export const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
 /** 运行时语音克隆绑定缓存 */
-const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
+export const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
 /** 运行时语音克隆请求去重 */
-const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
+export const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
 /** 运行时语音预热缓存（防止重复预热） */
-const runtimeVoiceWarmCache = new Set<string>();
+export const runtimeVoiceWarmCache = new Set<string>();
 
 // ============== 计算属性 ==============
-const currentWorld = computed(() => store.state.sessionDetail?.world || null);
+const currentWorld = computed(() => getStore().state.sessionDetail?.world || null);
 
 // ============== 状态清理函数 ==============
 export function clearVoiceCaches() {
@@ -128,7 +130,7 @@ export async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Pro
   if (cached) return cached;
   const inflight = runtimeVoiceCloneInflight.get(cacheKey);
   if (inflight) return inflight;
-  const task = store.generateVoiceBinding(
+  const task = getStore().generateVoiceBinding(
     binding.configId,
     binding.mode,
     binding.presetId,
@@ -175,7 +177,7 @@ export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: s
   if (inflight) return inflight;
 
   const task = withTimeout(
-    store.streamVoice(
+    getStore().streamVoice(
       playableBinding.configId,
       text,
       playableBinding.mode,
@@ -198,9 +200,9 @@ export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: s
       if (!audioUrl) {
         throw new Error("未返回试听音频");
       }
-      WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { activeMiniGame: store.hasActiveMiniGameInCurrentSession() });
+      WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { activeMiniGame: getStore().hasActiveMiniGameInCurrentSession() });
       // 判断 roleType 打 tag（只在小游戏模式中打印）
-      if (store.hasActiveMiniGameInCurrentSession()) {
+      if (getStore().hasActiveMiniGameInCurrentSession()) {
         const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
         const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
         const voiceTag = isNarratorVoice
@@ -293,7 +295,7 @@ export async function playRuntimeVoiceBlob(
     speakable: speakable.slice(0, 60),
     blobSize: blob.size,
     blobType: blob.type,
-    activeMiniGame: store.hasActiveMiniGameInCurrentSession(),
+    activeMiniGame: getStore().hasActiveMiniGameInCurrentSession(),
   });
   const completed = await new Promise<boolean>((resolve) => {
     runtimeVoiceResolve = resolve;
@@ -310,7 +312,7 @@ export async function playRuntimeVoiceBlob(
         runtimeVoiceObjectUrl = "";
       }
       runtimeVoiceResolve = null;
-      if (manual) store.state.menuVisibleHint = hint;
+      if (manual) getStore().state.menuVisibleHint = hint;
       resolve(ok);
     };
     player.onplay = () => {
@@ -321,7 +323,7 @@ export async function playRuntimeVoiceBlob(
         speakable: speakable.slice(0, 60),
       });
       onPlay?.();
-      if (manual) store.state.menuVisibleHint = "正在播放试听";
+      if (manual) getStore().state.menuVisibleHint = "正在播放试听";
       if (!waitForCompletion) {
         finalize(true, "正在播放试听");
       }
@@ -354,20 +356,20 @@ export async function playRuntimeVoiceBlob(
 // ============== 浏览器语音降级 ==============
 export async function replayWithBrowserSpeech(content: string, waitForCompletion = false): Promise<boolean> {
   if (typeof window === "undefined" || !window.speechSynthesis) {
-    store.state.menuVisibleHint = "当前浏览器不支持朗读";
+    getStore().state.menuVisibleHint = "当前浏览器不支持朗读";
     return false;
   }
   window.speechSynthesis.cancel();
   const sanitized = sanitizeSpeechText(content);
   if (!sanitized) {
-    store.state.menuVisibleHint = "这条内容没有可朗读文本";
+    getStore().state.menuVisibleHint = "这条内容没有可朗读文本";
     return false;
   }
   const utterance = new SpeechSynthesisUtterance(sanitized);
   utterance.lang = "zh-CN";
   utterance.rate = 1;
   utterance.pitch = 1;
-  store.state.menuVisibleHint = "正在朗读";
+  getStore().state.menuVisibleHint = "正在朗读";
   return await new Promise<boolean>((resolve) => {
     let settled = false;
     const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(sanitized) : 5000;
@@ -376,7 +378,7 @@ export async function replayWithBrowserSpeech(content: string, waitForCompletion
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      store.state.menuVisibleHint = hint;
+      getStore().state.menuVisibleHint = hint;
       resolve(ok);
     };
     utterance.onstart = () => {
@@ -415,7 +417,7 @@ export async function playMessageAudioWithBinding(
   stopRuntimeVoicePlayback();
   const requestId = runtimeVoiceRequestId;
   if (manual) {
-    store.state.menuVisibleHint = "正在生成语音";
+    getStore().state.menuVisibleHint = "正在生成语音";
   }
   const segments = splitSpeechSegments(speakable);
   if (!segments.length) return false;
@@ -438,7 +440,7 @@ export async function playMessageAudioWithBinding(
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
           setRuntimeVoiceIndicator(message, "playing");
         });
-        if (store.hasActiveMiniGameInCurrentSession()) {
+        if (getStore().hasActiveMiniGameInCurrentSession()) {
           WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob", segmentPlayed);
         } else {
           WebDebugLogUtil.log("[aiGame] 台词-语音播放-playRuntimeVoiceBlob", segmentPlayed);
@@ -489,7 +491,7 @@ export async function playMessageAudio(
   const playableContent = overrideContent ?? messageDisplayContent(message);
   const speakable = normalizePlayableSpeechText(playableContent);
   if (!speakable) {
-    if (manual) store.state.menuVisibleHint = "这条内容没有可朗读文本";
+    if (manual) getStore().state.menuVisibleHint = "这条内容没有可朗读文本";
     return false;
   }
   const binding = resolveMessageVoiceBinding(message);
@@ -511,7 +513,7 @@ export async function playMessageAudio(
         setLimitedCacheValue(runtimeVoiceFallbackBindingCache, bindingKey, fallbackBinding);
         try {
           if (manual) {
-            store.state.menuVisibleHint = "当前绑定音色不可用，正在切换兼容音色";
+            getStore().state.menuVisibleHint = "当前绑定音色不可用，正在切换兼容音色";
           }
           return await playMessageAudioWithBinding(message, fallbackBinding, speakable, manual, waitForCompletion);
         } catch (fallbackError) {
@@ -524,10 +526,10 @@ export async function playMessageAudio(
       return true;
     }
     if (!manual) {
-      store.state.notice = "自动语音失败，已跳过，可点重听重试";
+      getStore().state.notice = "自动语音失败，已跳过，可点重听重试";
     }
     if (manual) {
-      store.state.menuVisibleHint = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
+      getStore().state.menuVisibleHint = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
     }
     return false;
   } finally {

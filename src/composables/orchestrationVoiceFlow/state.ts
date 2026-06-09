@@ -5,7 +5,6 @@
  */
 import { ref } from "vue";
 import type { MessageItem } from "../../types/toonflow";
-import { messageUiKey } from "./textUtils";
 
 // ============== 类型定义 ==============
 export type VoiceIndicatorPhase = "" | "loading" | "playing";
@@ -18,7 +17,33 @@ export const runtimeVoicePhase = ref<VoiceIndicatorPhase>("");
 /** 当前播放语音的指示器文本 */
 export const runtimeVoiceIndicator = ref(".");
 /** 语音指示器定时器 */
-let runtimeVoiceIndicatorTimer = 0;
+export let runtimeVoiceIndicatorTimer = 0;
+
+// ============== 语音指示器定时器管理 ==============
+export function getRuntimeVoiceIndicatorTimer(): number {
+  return runtimeVoiceIndicatorTimer;
+}
+
+export function setRuntimeVoiceIndicatorTimer(timer: number): void {
+  runtimeVoiceIndicatorTimer = timer;
+}
+
+export function clearRuntimeVoiceIndicatorTimer(): void {
+  if (runtimeVoiceIndicatorTimer) {
+    window.clearInterval(runtimeVoiceIndicatorTimer);
+    runtimeVoiceIndicatorTimer = 0;
+  }
+}
+
+// ============== 打字机动画状态 ==============
+/** 打字机动画目标文本（累积的完整文本） */
+export const typewriterTargetText = ref("");
+/** 打字机动画当前显示文本（已显示的部分） */
+export const typewriterDisplayText = ref("");
+/** 当前正在打字的消息 ID */
+export const typewriterMessageId = ref<string | null>(null);
+/** 是否正在打字 */
+export const isTyping = ref(false);
 
 // ============== 状态清理函数 ==============
 export function clearRuntimeVoiceIndicator() {
@@ -36,6 +61,114 @@ export function setRuntimeVoiceIndicator(message: MessageItem | null, phase: Voi
     clearRuntimeVoiceIndicator();
     return;
   }
-  runtimeVoiceMessageKey.value = messageUiKey(message);
+  // 内联 messageUiKey 逻辑，避免循环依赖
+  runtimeVoiceMessageKey.value = `${message.id}_${message.createTime}_${message.roleType || ""}`;
   runtimeVoicePhase.value = phase;
+}
+
+// ============== 打字机动画函数 ==============
+let typewriterAnimationFrame: number | null = null;
+let typewriterLastCharTime = 0;
+const TYPING_SPEED_MS = 30; // 每字符间隔（毫秒）
+
+/**
+ * 开始打字机动画
+ * @param messageId 消息 ID
+ * @param targetText 目标完整文本
+ */
+export function startTypewriter(messageId: string, targetText: string) {
+  // 如果已经在为同一条消息打字，直接更新目标文本
+  if (typewriterMessageId.value === messageId && isTyping.value) {
+    typewriterTargetText.value = targetText;
+    return;
+  }
+
+  // 停止之前的打字动画
+  stopTypewriter();
+
+  typewriterMessageId.value = messageId;
+  typewriterTargetText.value = targetText;
+  typewriterDisplayText.value = "";
+  isTyping.value = true;
+  typewriterLastCharTime = 0;
+
+  // 开始动画循环
+  typewriterAnimationFrame = requestAnimationFrame(typewriterTick);
+}
+
+/**
+ * 打字机动画的每一帧
+ */
+function typewriterTick(timestamp: number) {
+  if (!isTyping.value || !typewriterMessageId.value) {
+    return;
+  }
+
+  // 检查是否需要添加新字符
+  if (typewriterDisplayText.value.length < typewriterTargetText.value.length) {
+    // 计算需要添加多少个字符
+    const elapsed = timestamp - typewriterLastCharTime;
+    if (elapsed >= TYPING_SPEED_MS) {
+      const charsToAdd = Math.min(
+        1, // 每次只添加一个字符
+        typewriterTargetText.value.length - typewriterDisplayText.value.length
+      );
+      typewriterDisplayText.value += typewriterTargetText.value.slice(
+        typewriterDisplayText.value.length,
+        typewriterDisplayText.value.length + charsToAdd
+      );
+      typewriterLastCharTime = timestamp;
+    }
+  }
+
+  // 检查是否完成
+  if (typewriterDisplayText.value.length >= typewriterTargetText.value.length) {
+    // 打字完成，保留最终状态
+    isTyping.value = false;
+    typewriterMessageId.value = null;
+    return;
+  }
+
+  // 继续下一帧
+  typewriterAnimationFrame = requestAnimationFrame(typewriterTick);
+}
+
+/**
+ * 停止打字机动画
+ */
+export function stopTypewriter() {
+  if (typewriterAnimationFrame !== null) {
+    cancelAnimationFrame(typewriterAnimationFrame);
+    typewriterAnimationFrame = null;
+  }
+  isTyping.value = false;
+  typewriterMessageId.value = null;
+  typewriterTargetText.value = "";
+  // 保留当前显示的文本，以便切换时不会丢失
+}
+
+/**
+ * 获取打字机显示文本（用于渲染）
+ */
+export function getTypewriterDisplayText(messageId: string): string {
+  if (typewriterMessageId.value === messageId && isTyping.value) {
+    return typewriterDisplayText.value;
+  }
+  return ""; // 如果不在打字，返回空字符串
+}
+
+/**
+ * 检查消息是否正在打字
+ */
+export function isMessageTyping(messageId: string): boolean {
+  return typewriterMessageId.value === messageId && isTyping.value;
+}
+
+/**
+ * 清除所有打字机状态
+ */
+export function clearAllTypewriterState() {
+  stopTypewriter();
+  typewriterDisplayText.value = "";
+  typewriterTargetText.value = "";
 }

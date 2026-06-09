@@ -15,6 +15,14 @@ const {
   runtimeVoiceMessageKey,
   runtimeVoicePhase,
   runtimeVoiceIndicator,
+  getRuntimeVoiceIndicatorTimer,
+  setRuntimeVoiceIndicatorTimer,
+  clearRuntimeVoiceIndicatorTimer,
+  runtimeVoicePreviewCache,
+  runtimeVoicePreviewInflight,
+  runtimeVoiceBlobCache,
+  runtimeVoiceFallbackBindingCache,
+  runtimeVoiceWarmCache,
   clearVoiceCaches,
   clearRuntimeVoiceIndicator,
   playMessageAudio,
@@ -29,6 +37,10 @@ const {
   warmVoiceBinding,
   waitForMessageReveal,
   resolveMessageVoiceBinding,
+  // 打字机动画
+  typewriterDisplayText,
+  typewriterMessageId,
+  isTyping,
 } = voiceFlow;
 
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
@@ -340,8 +352,20 @@ function runtimeStreamSentences(message: MessageItem | null | undefined): string
 function messageDisplayContent(message: MessageItem | null | undefined): string {
   if (!message) return "";
   const content = scalarText(message.content);
+  // 如果正在为这条消息打字，返回打字机显示的文本
+  if (typewriterMessageId.value === messageUiKey(message) && isTyping.value) {
+    return typewriterDisplayText.value;
+  }
   if (content) return content;
   return runtimeStreamSentences(message).join("");
+}
+
+/**
+ * 检查消息是否正在打字
+ */
+function isMessageTyping(message: MessageItem | null | undefined): boolean {
+  if (!message) return false;
+  return typewriterMessageId.value === messageUiKey(message) && isTyping.value;
 }
 
 function runtimeMessageStatus(message: MessageItem | null | undefined): string {
@@ -1962,10 +1986,7 @@ watch(autoVoice, (enabled) => {
 watch(
   () => [runtimeVoiceMessageKey.value, runtimeVoicePhase.value],
   ([messageKey, phase]) => {
-    if (runtimeVoiceIndicatorTimer) {
-      window.clearInterval(runtimeVoiceIndicatorTimer);
-      runtimeVoiceIndicatorTimer = 0;
-    }
+    clearRuntimeVoiceIndicatorTimer();
     if (!messageKey || !phase) {
       runtimeVoiceIndicator.value = ".";
       return;
@@ -1973,10 +1994,10 @@ watch(
     const frames = phase === "playing" ? [".", "。", "."] : [".", "。"];
     let index = 0;
     runtimeVoiceIndicator.value = frames[index];
-    runtimeVoiceIndicatorTimer = window.setInterval(() => {
+    setRuntimeVoiceIndicatorTimer(window.setInterval(() => {
       index = (index + 1) % frames.length;
       runtimeVoiceIndicator.value = frames[index];
-    }, 260);
+    }, 260));
   },
   { immediate: true },
 );
@@ -3339,7 +3360,9 @@ onBeforeUnmount(() => {
                       </button>
                     </span>
                   </template>
-                  <span v-else>{{ messageDisplayContent(message) || "（空消息）" }}</span>
+                  <span v-else class="play-bubble-content">
+                    {{ messageDisplayContent(message) || "（空消息）" }}<span v-if="isMessageTyping(message)" class="typing-cursor"></span>
+                  </span>
                   <span
                     v-if="messageVoiceTail(message)"
                     class="play-bubble-voice-tail"
