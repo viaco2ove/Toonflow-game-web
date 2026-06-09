@@ -101,6 +101,7 @@ export function normalizeSessionOrchestrationResult(result: SessionOrchestration
 export async function resolveSessionOrchestration(triggerMessageId: number): Promise<SessionOrchestrationResult> {
   const sessionId = String(getStore().state.currentSessionId || "").trim();
 
+   WebDebugLogUtil.log("[resolveSessionOrchestration] 尝试复用预取结果", triggerMessageId);
   // 尝试复用预取结果
   if (canUsePrefetchedOrchestration(triggerMessageId)) {
     const pending = await consumePrefetchedOrchestration<SessionOrchestrationResult>(triggerMessageId);

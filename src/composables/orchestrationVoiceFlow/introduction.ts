@@ -26,7 +26,7 @@
  * voiceGenPlay.ts 负责语音生成中效果
  * 语音播放中：马上显示语音播放中效果
  * voiceGenPlay.ts 显示播放中效果
- * 全部拆分句都播放完毕。然后进行下一轮的正式编排
+ * 全部拆分句都播放完毕。然后进行下一轮的正式编排（resolveSessionOrchestration）
  */
 import { useToonflowStore } from "../useToonflowStore";
 import { WebDebugLogUtil } from "../../utils/WebDebugLogUtil";
