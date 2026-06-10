@@ -115,6 +115,9 @@ const runtimeVoiceCloneConfigId = computed(() => {
   const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceCloneModel")?.configId;
   return value && value > 0 ? value : null;
 });
+// effectiveConfigId 始终用当前 TTS 模型（runtimeStoryVoiceConfigId）。
+// 后端会根据 mode === "prompt_voice" 自动加载 storyVoiceDesignModel 的配置，
+// 所以前端不需要在 prompt_voice 时切到设计模型 configId（否则后端会查不到 TTS 模型而报"语音模型配置不存在"）。
 const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value);
 const presets = computed(() => store.voicePresetsForConfig(effectiveConfigId.value));
 const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === effectiveConfigId.value) || null);
@@ -124,7 +127,10 @@ const hasVoiceCloneModel = computed(() => !!runtimeVoiceCloneConfigId.value);
 const modelSupportedModes = computed(() => resolveModelSupportedModes(selectedModel.value));
 const supportedModes = computed(() => {
   const modes = new Set(modelSupportedModes.value);
-  if (!hasVoiceDesignModel.value) {
+  // prompt_voice 由"是否设置了语音设计模型"决定，不被当前 TTS 模型的 modes 限制
+  if (hasVoiceDesignModel.value) {
+    modes.add("prompt_voice");
+  } else {
     modes.delete("prompt_voice");
   }
   return Array.from(modes);
@@ -201,11 +207,17 @@ function resolveModelSupportedModes(model: { manufacturer?: string | null; model
 
 function unsupportedModeReason(mode: string): string {
   const normalizedMode = String(mode || "").trim();
-  if (!normalizedMode || !modelSupportedModes.value.includes(normalizedMode)) {
-    return normalizedMode ? "当前语音模型不支持该绑定模式" : "";
+  if (!normalizedMode) return "";
+  // 提示词音色（prompt_voice）只看是否配置了语音设计模型；
+  // 不依赖当前 TTS 模型的 modes 声明——只要设置了语音设计模型，就允许选择。
+  if (normalizedMode === "prompt_voice") {
+    if (!hasVoiceDesignModel.value) {
+      return "请先在设置里配置语音设计模型";
+    }
+    return "";
   }
-  if (normalizedMode === "prompt_voice" && !hasVoiceDesignModel.value) {
-    return "请先在设置里配置语音设计模型";
+  if (!modelSupportedModes.value.includes(normalizedMode)) {
+    return "当前语音模型不支持该绑定模式";
   }
   if (supportedModes.value.includes(normalizedMode)) {
     return "";

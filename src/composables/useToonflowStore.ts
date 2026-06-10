@@ -390,15 +390,55 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function isAliyunDirectCosyVoiceInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("cosyvoice") || normalized.startsWith("qwen");
+}
+
+function isAliyunDirectQwenVoiceCloneInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("qwen3-tts-vc") || normalized.startsWith("qwen-tts-vc");
+}
+
+function isAliyunDirectQwenVoiceDesignInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("qwen3-tts-vd") || normalized.startsWith("qwen-tts-vd");
+}
+
+/**
+ * 推断 aliyun_direct 模型的 modes（如果后端没返回）
+ */
+function inferAliyunDirectModes(modelName?: string | null): string[] {
+  const normalized = String(modelName || "").trim().toLowerCase();
+  if (normalized.startsWith("cosyvoice-v3.5")) {
+    return ["clone", "mix", "prompt_voice"];
+  }
+  if (normalized.startsWith("cosyvoice")) {
+    return ["text", "clone", "mix", "prompt_voice"];
+  }
+  if (isAliyunDirectQwenVoiceCloneInferred(modelName)) {
+    return ["clone", "mix"];
+  }
+  if (isAliyunDirectQwenVoiceDesignInferred(modelName)) {
+    return ["prompt_voice"];
+  }
+  return ["text"];
+}
+
 function normalizeVoiceModelConfig(input: VoiceModelConfig): VoiceModelConfig {
   const manufacturer = String(input.manufacturer || "").trim();
   const modelType = String(input.modelType || "").trim().toLowerCase();
   if (manufacturer !== "aliyun_direct") return input;
   const normalized = normalizeAliyunDirectConfigFields(manufacturer, modelType, String(input.model || "").trim(), String(input.baseUrl || "").trim());
+  // 后端返回的 voiceModels 通常不带 modes 字段，按 model 名称补上推断的 modes，
+  // 保证 VoiceBindingDialog 的"克隆/混合/提示词音色"按钮能正确启用或禁用。
+  const existingModes = Array.isArray(input.modes) ? input.modes.filter(Boolean) : [];
+  const finalModes = existingModes.length ? existingModes : inferAliyunDirectModes(normalized.model);
   return {
     ...input,
     model: normalized.model,
     baseUrl: normalized.baseUrl,
+    modes: finalModes,
   };
 }
 
