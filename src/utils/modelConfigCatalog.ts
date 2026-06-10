@@ -144,6 +144,16 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "xiaomimimo",
+    label: "小米 MiMo",
+    website: "https://platform.xiaomimimo.com/console/api-keys",
+    defaults: {
+      voice: "https://api.xiaomimimo.com",
+      voice_design: "https://api.xiaomimimo.com",
+      voice_clone: "https://api.xiaomimimo.com",
+    },
+  },
+  {
     value: "ai_voice_tts",
     label: "local CosyVoice(ai_voice_tts)",
     website: "https://github.com/viaco2ove/ai_voice_tts",
@@ -263,6 +273,9 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   if (type === "voice_design" && manufacturer === "minimax") {
     return "voice-design";
   }
+  if (type === "voice_design" && manufacturer === "xiaomimimo") {
+    return "mimo-v2.5-tts-voicedesign";
+  }
 
   // 语音克隆模型
   if (type === "voice_clone" && manufacturer === "aliyun_direct") {
@@ -273,6 +286,9 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   }
   if (type === "voice_clone" && manufacturer === "ai_voice_tts") {
     return "clone_upload";
+  }
+  if (type === "voice_clone" && manufacturer === "xiaomimimo") {
+    return "mimo-v2.5-tts-voiceclone";
   }
 
   // 语音合成模型
@@ -293,6 +309,9 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
   }
   if (type === "voice" && manufacturer === "minimax") {
     return modelType === "tts" ? "speech-02-hd" : "";
+  }
+  if (type === "voice" && manufacturer === "xiaomimimo") {
+    return modelType === "asr" ? "mimo-v2.5-asr" : "mimo-v2.5-tts";
   }
 
   // 图像模型
@@ -327,6 +346,11 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
     if (manufacturer === "minimax") {
       return [
         { value: "voice-design", label: "Voice Design (接口无模型参数)" },
+      ];
+    }
+    if (manufacturer === "xiaomimimo") {
+      return [
+        { value: "mimo-v2.5-tts-voicedesign", label: "MiMo V2.5 TTS Voice Design" },
       ];
     }
     if (manufacturer === "moss_tts_nano") {
@@ -378,6 +402,11 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
         { value: "nlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD-v0.5(声音克隆)" },
       ];
     }
+    if (manufacturer === "xiaomimimo") {
+      return [
+        { value: "mimo-v2.5-tts-voiceclone", label: "MiMo V2.5 TTS Voice Clone" },
+      ];
+    }
   }
 
   // 语音合成模型选项
@@ -417,6 +446,13 @@ export function modelOptionsFor(manufacturer: string, type: ModelConfigKind): { 
       { value: "fnlp/MOSS-TTSD-v0.5", label: "MOSS-TTSD v0.5 (TTS)" },
       { value: "FunAudioLLM/SenseVoiceSmall", label: "SenseVoice Small (ASR)" },
       { value: "TeleAI/TeleSpeechASR", label: "TeleSpeech ASR (ASR)" },
+    ];
+  }
+  if (type === "voice" && manufacturer === "xiaomimimo") {
+    return [
+      { value: "mimo-v2.5-tts", label: "MiMo V2.5 TTS" },
+      { value: "mimo-v2-tts", label: "MiMo V2 TTS" },
+      { value: "mimo-v2.5-asr", label: "MiMo V2.5 ASR" },
     ];
   }
 

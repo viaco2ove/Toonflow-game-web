@@ -425,14 +425,28 @@ function inferAliyunDirectModes(modelName?: string | null): string[] {
   return ["text"];
 }
 
+function inferXiaomiMimoModes(modelName?: string | null): string[] {
+  const normalized = String(modelName || "").trim().toLowerCase();
+  if (normalized === "mimo-v2.5-tts-voicedesign") return ["prompt_voice"];
+  if (normalized === "mimo-v2.5-tts-voiceclone") return ["clone"];
+  if (normalized === "mimo-v2.5-tts" || normalized === "mimo-v2-tts") return ["text"];
+  return ["text"];
+}
+
 function normalizeVoiceModelConfig(input: VoiceModelConfig): VoiceModelConfig {
   const manufacturer = String(input.manufacturer || "").trim();
   const modelType = String(input.modelType || "").trim().toLowerCase();
+  const existingModes = Array.isArray(input.modes) ? input.modes.filter(Boolean) : [];
+  if (manufacturer === "xiaomimimo") {
+    return {
+      ...input,
+      modes: existingModes.length ? existingModes : inferXiaomiMimoModes(input.model),
+    };
+  }
   if (manufacturer !== "aliyun_direct") return input;
   const normalized = normalizeAliyunDirectConfigFields(manufacturer, modelType, String(input.model || "").trim(), String(input.baseUrl || "").trim());
   // 后端返回的 voiceModels 通常不带 modes 字段，按 model 名称补上推断的 modes，
   // 保证 VoiceBindingDialog 的"克隆/混合/提示词音色"按钮能正确启用或禁用。
-  const existingModes = Array.isArray(input.modes) ? input.modes.filter(Boolean) : [];
   const finalModes = existingModes.length ? existingModes : inferAliyunDirectModes(normalized.model);
   return {
     ...input,
