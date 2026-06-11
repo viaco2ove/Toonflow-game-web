@@ -2600,6 +2600,13 @@ function createToonflowStore() {
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
     ].filter(Boolean) as MessageItem[];
+    console.log("[voice lifecycle] ② 编排结果合并，消息入 state.messages", {
+      sessionId: result.sessionId,
+      incomingCount: incoming.length,
+      incomingRoles: incoming.map(m => `${m.role}(${m.id}|${m.roleType})`),
+      firstContent: incoming[0]?.content?.slice(0, 60),
+      lastContent: incoming[incoming.length - 1]?.content?.slice(0, 60),
+    });
     const shouldForceClearMiniGame = options?.forceClearMiniGame === true || shouldForceClearMiniGameStateFromMessages(incoming);
     if (shouldForceClearMiniGame) {
       WebDebugLogUtil.log("[aiGame][miniGame] shouldForceClearMiniGame");
@@ -5829,6 +5836,12 @@ function createToonflowStore() {
   }
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
+    console.log("[aiGame] openSession start", {
+      sessionId,
+      playback: Boolean(options?.playback),
+      resumeLatest: Boolean(options?.resumeLatest),
+      isResume: Boolean(options?.resumeLatest),
+    });
     clearPendingSessionOrchestrationPrefetch();
     clearRuntimeRetryState();
     // 打开正式会话时同步清掉章节调试态，确保后续自动推进只走正式链。
@@ -5850,6 +5863,18 @@ function createToonflowStore() {
     state.messages = [];
     try {
       const detail = await api.getSession(sessionId);
+      const loadedMessageCount = Array.isArray(detail?.messages) ? detail.messages.length : 0;
+      const lastLoadedMessage = Array.isArray(detail?.messages) && detail.messages.length > 0
+        ? detail.messages[detail.messages.length - 1]
+        : null;
+      console.log("[aiGame] openSession session loaded", {
+        sessionId,
+        isResume: Boolean(options?.resumeLatest),
+        messageCount: loadedMessageCount,
+        lastMessageRole: lastLoadedMessage?.role,
+        lastMessageRoleType: lastLoadedMessage?.roleType,
+        lastMessageContent: lastLoadedMessage?.content?.slice(0, 60),
+      });
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
@@ -6943,6 +6968,11 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
+      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+        messageId: fallbackCommittedMessage.id,
+        role: committedRole,
+        content: String(committedContent || "").slice(0, 60),
+      });
       if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
         applySessionNarrativeResult({
           ...committed,
@@ -7103,6 +7133,11 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
+      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+        messageId: fallbackCommittedMessage.id,
+        role: committedRole,
+        content: String(committedContent || "").slice(0, 60),
+      });
       if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
         applySessionNarrativeResult({
           ...committed,
@@ -7113,6 +7148,7 @@ function createToonflowStore() {
       }
       await refreshSessionStoryInfo();
       await waitForSessionOpeningPresentation(committedContent);
+      console.log("[voice lifecycle] 编排→消息入store完成，等待自动触发watch→reveal流程");
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;
@@ -7124,6 +7160,7 @@ function createToonflowStore() {
     // 不再因小游戏活跃就提前退出：小游戏编排走独立的 /game/orchestration/minigame 接口，
     // 每条消息串行处理（编排 → streamlines → 语音播放 → 编排），避免链式中断语音。
     state.sessionRuntimeStage = "继续编排下一轮剧情";
+    console.log("[voice lifecycle] 编排开始", { sessionId: state.currentSessionId });
     if(WebDebugLogUtil.isEnabled()){
        console.log("继续编排下一轮剧情")
     }
@@ -7132,7 +7169,7 @@ function createToonflowStore() {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
         const isMiniGameActive = hasActiveMiniGameInCurrentSession();
-
+        console.log("[voice lifecycle] 编排中，等待 API 返回", { step, isMiniGameActive });
         // 小游戏模式下走专用编排接口，获取完整的 plan（含 eventType、presetContent 等）；
         // 普通模式走标准编排接口。
         WebDebugLogUtil.log("[voice时序] performContinueSessionNarrative 开始编排", {
@@ -7180,6 +7217,13 @@ function createToonflowStore() {
             step,
             消息数: conversationMessages().length,
             最新消息id: conversationMessages().slice(-1)[0]?.id,
+          });
+          console.log("[voice lifecycle] 编排→流式生成台词完成", {
+            step,
+            消息数: conversationMessages().length,
+            最新消息id: conversationMessages().slice(-1)[0]?.id,
+            最新角色: conversationMessages().slice(-1)[0]?.role,
+            nextStep: "等待Watch1触发waitForMessageReveal",
           });
         }
         const latest = conversationMessages().slice(-1)[0] || null;

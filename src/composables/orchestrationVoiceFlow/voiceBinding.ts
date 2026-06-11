@@ -77,15 +77,63 @@ export function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | n
   });
 }
 
-export function findMessageRole(message: MessageItem): StoryRole | null {
+/**
+ * 从 store 派生角色卡列表（与 ScenePlay.vue 中的 roleCards computed 保持一致逻辑）。
+ * 之前的实现错误地读取了 store.state.roleCards（该字段不存在），导致 NPC 消息的 voice binding 永远找不到。
+ */
+function resolveRoleCardsFromStore(): StoryRole[] {
   const store = getStore();
-  const roleCards = Array.isArray(store.state.roleCards) ? store.state.roleCards : [];
+  const sessionDetail = store.state.sessionDetail;
+  const world = sessionDetail?.world || null;
+  const settings = world?.settings;
+  const seen = new Set<string>();
+  const list: StoryRole[] = [];
+  const pushRole = (role?: StoryRole | null) => {
+    if (!role || !role.name) return;
+    const key = role.id || `${role.roleType}:${role.name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    list.push(role);
+  };
+  if (store.state.debugMode && !world) {
+    pushRole({
+      id: "player",
+      roleType: "player",
+      name: store.state.playerName || "用户",
+    } as StoryRole);
+    pushRole({
+      id: "narrator",
+      roleType: "narrator",
+      name: store.state.narratorName || "旁白",
+    } as StoryRole);
+    (store.state.npcRoles || []).forEach((role) => pushRole(role));
+  } else {
+    pushRole(world?.playerRole || null);
+    pushRole(world?.narratorRole || null);
+    (settings?.roles || []).forEach((role) => pushRole(role));
+  }
+  return list;
+}
+
+export function findMessageRole(message: MessageItem): StoryRole | null {
+  const roleCards = resolveRoleCardsFromStore();
   if (message.roleType === "player" || message.roleType === "narrator") return null;
   const roleName = String(message.role || "").trim();
-  return roleCards.find((role: StoryRole) => {
+  const exactMatch = roleCards.find((role: StoryRole) => {
     if (!roleName) return role.roleType === message.roleType;
     return role.name === roleName || role.id === roleName;
-  }) || roleCards.find((role: StoryRole) => role.roleType === message.roleType) || null;
+  });
+  const fallbackMatch = exactMatch || roleCards.find((role: StoryRole) => role.roleType === message.roleType) || null;
+  console.log("[voiceBinding] findMessageRole", {
+    messageId: message.id,
+    role: message.role,
+    roleType: message.roleType,
+    roleCardCount: roleCards.length,
+    roleNames: roleCards.slice(0, 5).map((r) => `${r.name}(${r.roleType})`),
+    exactMatch: exactMatch ? { name: exactMatch.name, id: exactMatch.id, voiceConfigId: exactMatch.voiceConfigId, voiceMode: exactMatch.voiceMode } : null,
+    fallbackMatch: fallbackMatch ? { name: fallbackMatch.name, id: fallbackMatch.id, voiceConfigId: fallbackMatch.voiceConfigId, voiceMode: fallbackMatch.voiceMode } : null,
+  });
+  return fallbackMatch;
 }
 
 export function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {

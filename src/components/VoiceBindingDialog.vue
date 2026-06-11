@@ -648,18 +648,27 @@ async function generateVoiceFile() {
     if (generated.referenceText) {
       referenceText.value = generated.referenceText;
     }
-    // 生成出的文件只是 clone 参考源，真正给用户听的应该还是“当前试听文本”的成品音频。
+    // 生成出的文件只是 clone 参考源，真正给用户听的应该还是"当前试听文本"的成品音频。
+    // 但如果当前 TTS 模型不支持 clone（比如 xiaomimimo mimo-v2.5-tts 只支持 text），
+    // 就直接把生成的参考音频当成试听音频回放，避免再次走不兼容的 clone 通道。
+    const modelSupportsCloneRetry = supportedModes.value.includes("clone");
     previewLoading.value = true;
-    const previewUrl = await requestPreviewAudio({
-      mode: "clone",
-      presetId: generated.customVoiceId || "",
-      referenceAudioPath: generated.audioPath,
-      referenceText: generated.referenceText || referenceText.value.trim(),
-      promptText: "",
-      mixVoices: [],
-    });
+    let previewUrl = "";
+    if (modelSupportsCloneRetry) {
+      previewUrl = await requestPreviewAudio({
+        mode: "clone",
+        presetId: generated.customVoiceId || "",
+        referenceAudioPath: generated.audioPath,
+        referenceText: generated.referenceText || referenceText.value.trim(),
+        promptText: "",
+        mixVoices: [],
+      });
+    } else {
+      // 直接拿生成出来的音频做试听（它本身就是音色设计的合成结果）
+      previewUrl = store.resolveMediaPath(generated.audioPath);
+    }
     await loadPreviewAudioUrl(previewUrl);
-    previewStatus.value = "音色文件已生成，并已按当前试听文本重新试听";
+    previewStatus.value = "音色文件已生成" + (modelSupportsCloneRetry ? "，并已按当前试听文本重新试听" : "（当前 TTS 模型不支持 clone 试听，已用生成的音色直接回放）");
     // 标记本次会话已生成音色，下次打开依然可以下载
     hasGeneratedVoiceInSession.value = true;
     // 保存下载 URL，下次打开时可以用 referenceAudioPath 下载生成的文件

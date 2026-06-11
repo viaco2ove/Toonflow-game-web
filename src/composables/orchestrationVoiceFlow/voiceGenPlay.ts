@@ -175,6 +175,13 @@ export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: s
   WebDebugLogUtil.log("resolveRuntimeVoiceUrl inflight", inflight);
   if (inflight) return inflight;
 
+  console.log("[voice lifecycle] ⑥ 开始调用 streamVoice TTS API", {
+    mode: playableBinding.mode,
+    presetId: playableBinding.presetId,
+    configId: playableBinding.configId,
+    textLength: text.length,
+    textPreview: text.slice(0, 60),
+  });
   const task = withTimeout(
     getStore().streamVoice(
       playableBinding.configId,
@@ -191,7 +198,7 @@ export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: s
         roleId: playableBinding.roleId || "",
       },
     ),
-    15000,
+    60000,
     "语音生成超时",
   )
     .then((audioUrl) => {
@@ -236,11 +243,52 @@ export async function warmVoiceBinding(binding: VoiceBindingDraft) {
 
 // ============== 语音 Blob 获取 ==============
 export async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
+  console.log("[voice lifecycle] ⑦ 拉取音频 audioProxy", { audioUrl });
+  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob start", { audioUrl });
   const cached = runtimeVoiceBlobCache.get(audioUrl);
-  if (cached) return cached;
-  const response = await withTimeout(fetch(audioUrl), 10000, "音频下载超时");
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (cached) {
+    console.log("[voiceGenPlay] fetchRuntimeVoiceBlob cache hit", {
+      audioUrl,
+      blobSize: cached.size,
+      blobType: cached.type,
+    });
+    return cached;
+  }
+  let response: Response;
+  try {
+    response = await withTimeout(fetch(audioUrl), 10000, "音频下载超时");
+  } catch (err) {
+    console.error("[voiceGenPlay] fetchRuntimeVoiceBlob fetch failed", {
+      audioUrl,
+      error: String((err as Error)?.message || err),
+    });
+    throw err;
+  }
+  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob response", {
+    audioUrl,
+    status: response.status,
+    statusText: response.statusText,
+    contentType: response.headers.get("content-type"),
+    contentLength: response.headers.get("content-length"),
+    xAudioProxyDebug: response.headers.get("x-audioproxy-debug"),
+  });
+  if (!response.ok) {
+    console.error("[voiceGenPlay] fetchRuntimeVoiceBlob not ok", {
+      audioUrl,
+      status: response.status,
+    });
+    throw new Error(`HTTP ${response.status}`);
+  }
   const blob = await response.blob();
+  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob blob", {
+    audioUrl,
+    blobSize: blob.size,
+    blobType: blob.type,
+  });
+  console.log("[voice lifecycle] ⑧ 音频获取成功，即将交给 Audio 元素播放", {
+    blobSize: blob.size,
+    blobType: blob.type,
+  });
   setLimitedCacheValue(runtimeVoiceBlobCache, audioUrl, blob);
   return blob;
 }
@@ -287,7 +335,16 @@ export async function playRuntimeVoiceBlob(
   speakable: string,
   onPlay?: () => void,
 ): Promise<boolean> {
+  console.log("[voiceGenPlay] playRuntimeVoiceBlob start", {
+    blobSize: blob.size,
+    blobType: blob.type,
+    waitForCompletion,
+    manual,
+    speakable: speakable.slice(0, 60),
+  });
+  console.log("[voice lifecycle] ⑨ Audio.play() 即将调用", { blobSize: blob.size, blobType: blob.type });
   runtimeVoiceObjectUrl = URL.createObjectURL(blob);
+  console.log("[voiceGenPlay] playRuntimeVoiceBlob objectURL", { objectUrl: runtimeVoiceObjectUrl });
   const player = new Audio(runtimeVoiceObjectUrl);
   player.preload = "auto";
   runtimeVoicePlayer = player;
@@ -302,7 +359,20 @@ export async function playRuntimeVoiceBlob(
     runtimeVoiceResolve = resolve;
     let finished = false;
     const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(speakable) : 8000;
-    const timer = window.setTimeout(() => finalize(false, "朗读超时"), timeoutMs);
+    const timer = window.setTimeout(() => {
+      console.warn("[voiceGenPlay] playRuntimeVoiceBlob timeout", {
+        timeoutMs,
+        speakable: speakable.slice(0, 60),
+        readyState: player.readyState,
+        networkState: player.networkState,
+        currentTime: player.currentTime,
+        duration: Number.isFinite(player.duration) ? player.duration : -1,
+        paused: player.paused,
+        ended: player.ended,
+        error: player.error ? { code: player.error.code, message: player.error.message } : null,
+      });
+      finalize(false, "朗读超时");
+    }, timeoutMs);
     const finalize = (ok: boolean, hint: string) => {
       if (finished) return;
       finished = true;
@@ -314,9 +384,16 @@ export async function playRuntimeVoiceBlob(
       }
       runtimeVoiceResolve = null;
       if (manual) getStore().state.menuVisibleHint = hint;
+      console.log("[voiceGenPlay] playRuntimeVoiceBlob finalize", { ok, hint, speakable: speakable.slice(0, 60) });
       resolve(ok);
     };
     player.onplay = () => {
+      console.log("[voiceGenPlay] playRuntimeVoiceBlob onplay", {
+        currentTime: player.currentTime,
+        duration: Number.isFinite(player.duration) ? player.duration : -1,
+        speakable: speakable.slice(0, 60),
+      });
+      console.log("[voice lifecycle] ⑩ 音频真正开始播放", { currentTime: player.currentTime });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 真正开始播放", {
         waitForCompletion,
         currentTime: player.currentTime,
@@ -330,20 +407,57 @@ export async function playRuntimeVoiceBlob(
       }
     };
     player.onended = () => {
+      console.log("[voiceGenPlay] playRuntimeVoiceBlob onended", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+      console.log("[voice lifecycle] ⑪ 音频播放完毕", { currentTime: player.currentTime });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放结束", {
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),
       });
       finalize(true, "朗读完成");
     };
-    player.onerror = () => {
+    player.onerror = (event) => {
+      console.error("[voiceGenPlay] playRuntimeVoiceBlob onerror", {
+        event,
+        error: player.error ? { code: player.error.code, message: player.error.message } : null,
+        readyState: player.readyState,
+        networkState: player.networkState,
+        src: player.src,
+        currentTime: player.currentTime,
+      });
+      console.error("[voice lifecycle] ⑫ 音频播放出错", {
+        errorCode: player.error?.code,
+        errorMessage: player.error?.message,
+        readyState: player.readyState,
+        networkState: player.networkState,
+      });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放错误", {
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),
       });
       finalize(false, "朗读失败");
     };
+    player.onpause = () => {
+      console.log("[voiceGenPlay] playRuntimeVoiceBlob onpause", {
+        currentTime: player.currentTime,
+        speakable: speakable.slice(0, 60),
+      });
+    };
+    player.onstalled = () => {
+      console.warn("[voiceGenPlay] playRuntimeVoiceBlob onstalled", {
+        readyState: player.readyState,
+        networkState: player.networkState,
+        speakable: speakable.slice(0, 60),
+      });
+    };
     void player.play().catch((error) => {
+      console.error("[voiceGenPlay] playRuntimeVoiceBlob play() rejected", {
+        error: String((error as Error)?.message || error || ""),
+        errorName: (error as any)?.name,
+        speakable: speakable.slice(0, 60),
+      });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob play() rejected", {
         error: String((error as Error)?.message || error || ""),
         speakable: speakable.slice(0, 60),
@@ -417,6 +531,12 @@ export async function playMessageAudioWithBinding(
   });
   stopRuntimeVoicePlayback();
   const requestId = runtimeVoiceRequestId;
+  console.log("[voiceGenPlay] playMessageAudioWithBinding init", {
+    messageId: message.id,
+    requestId,
+    binding: { mode: binding.mode, presetId: binding.presetId, roleId: binding.roleId, configId: binding.configId },
+    segments: splitSpeechSegments(speakable).length,
+  });
   if (manual) {
     getStore().state.menuVisibleHint = "正在生成语音";
   }
@@ -429,18 +549,39 @@ export async function playMessageAudioWithBinding(
     const previewKey = runtimeVoicePreviewKey(binding, segment);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let shouldRetry = true;
-      if (requestId !== runtimeVoiceRequestId) return false;
+      if (requestId !== runtimeVoiceRequestId) {
+        console.warn("[voiceGenPlay] requestId mismatch, abort", { requestId, runtimeVoiceRequestId });
+        return false;
+      }
       try {
         setRuntimeVoiceIndicator(message, "loading", messageUiKey(message));
+        console.log("[voiceGenPlay] calling resolveRuntimeVoiceUrl", { segment: segment.slice(0, 30), attempt });
         const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
+        console.log("[voiceGenPlay] resolveRuntimeVoiceUrl result", {
+          audioUrl,
+          requestId,
+          runtimeVoiceRequestId,
+          requestIdMatch: requestId === runtimeVoiceRequestId,
+          attempt,
+        });
         if (WebDebugLogUtil.isEnabled()) {
           console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
         }
-        if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
+        if (!audioUrl || requestId !== runtimeVoiceRequestId) {
+          console.warn("[voiceGenPlay] abort before fetchRuntimeVoiceBlob", {
+            audioUrlEmpty: !audioUrl,
+            requestId,
+            runtimeVoiceRequestId,
+          });
+          return false;
+        }
+        console.log("[voiceGenPlay] calling fetchRuntimeVoiceBlob", { audioUrl });
         const blob = await fetchRuntimeVoiceBlob(audioUrl);
+        console.log("[voiceGenPlay] fetchRuntimeVoiceBlob done", { blobSize: blob.size, blobType: blob.type });
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
           setRuntimeVoiceIndicator(message, "playing", messageUiKey(message));
         });
+        console.log("[voiceGenPlay] playRuntimeVoiceBlob result", { segmentPlayed, attempt });
         if (getStore().hasActiveMiniGameInCurrentSession()) {
           WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob", segmentPlayed);
         } else {
@@ -451,6 +592,13 @@ export async function playMessageAudioWithBinding(
       } catch (error: any) {
         lastError = error;
         const messageText = String(error?.message || "");
+        console.error("[voiceGenPlay] segment attempt failed", {
+          segment: segment.slice(0, 60),
+          attempt,
+          errorMessage: messageText,
+          errorName: (error as any)?.name,
+          errorStack: (error as Error)?.stack?.split("\n").slice(0, 3).join("\n"),
+        });
         if (/^HTTP\s+\d+/i.test(messageText) || messageText.includes("音频下载超时")) {
           runtimeVoicePreviewCache.delete(previewKey);
           runtimeVoicePreviewInflight.delete(previewKey);
@@ -489,21 +637,50 @@ export async function playMessageAudio(
     manual,
     waitForCompletion,
   });
+  console.log("[voiceGenPlay] playMessageAudio entry", {
+    messageId: message.id,
+    role: message.role,
+    roleType: message.roleType,
+    manual,
+    waitForCompletion,
+    speakable: (overrideContent ?? messageDisplayContent(message))?.slice(0, 40),
+  });
   const playableContent = overrideContent ?? messageDisplayContent(message);
   const speakable = normalizePlayableSpeechText(playableContent);
   if (!speakable) {
+    console.log("[voiceGenPlay] speakable empty, abort", { messageId: message.id });
     if (manual) getStore().state.menuVisibleHint = "这条内容没有可朗读文本";
     return false;
   }
   const binding = resolveMessageVoiceBinding(message);
   if (!binding) {
+    const store = getStore();
+    const roleCards = Array.isArray(store.state.roleCards) ? store.state.roleCards : [];
+    const matchedRole = roleCards.find((r: any) => r.name === message.role || r.id === message.role);
+    console.log("[voiceGenPlay] no binding, fallback to browser speech", {
+      messageId: message.id,
+      role: message.role,
+      roleType: message.roleType,
+      roleCardCount: roleCards.length,
+      roleCardNames: roleCards.slice(0, 5).map((r: any) => `${r.name}(id=${r.id}, voiceConfigId=${r.voiceConfigId})`),
+      matchedRole: matchedRole ? `${matchedRole.name}(id=${matchedRole.id}, voiceConfigId=${matchedRole.voiceConfigId})` : null,
+    });
     return replayWithBrowserSpeech(overrideContent ?? message.content, waitForCompletion);
   }
+  console.log("[voiceGenPlay] resolved binding", {
+    messageId: message.id,
+    binding: { mode: binding.mode, presetId: binding.presetId, roleId: binding.roleId, configId: binding.configId, hasRefAudio: !!binding.referenceAudioPath },
+  });
   const bindingKey = runtimeVoiceBindingKey(binding);
   const preferredBinding = runtimeVoiceFallbackBindingCache.get(bindingKey) || binding;
   try {
     return await playMessageAudioWithBinding(message, preferredBinding, speakable, manual, waitForCompletion);
   } catch (error: any) {
+    console.error("[voiceGenPlay] playMessageAudioWithBinding failed, will fallback", {
+      messageId: message.id,
+      error: String((error as Error)?.message || error),
+      isDeterministic: isDeterministicRuntimeVoiceError(error),
+    });
     let finalError: unknown = error;
     if (
       runtimeVoiceBindingKey(preferredBinding) === bindingKey

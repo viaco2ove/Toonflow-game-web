@@ -55,12 +55,17 @@ function isVoiceDesignModel(model?: string | null): boolean {
     return true;
   }
 
+  // 小米 MiMo
+  if (normalized === "mimo-v2.5-tts-voicedesign" || normalized.includes("voicedesign")) {
+    return true;
+  }
+
   return false;
 }
 
 function isVoiceDesignManufacturer(manufacturer?: string | null): boolean {
   const normalized = String(manufacturer || "").trim().toLowerCase();
-  return normalized === "aliyun_direct" || normalized === "minimax";
+  return normalized === "aliyun_direct" || normalized === "minimax" || normalized === "xiaomimimo";
 }
 
 function isAvatarMattingManufacturer(manufacturer?: string | null): boolean {
@@ -236,10 +241,10 @@ const testResult = reactive({
 const manufacturerOptions = computed(() =>
   MODEL_MANUFACTURERS.filter((item) => {
     if (isVoiceDesignSlot()) {
-      return item.value === "aliyun_direct" || item.value === "minimax";
+      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "xiaomimimo";
     }
     if (props.slotKey === "storyVoiceCloneModel") {
-      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts" || item.value === "moss_tts_nano" || item.value === "siliconflow";
+      return item.value === "aliyun_direct" || item.value === "minimax" || item.value === "ai_voice_tts" || item.value === "moss_tts_nano" || item.value === "siliconflow" || item.value === "xiaomimimo";
     }
     if (props.slotKey === "storyAvatarMattingModel") {
       return item.value === "bria"
@@ -254,7 +259,8 @@ const manufacturerOptions = computed(() =>
         || item.value === "ai_voice_tts"
         || item.value === "minimax"
         || item.value === "moss_tts_nano"
-        || item.value === "siliconflow";
+        || item.value === "siliconflow"
+        || item.value === "xiaomimimo";
     }
     return item.value !== "ai_voice_tts"
       && item.value !== "aliyun"

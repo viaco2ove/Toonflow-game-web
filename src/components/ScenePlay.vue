@@ -2028,17 +2028,47 @@ watch(
   () => [store.state.currentSessionId, liveMessageProgressFingerprint.value, playMode.value],
   async () => {
     if (playMode.value === "history") {
+      console.log("[ScenePlay Watch2] history mode");
       revealedMessages.value = [...messages.value];
       return;
     }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
+      console.log("[ScenePlay Watch2] messages empty");
       revealedMessages.value = [];
       return;
     }
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
+      console.log("[voice lifecycle] 继玩进入故事：历史台词已显示", {
+        messageCount: nextMessages.length,
+        lastRole: nextMessages[nextMessages.length - 1]?.role,
+        lastRoleType: nextMessages[nextMessages.length - 1]?.roleType,
+      });
+      // 找最后一条 非 player 消息，触发语音播放（继玩重听最后一条 NPC/旁白台词）
+      const lastNonPlayer = [...nextMessages].reverse().find((m) => m.roleType !== "player");
+      if (!lastNonPlayer) {
+        console.log("[voice lifecycle] 继玩：最后一条是用户发言，等待自动编排下一轮");
+        return;
+      }
+      console.log("[voice lifecycle] 继玩：对最后一条 NPC/旁白消息触发 reveal 播放语音", {
+        messageId: lastNonPlayer.id,
+        role: lastNonPlayer.role,
+        content: String(lastNonPlayer.content || "").slice(0, 60),
+      });
+      const resumeKey = messageUiKey(lastNonPlayer);
+      const resumeTokenAtStart = revealRunToken;
+      const resumeIsCancelled = () => resumeTokenAtStart !== revealRunActive;
+      void waitForMessageReveal(resumeKey, resumeIsCancelled, {
+        autoVoice: () => autoVoice.value,
+        canPlayerSpeak: () => canPlayerSpeak.value,
+        latestMessageByKey,
+        messageDisplayContent,
+        isStreamingRuntimeMessage,
+        isRuntimeRetryMessage,
+        runtimeStreamSentences,
+      });
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2096,17 +2126,24 @@ watch(
 
     if (playMode.value === "history") {
       revealedMessages.value = [...messages.value];
+      console.log("[ScenePlay Watch1] history mode, sync all messages");
       return;
     }
-    if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) return;
+    if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) {
+      console.log("[ScenePlay Watch1] skip: setting/tips/debugLoading");
+      return;
+    }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
       revealedMessages.value = [];
+      console.log("[ScenePlay Watch1] messages empty");
       return;
     }
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
+      // Watch1 是后置触发，Watch2 已经处理过继玩 reveal 逻辑了
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
+      console.log("[ScenePlay Watch1] resumeLatestOnOpen=true, Watch2 already handled");
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2114,15 +2151,27 @@ watch(
     const mismatched = nextKeys.length < revealedKeys.length || revealedKeys.some((key, index) => nextKeys[index] !== key);
     if (mismatched) {
       revealedMessages.value = [...nextMessages];
+      console.log("[ScenePlay Watch1] mismatched, sync all");
       return;
     }
     const newMessages = nextMessages.slice(revealedKeys.length);
-    if (!newMessages.length) return;
+    if (!newMessages.length) {
+      console.log("[ScenePlay Watch1] no new messages", {
+        revealedCount: revealedKeys.length,
+        nextCount: nextKeys.length,
+      });
+      return;
+    }
     WebDebugLogUtil.log("[voice时序] Watch1 检测到新消息", {
       新消息数: newMessages.length,
       新消息角色列表: newMessages.map(m => `${m.role}(${m.id})`),
       myToken,
       revealRunActive,
+    });
+    console.log("[ScenePlay] new messages detected, will call waitForMessageReveal", {
+      count: newMessages.length,
+      roles: newMessages.map(m => `${m.role}(${m.id}|${m.roleType})`),
+      lastContent: newMessages[newMessages.length - 1]?.content?.slice(0, 60),
     });
     for (const message of newMessages) {
       if (isCancelled()) return;
@@ -2132,6 +2181,12 @@ watch(
       // 把流式消息也先入框（即便 content 还空），目的是让"生成中"圆点指示器
       // 能立刻挂在新消息尾部。当首个 delta 到达时内容会自然出现。
       const messageKey = messageUiKey(message);
+      console.log("[ScenePlay] waitForMessageReveal about to call", {
+        messageId: message.id,
+        role: message.role,
+        roleType: message.roleType,
+        content: message.content?.slice(0, 60),
+      });
       if (!revealedMessages.value.some((existing) => messageUiKey(existing) === messageKey)) {
         revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
         await nextTick();
