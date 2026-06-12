@@ -1598,6 +1598,7 @@ const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
 const eventProgressOpen = ref(true);
+const helpOpen = ref(false);
 const roleDetailKey = ref("");
 const roleDetail = computed<StoryRole | null>(() => {
   if (!roleDetailKey.value) return null;
@@ -2847,6 +2848,42 @@ function toggleEventProgress() {
   eventProgressOpen.value = !eventProgressOpen.value;
 }
 
+function toggleHelp() {
+  helpOpen.value = !helpOpen.value;
+}
+
+// Markdown 原文
+const helpMdContent = ref(`
+# 🌟 主要功能
+多角色 ai 游戏
+
+## 特殊功能
+- 在输入框输入“#小游戏” 可以进行查看钓鱼等小游戏的玩法。
+
+- 在输入框输入“@记忆管理 xxx” 可以要求ai 变更人物参数
+如：@记忆管理 睡觉恢复，可以恢复hp mp
+
+- 战斗属性
+### 血量和蓝的恢复（hp 和mp）：
+\`\`\`
+用户住宿、睡觉和吃下恢复药物等可以恢复血量和蓝到充盈满血满蓝，
+要把用户参数进行修改到满血满蓝，hp 和 mp 必须直接输出数字，不能写“已恢复”“满了”“充盈”等中文状态
+
+### 满血：基础血量100 + 等级*10 + 特殊物品或者技能加成，如物品里的血量属性点(2)
+### 满蓝：基础蓝量100 + 等级*10 + 特殊物品或者技能加成，如物品里的蓝量属性点(2)
+### 攻击力：基础攻击力10 + 等级*10 + 特殊物品或者技能加成，如物品里的攻击点属性点(2)
+### 防御力：基础防御1 + 等级*10 + 特殊物品或者技能加成，如物品里的防御点属性点(2)
+\`\`\`
+
+- @记忆管理 下个章节
+理论上可行
+- @事件进度检测 下个事件
+理论上可行
+
+- @角色名 xxx
+可以呼叫这个角色
+`);
+
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
   store.state.debugEndDialogDetail = "";
@@ -3767,6 +3804,17 @@ onBeforeUnmount(() => {
           </button>
           <pre v-if="statePreviewExpanded" class="play-state-pre">{{ statePreviewText }}</pre>
         </div>
+
+        <button type="button" class="play-link-row" @click="toggleHelp">
+          <span>help(?)</span>
+          <span>{{ helpOpen ? "收起 >" : ">" }}</span>
+        </button>
+          <!-- 全局注册好的 Markdown 组件 -->
+        <MarkdownView
+          v-if="helpOpen"
+          class="play-inline-card"
+          :source="helpMdContent"
+        />
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
           <span>当前章节事件</span>
