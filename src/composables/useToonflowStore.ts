@@ -944,6 +944,7 @@ const GAME_MODEL_SLOTS = [
   { key: "storyFastSpeakerModel", label: "快速角色发言", configType: "text" },
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
+  { key: "intentClassifierModel", label: "意图分析师", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
   { key: "storyAvatarMattingModel", label: "头像分离", configType: "image" },
   { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
@@ -974,6 +975,7 @@ const STORY_PROMPT_CODES = [
   "story-mini-game-alchemy",
   "story-mini-game-upgrade-equipment",
   "story-safety",
+  "intent-analyzer",
 ] as const;
 
 function stripRoleVoiceConfig(role: StoryRole): StoryRole {

@@ -95,6 +95,11 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     agentLabel: "safety_agent",
     tsLabel: "src/agents/story/safety/index.ts",
   },
+  "intent-analyzer": {
+    code: "intent-analyzer",
+    agentLabel: "intent_analyzer",
+    tsLabel: "src/modules/game-runtime/agents/intentAnalyzer/IntentClassifier.ts",
+  },
 };
 
 export function storyPromptMeta(code: string): StoryPromptMeta {
