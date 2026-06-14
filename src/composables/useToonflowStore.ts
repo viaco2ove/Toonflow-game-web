@@ -3936,6 +3936,7 @@ function createToonflowStore() {
   }
 
   function settingsModelBinding(key: string): AiModelMapItem | null {
+     WebDebugLogUtil.log("[bindGameModel] settingsAiModelMap:", state.settingsAiModelMap);
     return state.settingsAiModelMap.find((item) => item.key === key) || null;
   }
 
@@ -4660,6 +4661,7 @@ function createToonflowStore() {
   async function bindGameModel(key: string, configId: number) {
     const row = settingsModelBinding(key);
     if (!row?.id) {
+      WebDebugLogUtil.log("[bindGameModel] error:", row);
       throw new Error("模型槽位不存在");
     }
     await api.bindModelConfig(row.id, configId);

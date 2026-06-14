@@ -102,6 +102,10 @@ function isAutoDlTextManufacturer(manufacturer?: string | null): boolean {
   return String(manufacturer || "").trim().toLowerCase() === "autodl_chat";
 }
 
+function isQwen060Manufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim().toLowerCase() === "qwen060";
+}
+
 function defaultSlotManufacturer(): string {
   if (isVoiceDesignSlot()) {
     return "aliyun_direct";
@@ -209,6 +213,9 @@ const modelPreset = ref<string>("__custom__");
 const localAvatarMattingInstalling = ref(false);
 const mossTtsNanoStatus = ref<{ status: string; installed: boolean; canInstall: boolean; message: string } | null>(null);
 const mossTtsNanoInstallState = ref<"idle" | "installing" | "polling">("idle");
+const qwen060Status = ref<{ status: string; canInstall: boolean; message: string } | null>(null);
+const qwen060InstallState = ref<"idle" | "installing" | "polling">("idle");
+let qwen060PollTimer: ReturnType<typeof setInterval> | null = null;
 let mossTtsNanoPollTimer: ReturnType<typeof setInterval> | null = null;
 const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const reasoningEffortOptions = [
@@ -253,6 +260,16 @@ const manufacturerOptions = computed(() =>
         || item.value === "local_birefnet"
         || item.value === "local_modnet";
     }
+    // 意图分析师槽位：只允许 local文本模型(qwen060) / 火山引擎 / DeepSeek / OpenAI / Gemini / t8star
+    if (props.slotKey === "intentClassifierModel") {
+      return item.value === "qwen060"
+        || item.value === "doubao"
+        || item.value === "volcengine"
+        || item.value === "deepseek"
+        || item.value === "openai"
+        || item.value === "gemini"
+        || item.value === "t8star";
+    }
     if (props.configType === "voice") {
       return item.value === "aliyun_direct"
         || item.value === "aliyun"
@@ -288,13 +305,23 @@ const shouldShowModelType = computed(() => props.configType !== "image" && model
 const shouldShowTokenPricing = computed(() => props.configType === "text");
 const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer));
 const usesMossTtsNano = computed(() => isMossTtsNanoManufacturer(form.manufacturer));
-const shouldShowRemoteConfigFields = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value);
+const usesQwen060 = computed(() => isQwen060Manufacturer(form.manufacturer));
+const shouldShowBaseUrl = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value);
+const shouldShowApiKey = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value && !usesQwen060.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
 const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
+// Qwen3-0.6B 本地模型硬编码选项
+const qwen060ModelOptions = [
+  { value: "qwen3-0.6b", label: "Qwen3-0.6B" },
+];
 
 const modelDropdownOptions = computed(() => {
   if (isAutoDlTextConfig.value) {
     return autodlTextModelOptions.value;
+  }
+  // Qwen3-0.6B 本地模型
+  if (props.configType === "text" && isQwen060Manufacturer(form.manufacturer)) {
+    return qwen060ModelOptions;
   }
   if (props.configType === "text" && store.state.settingsTextModelList[form.manufacturer]) {
     return store.state.settingsTextModelList[form.manufacturer];
@@ -437,23 +464,42 @@ watch(
   () => form.manufacturer,
   async (value) => {
     stopMossTtsNanoPoll();
-    if (!isMossTtsNanoManufacturer(value)) {
+    stopQwen060Poll();
+    if (!isMossTtsNanoManufacturer(value) && !isQwen060Manufacturer(value)) {
       mossTtsNanoStatus.value = null;
       mossTtsNanoInstallState.value = "idle";
+      qwen060Status.value = null;
+      qwen060InstallState.value = "idle";
       return;
     }
     if (!showEditor.value) return;
-    try {
-      const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
-      mossTtsNanoStatus.value = s;
-      if (s?.status === "installing") {
-        startMossTtsNanoPoll();
-      } else {
+    if (isMossTtsNanoManufacturer(value)) {
+      try {
+        const s = await toonflowApi.postPublic<any>("/voice/mossTtsInstall/status", {});
+        mossTtsNanoStatus.value = s;
+        if (s?.status === "installing") {
+          startMossTtsNanoPoll();
+        } else {
+          mossTtsNanoInstallState.value = "idle";
+        }
+      } catch {
+        mossTtsNanoStatus.value = null;
         mossTtsNanoInstallState.value = "idle";
       }
-    } catch {
-      mossTtsNanoStatus.value = null;
-      mossTtsNanoInstallState.value = "idle";
+    }
+    if (isQwen060Manufacturer(value)) {
+      try {
+        const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/status", {});
+        qwen060Status.value = s;
+        if (s?.status === "installing") {
+          startQwen060Poll();
+        } else {
+          qwen060InstallState.value = "idle";
+        }
+      } catch {
+        qwen060Status.value = null;
+        qwen060InstallState.value = "idle";
+      }
     }
   },
 );
@@ -461,6 +507,7 @@ watch(
 watch(showEditor, async (visible) => {
   if (!visible) {
     stopMossTtsNanoPoll();
+    stopQwen060Poll();
     return;
   }
   // 打开编辑器时立即获取一次状态
@@ -470,6 +517,16 @@ watch(showEditor, async (visible) => {
       mossTtsNanoStatus.value = s;
       if (s?.status === "installing") {
         startMossTtsNanoPoll();
+      }
+    } catch { /* noop */ }
+  }
+  // Qwen3-0.6B 安装状态
+  if (isQwen060Manufacturer(form.manufacturer)) {
+    try {
+      const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/status", {});
+      qwen060Status.value = s;
+      if (s?.status === "installing") {
+        startQwen060Poll();
       }
     } catch { /* noop */ }
   }
@@ -634,6 +691,85 @@ async function startMossTtsNanoPoll() {
   }, 3000);
 }
 
+// Qwen3-0.6B 本地安装
+async function installQwen060(reinstall = false) {
+  qwen060InstallState.value = "installing";
+  try {
+    await toonflowApi.postPublic("/ai/qwen060Install/install", { reinstall });
+    startQwen060Poll();
+  } catch (err) {
+    store.state.notice = `Qwen3-0.6B 安装失败: ${(err as Error).message}`;
+    qwen060InstallState.value = "idle";
+  }
+}
+
+function stopQwen060Poll() {
+  if (qwen060PollTimer) {
+    clearInterval(qwen060PollTimer);
+    qwen060PollTimer = null;
+  }
+}
+
+async function stopQwen060() {
+  stopQwen060Poll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/stop", {});
+    qwen060Status.value = s;
+  } catch {
+    // ignore
+  }
+  qwen060InstallState.value = "idle";
+}
+
+async function resetQwen060() {
+  stopQwen060Poll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/reset", {});
+    qwen060Status.value = s;
+  } catch {
+    // ignore
+  }
+  qwen060InstallState.value = "idle";
+}
+
+async function startQwen060Poll() {
+  if (qwen060PollTimer) return;
+  qwen060InstallState.value = "polling";
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/status", {});
+    qwen060Status.value = s;
+    if (s?.status !== "installing") {
+      qwen060InstallState.value = "idle";
+      return;
+    }
+  } catch {
+    qwen060InstallState.value = "idle";
+    return;
+  }
+  qwen060PollTimer = setInterval(async () => {
+    try {
+      const s = await toonflowApi.postPublic<any>("/ai/qwen060Install/status", {});
+      qwen060Status.value = s;
+      if (s?.status === "installed") {
+        store.state.notice = "Qwen3-0.6B 安装完成！";
+        stopQwen060Poll();
+        qwen060InstallState.value = "idle";
+      } else if (s?.status === "failed") {
+        store.state.notice = `安装失败: ${s.message || "未知错误"}`;
+        stopQwen060Poll();
+        qwen060InstallState.value = "idle";
+      } else if (s?.status === "not_installed") {
+        stopQwen060Poll();
+        qwen060InstallState.value = "idle";
+      }
+      // installing 继续轮询
+    } catch {
+      stopQwen060Poll();
+      qwen060InstallState.value = "idle";
+    }
+  }, 3000);
+}
+
 function applyModelPreset(value: string) {
   modelPreset.value = value;
   if (value !== "__custom__") {
@@ -738,8 +874,8 @@ async function submitEditor() {
         manufacturer,
         modelType,
         model: form.model.trim(),
-        baseUrl: shouldShowRemoteConfigFields.value ? form.baseUrl.trim() : "",
-        apiKey: shouldShowRemoteConfigFields.value ? form.apiKey.trim() : "",
+        baseUrl: shouldShowBaseUrl.value ? form.baseUrl.trim() : "",
+        apiKey: shouldShowApiKey.value ? form.apiKey.trim() : "",
         inputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.inputPricePer1M) : 0,
         outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
@@ -760,8 +896,8 @@ async function submitEditor() {
         manufacturer,
         modelType,
         model: form.model.trim(),
-        baseUrl: shouldShowRemoteConfigFields.value ? form.baseUrl.trim() : "",
-        apiKey: shouldShowRemoteConfigFields.value ? form.apiKey.trim() : "",
+        baseUrl: shouldShowBaseUrl.value ? form.baseUrl.trim() : "",
+        apiKey: shouldShowApiKey.value ? form.apiKey.trim() : "",
         inputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.inputPricePer1M) : 0,
         outputPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.outputPricePer1M) : 0,
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
@@ -1096,11 +1232,78 @@ async function confirmBinding() {
             </div>
           </div>
         </div>
-        <div v-if="shouldShowRemoteConfigFields" class="field">
+        <!-- Qwen3-0.6B 本地安装 -->
+        <div v-if="usesQwen060" class="field">
+          <label>本地安装</label>
+          <div class="settings-local-model-card">
+            <div class="settings-local-model-copy">
+              <div class="settings-local-model-title">Qwen3-0.6B 本地模型</div>
+              <div class="settings-local-model-text">
+                {{ qwen060Status?.message || '首次使用需要安装模型文件。' }}
+              </div>
+            </div>
+            <!-- 未安装：显示立即安装按钮 -->
+            <button
+              v-if="qwen060Status?.status === 'not_installed' || qwen060Status === null"
+              class="button settings-outline-btn"
+              type="button"
+              :disabled="qwen060InstallState !== 'idle' || qwen060Status?.canInstall === false"
+              @click="installQwen060(true)"
+            >
+              立即安装
+            </button>
+            <!-- 安装中/轮询中：显示停止 + 监听进度 -->
+            <button
+              v-else-if="qwen060Status?.status === 'installing'"
+              class="button settings-outline-btn"
+              type="button"
+              @click="stopQwen060"
+            >
+              停止安装
+            </button>
+            <!-- 已安装：显示已安装状态 + 重新安装 -->
+            <div v-else-if="qwen060Status?.status === 'installed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn settings-outline-btn--success"
+                type="button"
+                disabled
+              >
+                已安装
+              </button>
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="qwen060InstallState !== 'idle'"
+                @click="installQwen060(true)"
+              >
+                重新安装
+              </button>
+            </div>
+            <!-- 安装失败：显示重新安装 + 清除状态 -->
+            <div v-else-if="qwen060Status?.status === 'failed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="qwen060InstallState !== 'idle'"
+                @click="installQwen060(true)"
+              >
+                重新安装
+              </button>
+              <button
+                class="button settings-outline-btn settings-outline-btn--warn"
+                type="button"
+                @click="resetQwen060"
+              >
+                清除状态
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-if="shouldShowBaseUrl" class="field">
           <label>Base URL</label>
           <input v-model="form.baseUrl" class="input" type="text" placeholder="请输入 Base URL" />
         </div>
-        <div v-if="shouldShowRemoteConfigFields" class="field">
+        <div v-if="shouldShowApiKey" class="field">
           <label>API Key</label>
           <input
             v-model="form.apiKey"

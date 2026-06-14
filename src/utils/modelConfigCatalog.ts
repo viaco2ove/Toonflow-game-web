@@ -47,6 +47,14 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "qwen060",
+    label: "local文本模型",
+    website: "https://www.modelscope.cn/models/Qwen/Qwen3-0.6B",
+    defaults: {
+      text: "http://127.0.0.1:11434/v1",
+    },
+  },
+  {
     value: "openai",
     label: "OpenAI",
     defaults: {
@@ -465,6 +473,9 @@ export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind)
   if (type === "voice_clone" && manufacturer === "ai_voice_tts") return false;
   if (type === "voice_clone" && manufacturer === "moss_tts_nano") return false;
   if (type === "voice_design" && manufacturer === "moss_tts_nano") return false;
+  // 本地文本模型不需要 API Key
+  if (type === "text" && manufacturer === "qwen060") return false;
+  if (type === "text" && manufacturer === "lmstudio") return false;
   return true;
 }
 
