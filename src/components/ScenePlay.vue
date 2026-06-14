@@ -2882,6 +2882,11 @@ const helpMdContent = ref(`
 
 - @角色名 xxx
 可以呼叫这个角色
+
+### 任务系统（也是小游戏的一种）
+输入：“#任务：xxx” 创建任务
+也可以被意图分析师 识别为创建任务意图时拆创建任务。
+输入：“#退出” 主动退出任务
 `);
 
 function closeDebugDialog() {

@@ -4941,8 +4941,8 @@ textarea::-webkit-scrollbar-thumb {
   position: relative;
   z-index: 3;
   display: grid;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 1px;
+  padding: 2px 12px;
   border-radius: 16px;
   background: rgba(8, 20, 37, 0.72);
   border: 1px solid rgba(188, 204, 226, 0.18);
@@ -4962,6 +4962,8 @@ textarea::-webkit-scrollbar-thumb {
   color: #ffffff;
   font-size: 16px;
   font-weight: 900;
+  display: inline-block;
+  padding-right: 1px;
 }
 
 .play-mini-game-panel__meta,
@@ -4969,6 +4971,7 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(213, 235, 255, 0.78);
   font-size: 12px;
   line-height: 1.45;
+  display: inline-block;
 }
 
 .play-mini-game-panel__status {

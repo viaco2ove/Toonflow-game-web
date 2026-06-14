@@ -2673,15 +2673,13 @@ function createToonflowStore() {
    * - 这里集中维护“哪些小游戏会阻塞”的规则，避免发送消息和自动续编排各写一套判断。
    */
   function isBlockingMiniGameType(gameType: string): boolean {
-    return gameType !== "task";
+    // 任务（task）也是小游戏的一种，走 /game/orchestration/minigame 链路
+    // 必须返回 true 让前端走小游戏编排接口，否则任务内的发言会被主线条目遮挡
+    return Boolean(gameType);
   }
 
   /**
    * 判断某份正式会话运行态里的小游戏面板当前是否仍应显示。
-   *
-   * 用途：
-   * - 正式会话在 `addMessage / storyInfo / getSession` 之间也会出现中间响应；
-   * - 某些响应会短暂漏掉 `miniGame`，如果直接覆盖，面板会瞬间消失；
    * - 这里统一维护“仍可见小游戏”的判定，为状态合并与阻塞判断提供依据。
    */
   function hasVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): boolean {
