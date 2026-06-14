@@ -2406,6 +2406,10 @@ function createToonflowStore() {
 
   function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
     const existingDetail = state.sessionDetail || null;
+    // 优先使用编排返回的 state（含最新的 executing_task），其次才是旧 state
+    const mergedState = (result.state && typeof result.state === "object")
+      ? { ...(existingDetail?.state || {}), ...(result.state as Record<string, unknown>) }
+      : (existingDetail?.state || {});
     state.sessionDetail = {
       ...(existingDetail || {}),
       sessionId: result.sessionId || existingDetail?.sessionId || state.currentSessionId,
@@ -2413,7 +2417,7 @@ function createToonflowStore() {
       endDialog: existingDetail?.endDialog || null,
       endDialogDetail: String(existingDetail?.endDialogDetail || "").trim(),
       chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
-      state: (existingDetail?.state || {}) as Record<string, unknown>,
+      state: mergedState,
       chapter: existingDetail?.chapter || null,
       world: existingDetail?.world || null,
       latestSnapshot: existingDetail?.latestSnapshot || null,

@@ -1894,6 +1894,38 @@ a {
   gap: 12px;
 }
 
+/* 提示词配置标签页 */
+.settings-prompt-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.settings-prompt-tab {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid #d7e3f4;
+  background: #fff;
+  color: #324867;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-prompt-tab:hover {
+  background: #f0f4fa;
+  border-color: #a0b4d0;
+}
+
+.settings-prompt-tab.active {
+  background: #324867;
+  color: #fff;
+  border-color: #324867;
+}
+
 .settings-model-row,
 .settings-prompt-card {
   display: grid;
