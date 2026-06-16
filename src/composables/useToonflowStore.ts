@@ -976,6 +976,10 @@ const STORY_PROMPT_CODES = [
   "story-mini-game-upgrade-equipment",
   "story-safety",
   "intent-analyzer",
+  "task-progress-agent",
+  "task-director-agent",
+  "task-speaker-agent",
+  "task-completion-agent",
 ] as const;
 
 function stripRoleVoiceConfig(role: StoryRole): StoryRole {
@@ -1356,10 +1360,18 @@ function createToonflowStore() {
     if (!state.currentSessionId) {
       throw new Error("当前没有可回溯的会话");
     }
-    await api.revisitMessage(state.currentSessionId, messageId);
+    const result = await api.revisitMessage(state.currentSessionId, messageId);
     await refreshCurrentSession();
-    scheduleSessionNarrativeIfSystemTurn();
-    state.notice = "已回溯到这句台词，可继续编排";
+    // ★ 回溯到用户消息时，把原内容回填到输入框，方便用户直接修改/重发
+    const revisitedRoleType = String((result as any)?.revisitedRoleType || "").trim();
+    const revisitedContent = String((result as any)?.revisitedContent || "");
+    if (revisitedRoleType === "player" && revisitedContent) {
+      state.sendText = revisitedContent;
+      state.notice = "已回溯到这句话之前，原内容已填入输入框";
+    } else {
+      scheduleSessionNarrativeIfSystemTurn();
+      state.notice = "已回溯到这句台词，可继续编排";
+    }
   }
 
   async function requestSessionList(worldId?: number): Promise<SessionItem[]> {

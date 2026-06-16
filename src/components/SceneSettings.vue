@@ -90,6 +90,10 @@ const miniGamePromptCodes = new Set([
 ]);
 const taskPromptCodes = new Set([
   "intent-analyzer",
+  "task-progress-agent",
+  "task-director-agent",
+  "task-speaker-agent",
+  "task-completion-agent",
 ]);
 const baseStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => !miniGamePromptCodes.has(prompt.code) && !taskPromptCodes.has(prompt.code)));
 const miniGameStoryPromptRows = computed(() => storyPromptRows.value.filter((prompt) => miniGamePromptCodes.has(prompt.code)));

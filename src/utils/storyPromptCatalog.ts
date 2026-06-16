@@ -100,6 +100,26 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     agentLabel: "intent_analyzer",
     tsLabel: "src/modules/game-runtime/agents/intentAnalyzer/IntentClassifier.ts",
   },
+  "task-progress-agent": {
+    code: "task-progress-agent",
+    agentLabel: "task_progress_agent",
+    tsLabel: "src/modules/game-runtime/agents/taskMode/TaskProgressAgent.ts",
+  },
+  "task-director-agent": {
+    code: "task-director-agent",
+    agentLabel: "task_director_agent",
+    tsLabel: "src/modules/game-runtime/agents/taskMode/TaskDirectorAgent.ts",
+  },
+  "task-speaker-agent": {
+    code: "task-speaker-agent",
+    agentLabel: "task_speaker_agent",
+    tsLabel: "src/modules/game-runtime/agents/taskMode/TaskSpeakerAgent.ts",
+  },
+  "task-completion-agent": {
+    code: "task-completion-agent",
+    agentLabel: "task_completion_agent",
+    tsLabel: "src/modules/game-runtime/agents/taskMode/TaskCompletionAgent.ts",
+  },
 };
 
 export function storyPromptMeta(code: string): StoryPromptMeta {

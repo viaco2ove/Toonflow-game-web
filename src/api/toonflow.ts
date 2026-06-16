@@ -271,7 +271,13 @@ export class ToonflowApi {
   }
 
   revisitMessage(sessionId: string, messageId: number) {
-    return this.post<boolean>("/game/revisitMessage", {
+    return this.post<{
+      success: boolean;
+      isMiniGameMode?: boolean;
+      miniGameType?: string | null;
+      revisitedRoleType?: string;
+      revisitedContent?: string;
+    }>("/game/revisitMessage", {
       sessionId,
       messageId,
     });
