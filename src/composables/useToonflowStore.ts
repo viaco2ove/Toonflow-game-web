@@ -6833,7 +6833,11 @@ function createToonflowStore() {
       }
       // 没有编排计划：正常处理
       if (hasActiveMiniGameInCurrentSession()) {
+        // ★ 任务/小游戏模式：addMessage 不再 intercept，需要手动调用 /game/orchestration/minigame 编排
+        // 走 continueSessionNarrative，里面会根据 isMiniGameActive 选择 resolveMinigameOrchestration
+        await refreshSessionStoryInfo();
         void refreshSessionListState();
+        await continueSessionNarrative();
         return;
       }
       await refreshSessionStoryInfo();
