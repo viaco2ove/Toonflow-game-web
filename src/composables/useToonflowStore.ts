@@ -4055,6 +4055,13 @@ function createToonflowStore() {
         text: `当前语音克隆模型：${cloneModelLabel}。${consistencyHint}`,
       };
     }
+    if(key==="intentClassifierModel") {
+      const intentClassifierModel = settingsModelBinding("intentClassifierModel");
+      return {
+          tone: "warn",
+          text: `用于意图分类。建议绑定：${formatSettingsModelLabel(intentClassifierModel)}。`,
+        };
+    }
     if (key === "storyAvatarMattingModel") {
       const binding = settingsModelBinding("storyAvatarMattingModel");
       const recommendation = settingsRecommendedModel("storyAvatarMattingModel");
