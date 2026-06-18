@@ -1218,6 +1218,27 @@ function miniGameStateItems(gameType: string, publicState: Record<string, unknow
       { key: "最近收获", value: scalarText(publicState.last_reward) || "暂无" },
     ];
   }
+  // ★ 任务模式：从 process_steps 数组生成带状态标记的推进过程
+  if (gameType === "task") {
+    const processSteps = publicState.process_steps;
+    if (Array.isArray(processSteps) && processSteps.length > 0) {
+      return [
+        { key: "任务目标", value: scalarText(publicState.current_objective) || "" },
+        {
+          key: "推进过程",
+          value: processSteps.map((step: unknown) => {
+            const s = scalarText(step);
+            // 已有 [i]/[s]/[f]/[] 标记的直接显示
+            if (/^\[[isaf]\]\s*/.test(s)) return s;
+            // 无标记的补上 []
+            return `[] ${s}`;
+          }).join("\n"),
+        },
+        { key: "成功条件", value: (publicState.success_conditions as unknown as string[] | undefined)?.join("；") || "" },
+        { key: "失败条件", value: (publicState.failure_conditions as unknown as string[] | undefined)?.join("；") || "" },
+      ].filter(item => item.value);
+    }
+  }
   return Object.entries(publicState)
     .map(([key, value]) => ({
       key,
