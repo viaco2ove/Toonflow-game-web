@@ -1513,6 +1513,7 @@ const androidVoiceBtnText = computed(() => {
   if (androidVoiceMode.value === "action") return "动作: (xxx)";
   if (androidVoiceMode.value === "scene") return "场景: [xxx]";
   if (voiceListening.value) return androidVoiceText.value || "松开发送";
+  if (currentRuntimeInputStatus.value === "sending" || sessionRuntimeStageText.value) return `处理中${processingDots.value}`;
   return "按住说话";
 });
 
@@ -4139,7 +4140,7 @@ onBeforeUnmount(() => {
                   'is-scene': androidVoiceMode === 'scene',
                   'is-cancel': voiceHoldCancelPending
                 }"
-                :disabled="voiceTranscribing || !canPlayerInput"
+                :disabled="voiceTranscribing || !canPlayerInput || currentRuntimeInputStatus === 'sending' || !!sessionRuntimeStageText"
                 @pointerdown.prevent="onAndroidVoiceStart"
                 @pointermove="onAndroidVoiceMove"
                 @pointerup="onAndroidVoiceEnd"
@@ -4190,7 +4191,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <button type="button" class="play-mini-round" @click="onMiniAction('comment')">＋</button>
-            <button type="button" class="play-send-btn" :disabled="!canPlayerInput" @click="submit">
+            <button type="button" class="play-send-btn" :class="{ 'is-processing': currentRuntimeInputStatus === 'sending' || !!sessionRuntimeStageText }" :disabled="!canPlayerInput" @click="submit">
               {{ currentRuntimeInputStatus === "sending" || sessionRuntimeStageText ? `处理中${processingDots}` : "发送" }}
             </button>
           </div>

@@ -5820,6 +5820,13 @@ textarea::-webkit-scrollbar-thumb {
   animation: none;
 }
 
+/* AI 处理中（禁用但有反馈） */
+.android-voice-btn:disabled {
+  background: #e0e0e0;
+  color: #999;
+  animation: none;
+}
+
 .android-voice-tip {
   text-align: center;
   font-size: 12px;
