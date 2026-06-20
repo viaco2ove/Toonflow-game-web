@@ -1894,6 +1894,38 @@ a {
   gap: 12px;
 }
 
+/* 提示词配置标签页 */
+.settings-prompt-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.settings-prompt-tab {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid #d7e3f4;
+  background: #fff;
+  color: #324867;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-prompt-tab:hover {
+  background: #f0f4fa;
+  border-color: #a0b4d0;
+}
+
+.settings-prompt-tab.active {
+  background: #324867;
+  color: #fff;
+  border-color: #324867;
+}
+
 .settings-model-row,
 .settings-prompt-card {
   display: grid;
@@ -3056,6 +3088,95 @@ textarea::-webkit-scrollbar-thumb {
 .voice-dialog-list {
   display: grid;
   gap: 8px;
+}
+
+.voice-dialog-aliyun-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.voice-dialog-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.voice-dialog-preset-search {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.voice-dialog-preset-filter {
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+
+.voice-dialog-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid #e3ebf5;
+  border-radius: 8px;
+  padding: 4px;
+  background: #fff;
+}
+
+.voice-dialog-preset-row-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.voice-dialog-preset-row-item:hover {
+  background: #f1f6ff;
+}
+
+.voice-dialog-preset-row-item.is-active {
+  background: #e1ecff;
+  border-color: #8ab4ff;
+}
+
+.voice-dialog-preset-name {
+  font-weight: 600;
+  color: #172033;
+}
+
+.voice-dialog-preset-id {
+  color: #60708f;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 12px;
+}
+
+.voice-dialog-preset-scene {
+  color: #4b5e7c;
+  font-size: 12px;
+  background: #f0f4fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.voice-dialog-preset-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.voice-dialog-preset-page-text {
+  color: #60708f;
+  font-size: 12px;
 }
 
 .voice-dialog-section {
@@ -4477,9 +4598,22 @@ textarea::-webkit-scrollbar-thumb {
   font-weight: 900;
 }
 
-.play-bubble-voice-tail.is-playing {
+.play-bubble-voice-tail.is-playing,
+.play-bubble-voice-tail.is-streaming,
+.play-bubble-voice-tail.is-loading {
   color: #f0a91e;
   animation: play-voice-tail-pulse 0.9s ease-in-out infinite;
+}
+
+.play-bubble-voice-tail.is-streaming {
+  /* 生成阶段（流式 NDJSON）使用三帧"." ".." "..."，节奏稍快以表现"加载"感 */
+  animation-duration: 0.7s;
+}
+
+.play-bubble-voice-tail.is-loading {
+  /* 加载语音阶段（TTS 合成中）颜色偏蓝以示区分 */
+  color: #4d75c7;
+  animation-duration: 0.8s;
 }
 
 .play-message-loading {
@@ -4839,8 +4973,8 @@ textarea::-webkit-scrollbar-thumb {
   position: relative;
   z-index: 3;
   display: grid;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 1px;
+  padding: 2px 12px;
   border-radius: 16px;
   background: rgba(8, 20, 37, 0.72);
   border: 1px solid rgba(188, 204, 226, 0.18);
@@ -4860,6 +4994,8 @@ textarea::-webkit-scrollbar-thumb {
   color: #ffffff;
   font-size: 16px;
   font-weight: 900;
+  display: inline-block;
+  padding-right: 1px;
 }
 
 .play-mini-game-panel__meta,
@@ -4867,6 +5003,7 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(213, 235, 255, 0.78);
   font-size: 12px;
   line-height: 1.45;
+  display: inline-block;
 }
 
 .play-mini-game-panel__status {
@@ -5822,4 +5959,52 @@ body.android-device .nav {
   position: static;
   flex-shrink: 0;
   padding-bottom: calc(12px + var(--android-inset-bottom, 0px));
+}
+
+/* ============== 打字机动画样式 ============== */
+/* 打字机闪烁光标 */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: typing-cursor-blink 0.8s ease-in-out infinite;
+}
+
+@keyframes typing-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 打字机容器（用于显示带光标的文本） */
+.typewriter-container {
+  display: inline;
+}
+
+.typewriter-container::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: typing-cursor-blink 0.8s ease-in-out infinite;
+}
+
+/* 流式消息正在打字时的样式 */
+.play-bubble.is-typing .play-bubble-content {
+  /* 可选：轻微的背景色提示正在输入 */
+}
+
+/* 打字完成后的过渡效果 */
+.play-bubble.typing-complete .typing-cursor {
+  animation: typing-cursor-fadeout 0.3s ease-out forwards;
+}
+
+@keyframes typing-cursor-fadeout {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }

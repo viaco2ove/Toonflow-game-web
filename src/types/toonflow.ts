@@ -52,8 +52,10 @@ export interface StoryRole {
   name: string;
   avatarPath?: string;
   avatarBgPath?: string;
-  avatarSourcePath?: string;
+  avatarSourcePath?: string; // AI生成后分离前的原图
+  avatarReferringPath?: string; // AI生图参考图
   avatarVideoPath?: string;
+  avatarImagePrompt?: string; // AI生图形象描述，独立于角色设定
   description?: string;
   voice?: string;
   voiceMode?: string;
@@ -64,6 +66,7 @@ export interface StoryRole {
   voiceReferenceText?: string;
   voicePromptText?: string;
   voiceMixVoices?: VoiceMixItem[];
+  voiceGeneratedDownloadUrl?: string;
   sample?: string;
   parameterCardJson?: RoleParameterCard | null;
 }
@@ -79,6 +82,7 @@ export interface VoiceBindingDraft {
   referenceText?: string;
   promptText?: string;
   mixVoices?: VoiceMixItem[];
+  generatedDownloadUrl?: string;
 }
 
 export interface ImportableRoleListItem {
@@ -635,6 +639,7 @@ export function createDefaultPlayerRole(): StoryRole {
     voiceReferenceText: "",
     voicePromptText: "",
     voiceMixVoices: [],
+    voiceGeneratedDownloadUrl: "",
     sample: "",
     parameterCardJson: null,
   };
@@ -656,6 +661,7 @@ export function createDefaultNarratorRole(): StoryRole {
     voiceReferenceText: "",
     voicePromptText: "",
     voiceMixVoices: [],
+    voiceGeneratedDownloadUrl: "",
     sample: "",
     parameterCardJson: null,
   };

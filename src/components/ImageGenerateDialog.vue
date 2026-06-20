@@ -50,12 +50,38 @@ async function onChooseFiles(e: Event) {
   if (!files.length) return;
   uploading.value = true;
   try {
+    // 同时读取文件用于 AI 描述回填
+    const fileBase64List = await Promise.all(
+      files.map(async (file) => {
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }),
+    );
     const urls = await Promise.all(files.map((file) => fileToDataUrl(file)));
     urls.forEach((url) => {
       if (!references.value.includes(url)) {
         references.value.push(url);
       }
     });
+    // 自动分析第一张参考图并回填描述
+    if (fileBase64List.length > 0 && !prompt.value.trim()) {
+      status.value = "AI 识别中...";
+      try {
+        const result = await store.api.describeImage({ imageBase64: fileBase64List[0], type: "role" });
+        if (result.description) {
+          prompt.value = result.description;
+          status.value = "已自动识别参考图描述";
+        } else {
+          status.value = "";
+        }
+      } catch {
+        status.value = "";
+      }
+    }
   } catch (err) {
     status.value = (err as Error).message || "参考图添加失败";
   } finally {
@@ -67,7 +93,7 @@ async function onChooseFiles(e: Event) {
 async function askPolishPrompt() {
   const text = prompt.value.trim();
   if (!text) {
-    status.value = "请先填写形象描述";
+    status.value = "请先填写ai生图形象描述";
     return;
   }
   status.value = "AI 帮写中...";
@@ -83,7 +109,7 @@ async function askPolishPrompt() {
 function confirm() {
   if (props.loading) return;
   if (!prompt.value.trim()) {
-    status.value = "请先填写形象描述";
+    status.value = "请先填写ai生图形象描述";
     return;
   }
   emit("confirm", {
@@ -129,7 +155,7 @@ function confirm() {
 
         <section class="surface section-block stack-gap">
           <div class="row-between">
-            <div class="subtle">形象描述</div>
+            <div class="subtle">ai生图形象描述</div>
             <button class="button small" type="button" :disabled="props.loading" @click="askPolishPrompt">AI帮写</button>
           </div>
           <textarea v-model="prompt" class="textarea" rows="6" :placeholder="selectedPreset.promptHint"></textarea>

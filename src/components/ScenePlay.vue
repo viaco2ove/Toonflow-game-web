@@ -2,11 +2,47 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
+import { useOrchestrationVoiceFlow } from "../composables/orchestrationVoiceFlow";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 
 const store = useToonflowStore();
+const voiceFlow = useOrchestrationVoiceFlow();
+
+// 解构语音编排流程相关函数
+const {
+  runtimeVoiceMessageKey,
+  runtimeVoicePhase,
+  runtimeVoiceIndicator,
+  getRuntimeVoiceIndicatorTimer,
+  setRuntimeVoiceIndicatorTimer,
+  clearRuntimeVoiceIndicatorTimer,
+  runtimeVoicePreviewCache,
+  runtimeVoicePreviewInflight,
+  runtimeVoiceBlobCache,
+  runtimeVoiceFallbackBindingCache,
+  runtimeVoiceWarmCache,
+  clearVoiceCaches,
+  clearRuntimeVoiceIndicator,
+  playMessageAudio,
+  stopRuntimeVoicePlayback,
+  setRuntimeVoiceIndicator,
+  sleep,
+  messageUiKey,
+  latestMessageByKey,
+  hasActiveMiniGame,
+  narratorVoiceBinding,
+  roleVoiceBinding,
+  warmVoiceBinding,
+  waitForMessageReveal,
+  resolveMessageVoiceBinding,
+  // 打字机动画
+  typewriterDisplayText,
+  typewriterMessageId,
+  isTyping,
+} = voiceFlow;
+
 const RUNTIME_FAST_PREVIEW_FORMAT = "mp3";
 const RUNTIME_FAST_PREVIEW_SAMPLE_RATE = 16000;
 const RUNTIME_VOICE_CACHE_LIMIT = 60;
@@ -316,8 +352,24 @@ function runtimeStreamSentences(message: MessageItem | null | undefined): string
 function messageDisplayContent(message: MessageItem | null | undefined): string {
   if (!message) return "";
   const content = scalarText(message.content);
+  // 如果正在为这条消息打字，返回打字机显示的文本。
+  // useToonflowStore 里启动 typewriter 时使用的是 String(message.id)，
+  // ScenePlay 的 UI key 则包含 session/createTime/roleType，所以这里兼容两种 key。
+  const typingKey = typewriterMessageId.value;
+  if (isTyping.value && (typingKey === messageUiKey(message) || typingKey === String(message.id))) {
+    return typewriterDisplayText.value;
+  }
   if (content) return content;
   return runtimeStreamSentences(message).join("");
+}
+
+/**
+ * 检查消息是否正在打字
+ */
+function isMessageTyping(message: MessageItem | null | undefined): boolean {
+  if (!message) return false;
+  const typingKey = typewriterMessageId.value;
+  return isTyping.value && (typingKey === messageUiKey(message) || typingKey === String(message.id));
 }
 
 function runtimeMessageStatus(message: MessageItem | null | undefined): string {
@@ -425,63 +477,8 @@ function stringifyMiniStateValue(input: unknown): string {
   return String(input);
 }
 
-function sanitizeSpeechText(input: unknown): string {
-  return String(input || "")
-    .replace(/（[^）]*）/g, "")
-    .replace(/\([^)]*\)/g, "")
-    .replace(/【[^】]*】/g, "")
-    .replace(/\[[^\]]*]/g, "")
-    .replace(/《[^》]*》/g, "")
-    .replace(/〈[^〉]*〉/g, "")
-    .replace(/〔[^〕]*〕/g, "")
-    .replace(/(^|\n)[：:，,；;、]+/g, "$1")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function normalizePlayableSpeechText(input: unknown): string {
-  const text = sanitizeSpeechText(input).replace(/\r/g, "").trim();
-  if (!text) return "";
-  const compact = text.replace(/\s+/g, "");
-  const meaningful = compact.replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "");
-  return meaningful ? text : "";
-}
-
-function speakableUnitCount(input: unknown): number {
-  const text = normalizePlayableSpeechText(input);
-  if (!text) return 0;
-  return text
-    .replace(/\s+/g, "")
-    .replace(/[0-9０-９.,!?;:，。！？；：、…·"'""''`~!@#$%^&*()\-_=+\[\]{}<>\\/|]+/g, "")
-    .length;
-}
-
-function isDeterministicRuntimeVoiceError(error: unknown): boolean {
-  const message = String((error as any)?.message || error || "").toLowerCase();
-  return [
-    "detect audio failed",
-    "当前语音设计模型与所选故事语音模型不兼容",
-    "请先在设置里配置语音设计模型",
-    "当前语音模型不支持该绑定模式",
-    "克隆模式需要参考音频",
-    "提示词模式需要填写提示词",
-    "参考音频无法被阿里云解码",
-    "语音模型配置不存在",
-    "未返回试听音频",
-    "http 400",
-  ].some((item) => message.includes(item.toLowerCase()));
-}
-
-function setLimitedCacheValue<T>(cache: Map<string, T>, key: string, value: T) {
-  cache.delete(key);
-  cache.set(key, value);
-  while (cache.size > RUNTIME_VOICE_CACHE_LIMIT) {
-    const oldestKey = cache.keys().next().value;
-    if (!oldestKey) break;
-    cache.delete(oldestKey);
-  }
-}
+// sanitizeSpeechText, normalizePlayableSpeechText, speakableUnitCount, isDeterministicRuntimeVoiceError,
+// setLimitedCacheValue 已移至 orchestrationVoiceFlow.ts
 
 function normalizeChapterTitleLabel(input: unknown, sort?: unknown): string {
   const raw = scalarText(input);
@@ -757,7 +754,13 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
     } else if (!currentPhaseId && currentEventKind === phaseKind && currentEventSummary && currentEventSummary === eventSummary) {
       eventStatus = currentEventStatus || "active";
     } else if (!currentPhaseId && currentEventKind && currentEventKind !== "opening" && items.length > 0) {
-      eventStatus = "completed";
+      // 自由章节动态事件模式下，根据 eventIndex 判断 phase 是否已完成
+      // eventIndex 从 1 开始，phaseIndex 从 0 开始
+      // 如果当前 phase 的索引小于当前事件索引 - 1，说明该 phase 的事件已结束
+      const currentEventIndex = Number(progress.eventIndex) || 0;
+      if (phaseIdx < currentEventIndex - 1) {
+        eventStatus = "completed";
+      }
     }
     items.push({
       eventIndex,
@@ -1215,6 +1218,27 @@ function miniGameStateItems(gameType: string, publicState: Record<string, unknow
       { key: "最近收获", value: scalarText(publicState.last_reward) || "暂无" },
     ];
   }
+  // ★ 任务模式：从 process_steps 数组生成带状态标记的推进过程
+  if (gameType === "task") {
+    const processSteps = publicState.process_steps;
+    if (Array.isArray(processSteps) && processSteps.length > 0) {
+      return [
+        { key: "任务目标", value: scalarText(publicState.current_objective) || "" },
+        {
+          key: "推进过程",
+          value: processSteps.map((step: unknown) => {
+            const s = scalarText(step);
+            // 已有 [i]/[s]/[f]/[] 标记的直接显示
+            if (/^\[[isaf]\]\s*/.test(s)) return s;
+            // 无标记的补上 []
+            return `[] ${s}`;
+          }).join("\n"),
+        },
+        { key: "成功条件", value: (publicState.success_conditions as unknown as string[] | undefined)?.join("；") || "" },
+        { key: "失败条件", value: (publicState.failure_conditions as unknown as string[] | undefined)?.join("；") || "" },
+      ].filter(item => item.value);
+    }
+  }
   return Object.entries(publicState)
     .map(([key, value]) => ({
       key,
@@ -1595,6 +1619,7 @@ const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
 const eventProgressOpen = ref(true);
+const helpOpen = ref(false);
 const roleDetailKey = ref("");
 const roleDetail = computed<StoryRole | null>(() => {
   if (!roleDetailKey.value) return null;
@@ -1620,6 +1645,18 @@ const currentLiveFigureRole = computed(() => {
 });
 const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
+
+// WebP 动画控制
+const WAIT_DURATION = 3000; // 定格等待时间
+let figureAnimTimer: ReturnType<typeof setTimeout> | null = null;
+let isAnimatedWebp = false;
+function clearFigureAnimTimer() {
+  if (figureAnimTimer !== null) {
+    clearTimeout(figureAnimTimer);
+    figureAnimTimer = null;
+  }
+}
+
 let speechRecognition: any = null;
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
@@ -1627,17 +1664,10 @@ let mediaChunks: Blob[] = [];
 let discardNextRecording = false;
 let chapterBgmPlayer: HTMLAudioElement | null = null;
 let currentChapterBgmObjectUrl = "";
-let runtimeVoicePlayer: HTMLAudioElement | null = null;
-let runtimeVoiceObjectUrl = "";
-let runtimeVoiceResolve: ((played: boolean) => void) | null = null;
-let runtimeVoiceRequestId = 0;
-const runtimeVoicePreviewCache = new Map<string, string>();
-const runtimeVoicePreviewInflight = new Map<string, Promise<string>>();
-const runtimeVoiceBlobCache = new Map<string, Blob>();
-const runtimeVoiceFallbackBindingCache = new Map<string, VoiceBindingDraft>();
-const runtimeVoiceCloneBindingCache = new Map<string, VoiceBindingDraft>();
-const runtimeVoiceCloneInflight = new Map<string, Promise<VoiceBindingDraft>>();
-const runtimeVoiceWarmCache = new Set<string>();
+// 语音播放相关变量已移至 orchestrationVoiceFlow.ts
+/** 播放锁已移除：根因是 Watch2 在 voicing 状态时强制改为 waiting_next，
+ *  导致语音播放期间就触发下一轮编排，新台词到达后 stopRuntimeVoicePlayback
+ *  打断当前语音。修复 Watch2 后不再需要此锁。 */
 const revealedMessages = ref<MessageItem[]>([]);
 
 function resetVoiceHoldState() {
@@ -1646,7 +1676,9 @@ function resetVoiceHoldState() {
   voiceHoldPointerId.value = null;
 }
 
-const liveMessageKeys = computed(() => messages.value.map((message) => messageUiKey(message)).join("|"));
+// 用 message.id 拼接，避免 message.content/meta 频繁更新触发 watcher 重启。
+// 只关心"哪些消息 ID 出现在列表里"，不关心每条消息内部字段变化。
+const liveMessageKeys = computed(() => messages.value.map((m) => String(m.id)).join("|"));
 const liveMessageProgressFingerprint = computed(() => messages.value.map((message) => [
   messageUiKey(message),
   messageDisplayContent(message),
@@ -1775,10 +1807,7 @@ const runtimeProgressHint = computed(() => {
   }
   return playTurnHint.value;
 });
-const runtimeVoiceMessageKey = ref("");
-const runtimeVoicePhase = ref<"" | "loading" | "playing">("");
-const runtimeVoiceIndicator = ref(".");
-let runtimeVoiceIndicatorTimer = 0;
+// runtimeVoiceMessageKey, runtimeVoicePhase, runtimeVoiceIndicator 已移至 orchestrationVoiceFlow.ts
 const runtimeChatTraceRows = ref<RuntimeChatTraceRow[]>([]);
 const runtimeDebugPanelOpen = ref(false);
 const latestRuntimeChatTrace = computed(() => {
@@ -1985,21 +2014,23 @@ watch(autoVoice, (enabled) => {
 watch(
   () => [runtimeVoiceMessageKey.value, runtimeVoicePhase.value],
   ([messageKey, phase]) => {
-    if (runtimeVoiceIndicatorTimer) {
-      window.clearInterval(runtimeVoiceIndicatorTimer);
-      runtimeVoiceIndicatorTimer = 0;
-    }
+    clearRuntimeVoiceIndicatorTimer();
     if (!messageKey || !phase) {
       runtimeVoiceIndicator.value = ".";
       return;
     }
-    const frames = phase === "playing" ? [".", "。", "."] : [".", "。"];
+    // streaming/generating -> 3 帧，loading/playing -> 2 帧
+    const frames = phase === "streaming"
+      ? [".", "..", "..."]
+      : phase === "playing"
+        ? [".", "。", "."]
+        : [".", "。"];
     let index = 0;
     runtimeVoiceIndicator.value = frames[index];
-    runtimeVoiceIndicatorTimer = window.setInterval(() => {
+    setRuntimeVoiceIndicatorTimer(window.setInterval(() => {
       index = (index + 1) % frames.length;
       runtimeVoiceIndicator.value = frames[index];
-    }, 260);
+    }, 260));
   },
   { immediate: true },
 );
@@ -2019,17 +2050,47 @@ watch(
   () => [store.state.currentSessionId, liveMessageProgressFingerprint.value, playMode.value],
   async () => {
     if (playMode.value === "history") {
+      console.log("[ScenePlay Watch2] history mode");
       revealedMessages.value = [...messages.value];
       return;
     }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
+      console.log("[ScenePlay Watch2] messages empty");
       revealedMessages.value = [];
       return;
     }
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
+      console.log("[voice lifecycle] 继玩进入故事：历史台词已显示", {
+        messageCount: nextMessages.length,
+        lastRole: nextMessages[nextMessages.length - 1]?.role,
+        lastRoleType: nextMessages[nextMessages.length - 1]?.roleType,
+      });
+      // 找最后一条 非 player 消息，触发语音播放（继玩重听最后一条 NPC/旁白台词）
+      const lastNonPlayer = [...nextMessages].reverse().find((m) => m.roleType !== "player");
+      if (!lastNonPlayer) {
+        console.log("[voice lifecycle] 继玩：最后一条是用户发言，等待自动编排下一轮");
+        return;
+      }
+      console.log("[voice lifecycle] 继玩：对最后一条 NPC/旁白消息触发 reveal 播放语音", {
+        messageId: lastNonPlayer.id,
+        role: lastNonPlayer.role,
+        content: String(lastNonPlayer.content || "").slice(0, 60),
+      });
+      const resumeKey = messageUiKey(lastNonPlayer);
+      const resumeTokenAtStart = revealRunToken;
+      const resumeIsCancelled = () => resumeTokenAtStart !== revealRunActive;
+      void waitForMessageReveal(resumeKey, resumeIsCancelled, {
+        autoVoice: () => autoVoice.value,
+        canPlayerSpeak: () => canPlayerSpeak.value,
+        latestMessageByKey,
+        messageDisplayContent,
+        isStreamingRuntimeMessage,
+        isRuntimeRetryMessage,
+        runtimeStreamSentences,
+      });
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2057,26 +2118,54 @@ watch(
   { flush: "post", immediate: true },
 );
 
+// 全局递增 token：仅当 sessionId / playMode / debugLoading 真的变化时才 ++，
+// 让 reveal 流程中的 cancel 判定更稳定，避免 message 内容更新触发 watcher 重启误中断。
+let revealRunToken = 0;
+let revealRunActive = 0; // 当前活跃 reveal 任务的 token
+let revealRunGuardSessionId = "";
+let revealRunGuardPlayMode = "";
+let revealRunGuardDebugLoading = false;
+
 watch(
   () => [store.state.currentSessionId, liveMessageKeys.value, autoVoice.value, playMode.value, debugLoading.value],
   async (_, __, onCleanup) => {
-    let cancelled = false;
+    // 只有真正的"上下文切换"才视为取消：sessionId、playMode、debugLoading 变化
+    const sid = store.state.currentSessionId;
+    const pm = playMode.value;
+    const dl = debugLoading.value;
+    const contextChanged = sid !== revealRunGuardSessionId || pm !== revealRunGuardPlayMode || dl !== revealRunGuardDebugLoading;
+    if (contextChanged) {
+      revealRunToken += 1;
+      revealRunGuardSessionId = sid;
+      revealRunGuardPlayMode = pm;
+      revealRunGuardDebugLoading = dl;
+    }
+    const myToken = revealRunActive = revealRunToken;
     onCleanup(() => {
-      cancelled = true;
+      // 仅 token 变化（真实上下文切换）时认为本次 reveal 被取消
     });
+    const isCancelled = () => myToken !== revealRunActive;
+
     if (playMode.value === "history") {
       revealedMessages.value = [...messages.value];
+      console.log("[ScenePlay Watch1] history mode, sync all messages");
       return;
     }
-    if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) return;
+    if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) {
+      console.log("[ScenePlay Watch1] skip: setting/tips/debugLoading");
+      return;
+    }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
       revealedMessages.value = [];
+      console.log("[ScenePlay Watch1] messages empty");
       return;
     }
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
+      // Watch1 是后置触发，Watch2 已经处理过继玩 reveal 逻辑了
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
+      console.log("[ScenePlay Watch1] resumeLatestOnOpen=true, Watch2 already handled");
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2084,26 +2173,59 @@ watch(
     const mismatched = nextKeys.length < revealedKeys.length || revealedKeys.some((key, index) => nextKeys[index] !== key);
     if (mismatched) {
       revealedMessages.value = [...nextMessages];
+      console.log("[ScenePlay Watch1] mismatched, sync all");
       return;
     }
     const newMessages = nextMessages.slice(revealedKeys.length);
-    if (!newMessages.length) return;
+    if (!newMessages.length) {
+      console.log("[ScenePlay Watch1] no new messages", {
+        revealedCount: revealedKeys.length,
+        nextCount: nextKeys.length,
+      });
+      return;
+    }
+    WebDebugLogUtil.log("[voice时序] Watch1 检测到新消息", {
+      新消息数: newMessages.length,
+      新消息角色列表: newMessages.map(m => `${m.role}(${m.id})`),
+      myToken,
+      revealRunActive,
+    });
+    console.log("[ScenePlay] new messages detected, will call waitForMessageReveal", {
+      count: newMessages.length,
+      roles: newMessages.map(m => `${m.role}(${m.id}|${m.roleType})`),
+      lastContent: newMessages[newMessages.length - 1]?.content?.slice(0, 60),
+    });
     for (const message of newMessages) {
-      if (cancelled) return;
-      // 流式台词在首个 delta 返回前，只是一个空占位。
-      // 这里先不把它塞进聊天框，避免"编排接口刚返回就先出现获取台词中气泡"的假象。
-      if (isStreamingRuntimeMessage(message) && !messageDisplayContent(message)) {
-        continue;
-      }
-      const messageKey = messageUiKey(message);
-      revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
-      await nextTick();
-      const viewport = messageViewport.value;
-      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      if (isCancelled()) return;
       if (isRuntimeRetryMessage(message)) {
         continue;
       }
-      await waitForMessageReveal(messageKey, () => cancelled);
+      // 把流式消息也先入框（即便 content 还空），目的是让"生成中"圆点指示器
+      // 能立刻挂在新消息尾部。当首个 delta 到达时内容会自然出现。
+      const messageKey = messageUiKey(message);
+      console.log("[ScenePlay] waitForMessageReveal about to call", {
+        messageId: message.id,
+        role: message.role,
+        roleType: message.roleType,
+        content: message.content?.slice(0, 60),
+      });
+      if (!revealedMessages.value.some((existing) => messageUiKey(existing) === messageKey)) {
+        revealedMessages.value = [...revealedMessages.value, latestMessageByKey(messageKey) || message];
+        await nextTick();
+        const viewport = messageViewport.value;
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      }
+      // 播放锁已移除：根因修复在 Watch2 中——voicing 状态不再被强制改为 waiting_next，
+      // 确保语音播完后才触发下一轮编排，新台词不会在语音播放期间到达。
+      await waitForMessageReveal(messageKey, isCancelled, {
+        autoVoice: () => autoVoice.value,
+        canPlayerSpeak: () => canPlayerSpeak.value,
+        latestMessageByKey,
+        messageDisplayContent,
+        isStreamingRuntimeMessage,
+        isRuntimeRetryMessage,
+        runtimeStreamSentences,
+      });
     }
   },
   { flush: "post", immediate: true },
@@ -2119,6 +2241,8 @@ watch(
     canPlayerSpeak.value,
     latestRevealedMessage.value ? messageUiKey(latestRevealedMessage.value) : "",
     latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
+    // 必须 watch status 才能在 status 从 streaming → waiting_next 切换时触发自动推进
+    latestRevealedMessage.value ? runtimeMessageStatus(latestRevealedMessage.value) : "",
     runtimeVoiceMessageKey.value,
     runtimeVoicePhase.value,
   ],
@@ -2153,7 +2277,13 @@ watch(
     if (latest.roleType === "player" && (canPlayerSpeak.value || status !== "waiting_next")) {
       return;
     }
-    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 语音播放中（voicing）时绝不能强制改为 waiting_next，
+    // 否则 Watch2 会在语音还没播完时就触发下一轮编排，
+    // 导致新台词到达后 stopRuntimeVoicePlayback 打断当前语音。
+    // 注意：runtimeVoicePhase 不为空说明"有消息正在播放/加载语音"——即使在播的不是 latest，
+    // 也不能把 latest 直接推进，否则会触发下一轮编排，连锁打断当前播放。
+    const anyVoiceActive = !!runtimeVoicePhase.value;
+    if (!miniGameShouldContinue && !anyVoiceActive && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
       status = canPlayerSpeak.value ? "waiting_player" : "waiting_next";
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
@@ -2167,6 +2297,23 @@ watch(
     if (status !== "waiting_next") {
       return;
     }
+    // 如果当前还有任何消息处于语音 loading/playing/streaming 阶段，
+    // 不要触发下一轮编排——必须等当前语音播完，否则新台词到达会打断当前语音。
+    if (runtimeVoicePhase.value) {
+      WebDebugLogUtil.log("[voice时序] Watch 检测到 waiting_next，但有语音正在播放，跳过 auto_advancing", {
+        消息id: latest.id,
+        当前播放消息key: runtimeVoiceMessageKey.value,
+        当前播放阶段: runtimeVoicePhase.value,
+      });
+      return;
+    }
+    WebDebugLogUtil.log("[voice时序] Watch 检测到 waiting_next，准备 auto_advancing", {
+      消息id: latest.id,
+      消息角色: latest.role,
+      消息内容: messageDisplayContent(latest)?.slice(0, 40),
+      canPlayerSpeak: canPlayerSpeak.value,
+      isMiniGameActive: store.hasActiveMiniGameInCurrentSession(),
+    });
     const key = messageUiKey(latest);
     if (!key || debugAutoAdvancing.value) {
       return;
@@ -2261,7 +2408,8 @@ watch(
     const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
     const isMiniGameMessage = String(latest.eventType || "").includes("on_mini_game") && String(latest.eventType || "") !== "on_mini_game_finish";
     const miniGameShouldContinue = isMiniGameActive && isMiniGameMessage;
-    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing", "voicing"].includes(status)) {
+    // 语音播放中（voicing）时不能强制改为其他状态，防止打断正在播放的语音
+    if (!miniGameShouldContinue && (canPlayerSpeak.value || !sameVoiceTarget) && ["", "orchestrated", "generated", "revealing"].includes(status)) {
       store.setRuntimeMessageStatus(latest.id, canPlayerSpeak.value ? "waiting_player" : "waiting_next");
     }
   },
@@ -2476,703 +2624,16 @@ function formatConditionText(input: unknown): string {
   return String(input);
 }
 
-async function replayWithBrowserSpeech(content: string, waitForCompletion = false): Promise<boolean> {
-  if (typeof window === "undefined" || !window.speechSynthesis) {
-    menuVisibleHint.value = "当前浏览器不支持朗读";
-    return false;
-  }
-  window.speechSynthesis.cancel();
-  const sanitized = sanitizeSpeechText(content);
-  if (!sanitized) {
-    menuVisibleHint.value = "这条内容没有可朗读文本";
-    return false;
-  }
-  const utterance = new SpeechSynthesisUtterance(sanitized);
-  utterance.lang = "zh-CN";
-  utterance.rate = 1;
-  utterance.pitch = 1;
-  menuVisibleHint.value = "正在朗读";
-  return await new Promise<boolean>((resolve) => {
-    let settled = false;
-    const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(sanitized) : 5000;
-    const timer = window.setTimeout(() => finalize(false, "朗读超时"), timeoutMs);
-    const finalize = (ok: boolean, hint: string) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      menuVisibleHint.value = hint;
-      resolve(ok);
-    };
-    utterance.onstart = () => {
-      if (!waitForCompletion) {
-        finalize(true, "正在朗读");
-      }
-    };
-    utterance.onend = () => finalize(true, "朗读完成");
-    utterance.onerror = () => finalize(false, "朗读失败");
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      finalize(false, "朗读失败");
-    }
-  });
-}
+// replayWithBrowserSpeech, messageUiKey, latestMessageByKey, sleep, estimatePlaybackTimeoutMs,
+// estimateRevealDelayMs, withTimeout, waitForMessageReveal 已移至 orchestrationVoiceFlow.ts
+// stopRuntimeVoicePlayback, clearRuntimeVoiceIndicator, setRuntimeVoiceIndicator 也已移至 voiceFlow
 
-function messageUiKey(message: MessageItem): string {
-  return `${store.state.currentSessionId}_${message.id}_${message.createTime}_${message.roleType || ""}`;
-}
-
-function latestMessageByKey(messageKey: string): MessageItem | null {
-  return messages.value.find((message) => messageUiKey(message) === messageKey) || null;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function estimatePlaybackTimeoutMs(text: string): number {
-  const normalized = sanitizeSpeechText(text);
-  const estimated = normalized.length * 180 + 6000;
-  return Math.max(8000, Math.min(45000, estimated));
-}
-
-function estimateRevealDelayMs(text: string): number {
-  const normalized = sanitizeSpeechText(text);
-  const estimated = normalized.length * 90 + 1200;
-  return Math.max(1400, Math.min(4800, estimated));
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer = 0;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = window.setTimeout(() => reject(new Error(label)), timeoutMs);
-  });
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-async function waitForMessageReveal(messageKey: string, isCancelled: () => boolean) {
-  let currentMessage = latestMessageByKey(messageKey);
-  if (!currentMessage) return;
-  if (isRuntimeRetryMessage(currentMessage)) {
-    await sleep(120);
-    return;
-  }
-  store.setRuntimeMessageStatus(currentMessage.id, "revealing");
-  let streamedSentenceCount = 0;
-  let streamedVoicePlayed = false;
-  if (isStreamingRuntimeMessage(currentMessage)) {
-    while (!isCancelled()) {
-      currentMessage = latestMessageByKey(messageKey);
-      if (!currentMessage || !isStreamingRuntimeMessage(currentMessage)) break;
-      const sentences = runtimeStreamSentences(currentMessage);
-      while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
-        const sentence = sentences[streamedSentenceCount];
-        streamedSentenceCount += 1;
-        if (!sentence) continue;
-        store.setRuntimeMessageStatus(currentMessage.id, "voicing");
-        const played = await playMessageAudio(currentMessage, false, true, sentence);
-        streamedVoicePlayed = streamedVoicePlayed || played;
-      }
-      await sleep(120);
-    }
-    if (isCancelled()) return;
-    currentMessage = latestMessageByKey(messageKey) || currentMessage;
-    const sentences = runtimeStreamSentences(currentMessage);
-    while (!isCancelled() && autoVoice.value && streamedSentenceCount < sentences.length) {
-      const sentence = sentences[streamedSentenceCount];
-      streamedSentenceCount += 1;
-      if (!sentence) continue;
-      store.setRuntimeMessageStatus(currentMessage.id, "voicing");
-      const played = await playMessageAudio(currentMessage, false, true, sentence);
-      streamedVoicePlayed = streamedVoicePlayed || played;
-    }
-  }
-  currentMessage = latestMessageByKey(messageKey) || currentMessage;
-  if (currentMessage.roleType === "player") {
-    store.setRuntimeMessageStatus(currentMessage.id, "waiting_player");
-    await sleep(180);
-    return;
-  }
-  // 小游戏模式下，旁白/敌方回合应保持 waiting_next 以触发自动推进
-  const isMiniGameActive = store.hasActiveMiniGameInCurrentSession();
-  const isMiniGameMsg = String(currentMessage.eventType || "").includes("on_mini_game") && String(currentMessage.eventType || "") !== "on_mini_game_finish";
-  const miniGameContinue = isMiniGameActive && isMiniGameMsg;
-  const nextStatusAfterVoice = (canPlayerSpeak.value && !miniGameContinue) ? "waiting_player" : "waiting_next";
-  if (!autoVoice.value) {
-    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
-    await sleep(estimateRevealDelayMs(messageDisplayContent(currentMessage)));
-    return;
-  }
-  if (streamedVoicePlayed || streamedSentenceCount > 0) {
-    store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
-    await sleep(260);
-    return;
-  }
-  if (isCancelled()) return;
-  store.setRuntimeMessageStatus(currentMessage.id, "voicing");
-  const played = await playMessageAudio(currentMessage, false, true);
-  if (isCancelled()) return;
-  store.setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
-  // 小游戏模式下，旁白语音播放完后需要额外等待一段时间，
-  // 确保语音完全播放完后再触发下一轮编排，避免旁白和陪练回合打架。
-  // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
-  const miniGameExtraWait = 260;
-  await sleep(played ? miniGameExtraWait : estimateRevealDelayMs(messageDisplayContent(currentMessage)));
-}
-
-function stopRuntimeVoicePlayback() {
-  runtimeVoiceRequestId += 1;
-  runtimeVoiceResolve?.(false);
-  runtimeVoiceResolve = null;
-  clearRuntimeVoiceIndicator();
-  if (runtimeVoicePlayer) {
-    runtimeVoicePlayer.pause();
-    runtimeVoicePlayer.currentTime = 0;
-    runtimeVoicePlayer.src = "";
-    runtimeVoicePlayer = null;
-  }
-  if (runtimeVoiceObjectUrl) {
-    URL.revokeObjectURL(runtimeVoiceObjectUrl);
-    runtimeVoiceObjectUrl = "";
-  }
-  if (typeof window !== "undefined" && window.speechSynthesis) {
-    window.speechSynthesis.cancel();
-  }
-}
-
-function clearRuntimeVoiceIndicator() {
-  runtimeVoiceMessageKey.value = "";
-  runtimeVoicePhase.value = "";
-  runtimeVoiceIndicator.value = ".";
-  if (runtimeVoiceIndicatorTimer) {
-    window.clearInterval(runtimeVoiceIndicatorTimer);
-    runtimeVoiceIndicatorTimer = 0;
-  }
-}
-
-function setRuntimeVoiceIndicator(message: MessageItem | null, phase: "" | "loading" | "playing") {
-  if (!message || !phase) {
-    clearRuntimeVoiceIndicator();
-    return;
-  }
-  runtimeVoiceMessageKey.value = messageUiKey(message);
-  runtimeVoicePhase.value = phase;
-}
-
-function normalizeBindingMixVoices(input?: VoiceMixItem[] | null): VoiceMixItem[] {
-  return (input || [])
-    .filter((item) => String(item.voiceId || "").trim())
-    .map((item) => ({
-      voiceId: String(item.voiceId || "").trim(),
-      weight: Number.isFinite(Number(item.weight)) ? Number(item.weight) : 0.7,
-    }));
-}
-
-function splitSpeechSegments(input: string): string[] {
-  const text = normalizePlayableSpeechText(input);
-  if (!text) return [];
-  const segments: string[] = [];
-  let buffer = "";
-  const push = () => {
-    const value = normalizePlayableSpeechText(buffer);
-    if (value && speakableUnitCount(value) >= 2) segments.push(value);
-    buffer = "";
-  };
-  for (const char of text) {
-    buffer += char;
-    const length = buffer.replace(/\s/g, "").length;
-    if (/[。！？!?；;\n]/.test(char)) {
-      push();
-      continue;
-    }
-    if (length >= 40) {
-      push();
-    }
-  }
-  push();
-  return segments.filter(Boolean);
-}
-
-function createVoiceBindingDraft(source: {
-  label?: string | null;
-  configId?: number | null;
-  roleId?: string | null;
-  presetId?: string | null;
-  mode?: string | null;
-  referenceAudioPath?: string | null;
-  referenceAudioName?: string | null;
-  referenceText?: string | null;
-  promptText?: string | null;
-  mixVoices?: VoiceMixItem[] | null;
-}): VoiceBindingDraft | null {
-  const draft: VoiceBindingDraft = {
-    label: String(source.label || "").trim(),
-    configId: source.configId ?? null,
-    roleId: String(source.roleId || "").trim(),
-    presetId: String(source.presetId || "").trim(),
-    mode: String(source.mode || "text").trim() || "text",
-    referenceAudioPath: String(source.referenceAudioPath || "").trim(),
-    referenceAudioName: String(source.referenceAudioName || "").trim(),
-    referenceText: String(source.referenceText || "").trim(),
-    promptText: String(source.promptText || "").trim(),
-  mixVoices: normalizeBindingMixVoices(source.mixVoices),
-  };
-  if (draft.mode === "clone" && !draft.referenceAudioPath) return null;
-  if (draft.mode === "mix" && !(draft.mixVoices || []).some((item) => item.voiceId.trim())) return null;
-  if (draft.mode === "prompt_voice" && !draft.promptText) return null;
-  if (draft.mode === "text" && !draft.presetId) return null;
-  return draft;
-}
-
-function runtimeStoryVoiceConfigId(): number | null {
-  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceModel")?.configId;
-  return value && value > 0 ? value : null;
-}
-
-function inferFallbackPreset(roleType: string, name = "", description = ""): string {
-  if (roleType === "narrator") return "story_narrator";
-  const text = `${name} ${description}`.toLowerCase();
-  if (/[女姐妈妹娘妃后妻她]|female|woman|girl|lady/.test(text)) {
-    return "story_std_female";
-  }
-  return "story_std_male";
-}
-
-function narratorVoiceBinding(): VoiceBindingDraft | null {
-  const settings = currentWorld.value?.settings;
-  const narratorRole = currentWorld.value?.narratorRole;
-  const debugConfigId = store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null;
-  const configId = settings?.narratorVoiceConfigId ?? narratorRole?.voiceConfigId ?? debugConfigId;
-  const normalizedMode = settings?.narratorVoiceMode || narratorRole?.voiceMode || store.state.narratorVoiceMode || "text";
-  const presetId = settings?.narratorVoicePresetId || narratorRole?.voicePresetId || store.state.narratorVoicePresetId || "";
-  return createVoiceBindingDraft({
-    label: settings?.narratorVoice || narratorRole?.voice || store.state.narratorVoice || narratorRole?.name || store.state.narratorName || "旁白",
-    configId: configId ?? null,
-    roleId: "narrator",
-    presetId: !presetId && normalizedMode === "text" ? "story_narrator" : presetId,
-    mode: normalizedMode,
-    referenceAudioPath: settings?.narratorVoiceReferenceAudioPath || narratorRole?.voiceReferenceAudioPath || store.state.narratorVoiceReferenceAudioPath || "",
-    referenceAudioName: settings?.narratorVoiceReferenceAudioName || narratorRole?.voiceReferenceAudioName || store.state.narratorVoiceReferenceAudioName || "",
-    referenceText: settings?.narratorVoiceReferenceText || narratorRole?.voiceReferenceText || store.state.narratorVoiceReferenceText || "",
-    promptText: settings?.narratorVoicePromptText || narratorRole?.voicePromptText || store.state.narratorVoicePromptText || "",
-    mixVoices: settings?.narratorVoiceMixVoices || narratorRole?.voiceMixVoices || store.state.narratorVoiceMixVoices || [],
-  });
-}
-
-function roleVoiceBinding(role?: StoryRole | null): VoiceBindingDraft | null {
-  if (!role) return null;
-  const configId = role.voiceConfigId ?? (store.state.debugMode && !currentWorld.value ? runtimeStoryVoiceConfigId() : null);
-  const mode = role.voiceMode || "text";
-  const presetId = role.voicePresetId || (mode === "text" ? inferFallbackPreset(role.roleType, role.name, role.description) : "");
-  return createVoiceBindingDraft({
-    label: role.voice || role.name,
-    configId: configId ?? null,
-    roleId: role.id || "",
-    presetId,
-    mode,
-    referenceAudioPath: role.voiceReferenceAudioPath || "",
-    referenceAudioName: role.voiceReferenceAudioName || "",
-    referenceText: role.voiceReferenceText || "",
-    promptText: role.voicePromptText || "",
-    mixVoices: role.voiceMixVoices || [],
-  });
-}
-
-function findMessageRole(message: MessageItem): StoryRole | null {
-  if (message.roleType === "player" || message.roleType === "narrator") return null;
-  const roleName = String(message.role || "").trim();
-  return roleCards.value.find((role) => {
-    if (!roleName) return role.roleType === message.roleType;
-    return role.name === roleName || role.id === roleName;
-  }) || roleCards.value.find((role) => role.roleType === message.roleType) || null;
-}
-
-function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {
-  if (message.roleType === "player") return null;
-  if (message.roleType === "narrator") return narratorVoiceBinding();
-  return roleVoiceBinding(findMessageRole(message));
-}
-
-function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: VoiceBindingDraft | null): VoiceBindingDraft | null {
-  if (message.roleType === "player") return null;
-  if (message.roleType === "narrator") {
-    return createVoiceBindingDraft({
-      label: originalBinding?.label || store.state.narratorVoice || store.state.narratorName || "旁白",
-      configId: originalBinding?.configId ?? narratorVoiceBinding()?.configId ?? null,
-      roleId: originalBinding?.roleId || "narrator",
-      mode: "text",
-      presetId: "story_narrator",
-    });
-  }
-  const role = findMessageRole(message);
-  const roleName = role?.name || String(message.role || "").trim();
-  const fallbackPresetId = inferFallbackPreset(
-    role?.roleType || message.roleType || "",
-    roleName,
-    role?.description || "",
-  );
-  return createVoiceBindingDraft({
-    label: originalBinding?.label || role?.voice || roleName || "角色",
-    configId: originalBinding?.configId ?? role?.voiceConfigId ?? null,
-    roleId: originalBinding?.roleId || role?.id || "",
-    mode: "text",
-    presetId: fallbackPresetId,
-  });
-}
-
-function shouldDowngradeRuntimeVoiceBinding(binding: VoiceBindingDraft | null | undefined, error: unknown): boolean {
-  if (!binding || binding.mode === "text") return false;
-  return isDeterministicRuntimeVoiceError(error);
-}
-
-function runtimeVoiceBindingKey(binding: VoiceBindingDraft): string {
-  const runtimeContextKey = binding.configId || currentWorld.value?.id || store.state.currentSessionId || "runtime";
-  return [
-    runtimeContextKey,
-    binding.roleId || "",
-    binding.mode || "text",
-    binding.presetId || "",
-    binding.referenceAudioPath || "",
-    binding.referenceText || "",
-    binding.promptText || "",
-    (binding.mixVoices || []).map((item) => `${item.voiceId}:${item.weight}`).join(";"),
-  ].join("|");
-}
-
-function runtimeVoicePreviewKey(binding: VoiceBindingDraft, text: string): string {
-  return `${runtimeVoiceBindingKey(binding)}|${text}`;
-}
-
-/**
- * 调试和正式游玩统一优先使用 clone 通道。
- * 如果当前绑定还没有参考音频文件，就先按原模式生成一个稳定文件，再切回 clone。
- */
-async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Promise<VoiceBindingDraft> {
-  if (binding.mode === "clone" && binding.referenceAudioPath) {
-    return binding;
-  }
-  if (binding.referenceAudioPath) {
-    return {
-      ...binding,
-      mode: "clone",
-    };
-  }
-  const cacheKey = runtimeVoiceBindingKey(binding);
-  const cached = runtimeVoiceCloneBindingCache.get(cacheKey);
-  if (cached) return cached;
-  const inflight = runtimeVoiceCloneInflight.get(cacheKey);
-  if (inflight) return inflight;
-  const task = store.generateVoiceBinding(
-    binding.configId,
-    binding.mode,
-    binding.presetId,
-    binding.referenceAudioPath,
-    binding.referenceText,
-    binding.promptText,
-    binding.mixVoices || [],
-    { roleId: binding.roleId || "" },
-  )
-    .then((generated) => {
-      if (!generated.audioPath) {
-        throw new Error("未生成可复用的参考音频");
-      }
-      const cloneBinding: VoiceBindingDraft = {
-        ...binding,
-        mode: "clone",
-        referenceAudioPath: generated.audioPath,
-        referenceAudioName: generated.audioName || binding.referenceAudioName || "",
-        referenceText: generated.referenceText || binding.referenceText || "",
-      };
-      setLimitedCacheValue(runtimeVoiceCloneBindingCache, cacheKey, cloneBinding);
-      return cloneBinding;
-    })
-    .finally(() => {
-      runtimeVoiceCloneInflight.delete(cacheKey);
-    });
-  runtimeVoiceCloneInflight.set(cacheKey, task);
-  return task;
-}
-
-async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string,  source: "common" | "warmVoiceBinding" = "common"): Promise<string> {
-  if(WebDebugLogUtil.isEnabled()){
-    console.log("resolveRuntimeVoiceUrl");
-  }
-
-  const playableBinding = await ensureRuntimeCloneBinding(binding);
-  const cacheKey = runtimeVoicePreviewKey(playableBinding, text);
-  const cached = runtimeVoicePreviewCache.get(cacheKey);
-  WebDebugLogUtil.log("resolveRuntimeVoiceUrl cached",cached);
-  if (cached) return cached;
-  const inflight = runtimeVoicePreviewInflight.get(cacheKey);
-  WebDebugLogUtil.log("resolveRuntimeVoiceUrl inflight",inflight);
-  if (inflight) return inflight;
-  const task = withTimeout(
-    store.streamVoice(
-      playableBinding.configId,
-      text,
-      playableBinding.mode,
-      playableBinding.presetId,
-      playableBinding.referenceAudioPath,
-      playableBinding.referenceText,
-      playableBinding.promptText,
-      playableBinding.mixVoices || [],
-      {
-        format: RUNTIME_FAST_PREVIEW_FORMAT,
-        sampleRate: RUNTIME_FAST_PREVIEW_SAMPLE_RATE,
-        roleId: playableBinding.roleId || "",
-      },
-    ),
-    15000,
-    "语音生成超时",
-  )
-    .then((audioUrl) => {
-       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { audioUrl:audioUrl});
-      if (!audioUrl) {
-        throw new Error("未返回试听音频");
-      }
-       WebDebugLogUtil.log("resolveRuntimeVoiceUrl", { activeMiniGame: activeMiniGame.value});
-      // 判断 roleType 打 tag（只在小游戏模式中打印）
-      if (activeMiniGame.value) {
-        const isNarratorVoice = !playableBinding.roleId || playableBinding.roleId === "narrator" || playableBinding.roleId === "旁白";
-        const isEnemyVoice = playableBinding.roleId && (playableBinding.roleId.includes("enemy") || playableBinding.roleId.includes("敌方"));
-        const voiceTag = isNarratorVoice
-          ? "[aiGame][miniGame] 旁白播报-台词-语音播放-预热"
-          : (isEnemyVoice
-            ? "[aiGame][miniGame] 敌方回合-语音播放-预热"
-            : "[aiGame][miniGame] 陪练角色回合-语音播放-预热");
-        WebDebugLogUtil.log(voiceTag, { roleId: playableBinding.roleId, text: text.slice(0, 60) , source});
-      }
-      setLimitedCacheValue(runtimeVoicePreviewCache, cacheKey, audioUrl);
-      return audioUrl;
-    })
-    .finally(() => {
-      runtimeVoicePreviewInflight.delete(cacheKey);
-    });
-  runtimeVoicePreviewInflight.set(cacheKey, task);
-  return task;
-}
-
-async function warmVoiceBinding(binding: VoiceBindingDraft) {
-  if (binding.mode !== "text") return;
-  const bindingKey = runtimeVoiceBindingKey(binding);
-  if (runtimeVoiceWarmCache.has(bindingKey)) return;
-  runtimeVoiceWarmCache.add(bindingKey);
-  try {
-    await resolveRuntimeVoiceUrl(binding, "恭喜，已成功复刻或生成了属于角色的声音！","warmVoiceBinding");
-  } catch {
-    // 保持静默，预热失败不影响正式播放
-  }
-}
-
-async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
-  const cached = runtimeVoiceBlobCache.get(audioUrl);
-  if (cached) return cached;
-  const response = await withTimeout(fetch(audioUrl), 10000, "音频下载超时");
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const blob = await response.blob();
-  setLimitedCacheValue(runtimeVoiceBlobCache, audioUrl, blob);
-  return blob;
-}
-
-async function playRuntimeVoiceBlob(
-  blob: Blob,
-  manual: boolean,
-  waitForCompletion: boolean,
-  speakable: string,
-  onPlay?: () => void,
-): Promise<boolean> {
-  runtimeVoiceObjectUrl = URL.createObjectURL(blob);
-  const player = new Audio(runtimeVoiceObjectUrl);
-  player.preload = "auto";
-  runtimeVoicePlayer = player;
-  WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 准备播放", {
-    waitForCompletion,
-    speakable: speakable.slice(0, 60),
-    blobSize: blob.size,
-    blobType: blob.type,
-    activeMiniGame: activeMiniGame.value,
-  });
-  const completed = await new Promise<boolean>((resolve) => {
-    runtimeVoiceResolve = resolve;
-    let finished = false;
-    const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(speakable) : 8000;
-    const timer = window.setTimeout(() => finalize(false, "朗读超时"), timeoutMs);
-    const finalize = (ok: boolean, hint: string) => {
-      if (finished) return;
-      finished = true;
-      window.clearTimeout(timer);
-      if (runtimeVoicePlayer === player) runtimeVoicePlayer = null;
-      if (runtimeVoiceObjectUrl) {
-        URL.revokeObjectURL(runtimeVoiceObjectUrl);
-        runtimeVoiceObjectUrl = "";
-      }
-      runtimeVoiceResolve = null;
-      if (manual) menuVisibleHint.value = hint;
-      resolve(ok);
-    };
-    player.onplay = () => {
-      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 真正开始播放", {
-        waitForCompletion,
-        currentTime: player.currentTime,
-        duration: Number.isFinite(player.duration) ? player.duration : -1,
-        speakable: speakable.slice(0, 60),
-      });
-      onPlay?.();
-      if (manual) menuVisibleHint.value = "正在播放试听";
-      if (!waitForCompletion) {
-        finalize(true, "正在播放试听");
-      }
-    };
-    player.onended = () => {
-      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放结束", {
-        currentTime: player.currentTime,
-        speakable: speakable.slice(0, 60),
-      });
-      finalize(true, "朗读完成");
-    };
-    player.onerror = () => {
-      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放错误", {
-        currentTime: player.currentTime,
-        speakable: speakable.slice(0, 60),
-      });
-      finalize(false, "朗读失败");
-    };
-    void player.play().catch((error) => {
-      WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob play() rejected", {
-        error: String((error as Error)?.message || error || ""),
-        speakable: speakable.slice(0, 60),
-      });
-      finalize(false, "朗读失败");
-    });
-  });
-  return completed;
-}
-
-async function playMessageAudioWithBinding(
-  message: MessageItem,
-  binding: VoiceBindingDraft,
-  speakable: string,
-  manual: boolean,
-  waitForCompletion: boolean,
-): Promise<boolean> {
-  stopRuntimeVoicePlayback();
-  const requestId = runtimeVoiceRequestId;
-  if (manual) {
-    menuVisibleHint.value = "正在生成语音";
-  }
-  const segments = splitSpeechSegments(speakable);
-  if (!segments.length) return false;
-  setRuntimeVoiceIndicator(message, "loading");
-  for (const segment of segments) {
-    let segmentPlayed = false;
-    let lastError: unknown = null;
-    const previewKey = runtimeVoicePreviewKey(binding, segment);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      let shouldRetry = true;
-      if (requestId !== runtimeVoiceRequestId) return false;
-      try {
-        setRuntimeVoiceIndicator(message, "loading");
-        const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
-       if(WebDebugLogUtil.isEnabled()){
-          console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
-        }
-        if (!audioUrl || requestId !== runtimeVoiceRequestId) return false;
-        const blob = await fetchRuntimeVoiceBlob(audioUrl);
-        segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
-          setRuntimeVoiceIndicator(message, "playing");
-        });
-        if (activeMiniGame.value) {
-          WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
-        }else {
-          WebDebugLogUtil.log("[aiGame] 台词-语音播放-playRuntimeVoiceBlob",segmentPlayed);
-        }
-        if (segmentPlayed) break;
-        lastError = new Error("朗读失败");
-      } catch (error: any) {
-        lastError = error;
-        const messageText = String(error?.message || "");
-        if (/^HTTP\s+\d+/i.test(messageText) || messageText.includes("音频下载超时")) {
-          runtimeVoicePreviewCache.delete(previewKey);
-          runtimeVoicePreviewInflight.delete(previewKey);
-        }
-        shouldRetry = !isDeterministicRuntimeVoiceError(error);
-      }
-      if (!shouldRetry) {
-        break;
-      }
-      await sleep(220);
-    }
-    if (!segmentPlayed) {
-      throw (lastError instanceof Error ? lastError : new Error("朗读失败"));
-    }
-    if (!waitForCompletion) {
-      return true;
-    }
-    await sleep(120);
-  }
-  return true;
-}
-
-async function playMessageAudio(
-  message: MessageItem,
-  manual = false,
-  waitForCompletion = false,
-  overrideContent?: string,
-): Promise<boolean> {
-  const playableContent = overrideContent ?? messageDisplayContent(message);
-  const speakable = normalizePlayableSpeechText(playableContent);
-  if (!speakable) {
-    if (manual) menuVisibleHint.value = "这条内容没有可朗读文本";
-    return false;
-  }
-  const binding = resolveMessageVoiceBinding(message);
-  if (!binding) {
-    return replayWithBrowserSpeech(overrideContent ?? message.content, waitForCompletion);
-  }
-  const bindingKey = runtimeVoiceBindingKey(binding);
-  const preferredBinding = runtimeVoiceFallbackBindingCache.get(bindingKey) || binding;
-  try {
-    return await playMessageAudioWithBinding(message, preferredBinding, speakable, manual, waitForCompletion);
-  } catch (error: any) {
-    let finalError: unknown = error;
-    if (
-      runtimeVoiceBindingKey(preferredBinding) === bindingKey
-      && shouldDowngradeRuntimeVoiceBinding(preferredBinding, error)
-    ) {
-      const fallbackBinding = resolveFallbackVoiceBinding(message, binding);
-      if (fallbackBinding && runtimeVoiceBindingKey(fallbackBinding) !== bindingKey) {
-        setLimitedCacheValue(runtimeVoiceFallbackBindingCache, bindingKey, fallbackBinding);
-        try {
-          if (manual) {
-            menuVisibleHint.value = "当前绑定音色不可用，正在切换兼容音色";
-          }
-          return await playMessageAudioWithBinding(message, fallbackBinding, speakable, manual, waitForCompletion);
-        } catch (fallbackError) {
-          finalError = fallbackError;
-        }
-      }
-    }
-    const browserFallbackPlayed = await replayWithBrowserSpeech(playableContent, waitForCompletion);
-    if (browserFallbackPlayed) {
-      return true;
-    }
-    if (!manual) {
-      store.state.notice = "自动语音失败，已跳过，可点重听重试";
-    }
-    if (manual) {
-      menuVisibleHint.value = `朗读失败: ${(finalError as any)?.message || "未知错误"}`;
-    }
-    return false;
-  } finally {
-    if (runtimeVoiceMessageKey.value === messageUiKey(message)) {
-      clearRuntimeVoiceIndicator();
-    }
-  }
-}
+// 以下语音编排相关函数已移至 orchestrationVoiceFlow.ts:
+// normalizeBindingMixVoices, splitSpeechSegments, createVoiceBindingDraft, runtimeStoryVoiceConfigId,
+// inferFallbackPreset, narratorVoiceBinding, roleVoiceBinding, findMessageRole, resolveMessageVoiceBinding,
+// resolveFallbackVoiceBinding, shouldDowngradeRuntimeVoiceBinding, runtimeVoiceBindingKey, runtimeVoicePreviewKey,
+// ensureRuntimeCloneBinding, resolveRuntimeVoiceUrl, warmVoiceBinding, fetchRuntimeVoiceBlob,
+// playRuntimeVoiceBlob, playMessageAudioWithBinding, playMessageAudio
 
 function menuCopy() {
   const message = menuMessage.value;
@@ -3408,6 +2869,47 @@ function toggleEventProgress() {
   eventProgressOpen.value = !eventProgressOpen.value;
 }
 
+function toggleHelp() {
+  helpOpen.value = !helpOpen.value;
+}
+
+// Markdown 原文
+const helpMdContent = ref(`
+# 🌟 主要功能
+多角色 ai 游戏
+
+## 特殊功能
+- 在输入框输入“#小游戏” 可以进行查看钓鱼等小游戏的玩法。
+
+- 在输入框输入“@记忆管理 xxx” 可以要求ai 变更人物参数
+如：@记忆管理 睡觉恢复，可以恢复hp mp
+
+- 战斗属性
+### 血量和蓝的恢复（hp 和mp）：
+\`\`\`
+用户住宿、睡觉和吃下恢复药物等可以恢复血量和蓝到充盈满血满蓝，
+要把用户参数进行修改到满血满蓝，hp 和 mp 必须直接输出数字，不能写“已恢复”“满了”“充盈”等中文状态
+
+### 满血：基础血量100 + 等级*10 + 特殊物品或者技能加成，如物品里的血量属性点(2)
+### 满蓝：基础蓝量100 + 等级*10 + 特殊物品或者技能加成，如物品里的蓝量属性点(2)
+### 攻击力：基础攻击力10 + 等级*10 + 特殊物品或者技能加成，如物品里的攻击点属性点(2)
+### 防御力：基础防御1 + 等级*10 + 特殊物品或者技能加成，如物品里的防御点属性点(2)
+\`\`\`
+
+- @记忆管理 下个章节
+理论上可行
+- @事件进度检测 下个事件
+理论上可行
+
+- @角色名 xxx
+可以呼叫这个角色
+
+### 任务系统（也是小游戏的一种）
+输入：“#任务：xxx” 创建任务
+也可以被意图分析师 识别为创建任务意图时拆创建任务。
+输入：“#退出” 主动退出任务
+`);
+
 function closeDebugDialog() {
   store.state.debugEndDialog = null;
   store.state.debugEndDialogDetail = "";
@@ -3492,8 +2994,26 @@ function continueFromPlayback() {
 }
 
 function messageVoiceTail(message: MessageItem): string {
-  if (runtimeVoiceMessageKey.value !== messageUiKey(message) || !runtimeVoicePhase.value) return "";
-  return runtimeVoiceIndicator.value;
+  if (!runtimeVoicePhase.value) return "";
+  const phaseKey = runtimeVoiceMessageKey.value;
+  const uiKey = messageUiKey(message);
+  const idKey = String(message.id);
+  const idRoleKey = `${message.id}_${message.createTime}_${message.roleType || ""}`;
+  // 兼容三种 key 命名：完整 sessionId-key、message.id、id_createTime_roleType
+  const matched = phaseKey === uiKey || phaseKey === idKey || phaseKey === idRoleKey;
+  if (matched) {
+    return runtimeVoiceIndicator.value;
+  }
+  // 兜底：如果当前消息是最后一条非 player 消息，且 runtimeVoiceMessageKey 不为空，
+  // 说明 message id 在 commit 后被替换了（临时 id → 后端 id），
+  // 此时把 indicator 挂到这条最新消息上避免视觉断层。
+  if (phaseKey && message.roleType !== "player") {
+    const lastNonPlayer = [...messages.value].reverse().find((m) => m.roleType !== "player");
+    if (lastNonPlayer && messageUiKey(lastNonPlayer) === uiKey) {
+      return runtimeVoiceIndicator.value;
+    }
+  }
+  return "";
 }
 
 function retryFailedPlayerMessage(message: MessageItem) {
@@ -3971,7 +3491,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="figureKey" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
@@ -4032,11 +3552,19 @@ onBeforeUnmount(() => {
                       </button>
                     </span>
                   </template>
-                  <span v-else>{{ messageDisplayContent(message) || "（空消息）" }}</span>
+                  <span v-else class="play-bubble-content">
+                    {{ messageDisplayContent(message) || "（空消息）" }}<span v-if="isMessageTyping(message)" class="typing-cursor"></span>
+                  </span>
+                  <!-- 尾部圆点指示器：在生成中（streaming）、加载语音（loading）、播放语音（playing）阶段都显示，
+                       即使消息还处于 showRuntimeMessageLoading（"获取台词中…"）也要显示 -->
                   <span
                     v-if="messageVoiceTail(message)"
                     class="play-bubble-voice-tail"
-                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                    :class="{
+                      'is-playing': runtimeVoicePhase === 'playing',
+                      'is-streaming': runtimeVoicePhase === 'streaming',
+                      'is-loading': runtimeVoicePhase === 'loading',
+                    }"
                   >
                     {{ messageVoiceTail(message) }}
                   </span>
@@ -4125,7 +3653,11 @@ onBeforeUnmount(() => {
                   <span
                     v-if="messageVoiceTail(currentLiveMessage)"
                     class="play-bubble-voice-tail"
-                    :class="{ 'is-playing': runtimeVoicePhase === 'playing' }"
+                    :class="{
+                      'is-playing': runtimeVoicePhase === 'playing',
+                      'is-streaming': runtimeVoicePhase === 'streaming',
+                      'is-loading': runtimeVoicePhase === 'loading',
+                    }"
                   >
                     {{ messageVoiceTail(currentLiveMessage) }}
                   </span>
@@ -4298,6 +3830,17 @@ onBeforeUnmount(() => {
           </button>
           <pre v-if="statePreviewExpanded" class="play-state-pre">{{ statePreviewText }}</pre>
         </div>
+
+        <button type="button" class="play-link-row" @click="toggleHelp">
+          <span>help(?)</span>
+          <span>{{ helpOpen ? "收起 >" : ">" }}</span>
+        </button>
+          <!-- 全局注册好的 Markdown 组件 -->
+        <MarkdownView
+          v-if="helpOpen"
+          class="play-inline-card"
+          :source="helpMdContent"
+        />
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
           <span>当前章节事件</span>

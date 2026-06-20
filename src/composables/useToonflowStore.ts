@@ -43,6 +43,7 @@ import {
 import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 import { manufacturerLabel } from "../utils/modelConfigCatalog";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
+import { startTypewriter, stopTypewriter, clearAllTypewriterState } from "./orchestrationVoiceFlow/state";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -389,15 +390,69 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function isAliyunDirectCosyVoiceInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("cosyvoice") || normalized.startsWith("qwen");
+}
+
+function isAliyunDirectQwenVoiceCloneInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("qwen3-tts-vc") || normalized.startsWith("qwen-tts-vc");
+}
+
+function isAliyunDirectQwenVoiceDesignInferred(model?: string | null): boolean {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized.startsWith("qwen3-tts-vd") || normalized.startsWith("qwen-tts-vd");
+}
+
+/**
+ * 推断 aliyun_direct 模型的 modes（如果后端没返回）
+ */
+function inferAliyunDirectModes(modelName?: string | null): string[] {
+  const normalized = String(modelName || "").trim().toLowerCase();
+  if (normalized.startsWith("cosyvoice-v3.5")) {
+    return ["clone", "mix", "prompt_voice"];
+  }
+  if (normalized.startsWith("cosyvoice")) {
+    return ["text", "clone", "mix", "prompt_voice"];
+  }
+  if (isAliyunDirectQwenVoiceCloneInferred(modelName)) {
+    return ["clone", "mix"];
+  }
+  if (isAliyunDirectQwenVoiceDesignInferred(modelName)) {
+    return ["prompt_voice"];
+  }
+  return ["text"];
+}
+
+function inferXiaomiMimoModes(modelName?: string | null): string[] {
+  const normalized = String(modelName || "").trim().toLowerCase();
+  if (normalized === "mimo-v2.5-tts-voicedesign") return ["prompt_voice"];
+  if (normalized === "mimo-v2.5-tts-voiceclone") return ["clone"];
+  if (normalized === "mimo-v2.5-tts" || normalized === "mimo-v2-tts") return ["text"];
+  return ["text"];
+}
+
 function normalizeVoiceModelConfig(input: VoiceModelConfig): VoiceModelConfig {
   const manufacturer = String(input.manufacturer || "").trim();
   const modelType = String(input.modelType || "").trim().toLowerCase();
+  const existingModes = Array.isArray(input.modes) ? input.modes.filter(Boolean) : [];
+  if (manufacturer === "xiaomimimo") {
+    return {
+      ...input,
+      modes: existingModes.length ? existingModes : inferXiaomiMimoModes(input.model),
+    };
+  }
   if (manufacturer !== "aliyun_direct") return input;
   const normalized = normalizeAliyunDirectConfigFields(manufacturer, modelType, String(input.model || "").trim(), String(input.baseUrl || "").trim());
+  // 后端返回的 voiceModels 通常不带 modes 字段，按 model 名称补上推断的 modes，
+  // 保证 VoiceBindingDialog 的"克隆/混合/提示词音色"按钮能正确启用或禁用。
+  const finalModes = existingModes.length ? existingModes : inferAliyunDirectModes(normalized.model);
   return {
     ...input,
     model: normalized.model,
     baseUrl: normalized.baseUrl,
+    modes: finalModes,
   };
 }
 
@@ -793,6 +848,7 @@ function createEmptyWorldState() {
     worldCoverBgPath: "",
     playerName: "用户",
     playerDesc: "",
+    playerImagePrompt: "", // AI生图形象描述，独立于角色设定
     playerVoice: "",
     playerVoicePresetId: "",
     playerVoiceMode: "text",
@@ -801,6 +857,7 @@ function createEmptyWorldState() {
     playerVoiceReferenceText: "",
     playerVoicePromptText: "",
     playerVoiceMixVoices: [] as VoiceMixItem[],
+    playerVoiceGeneratedDownloadUrl: "",
     narratorName: "旁白",
     narratorVoice: "混合（清朗温润）",
     narratorVoicePresetId: "",
@@ -810,6 +867,7 @@ function createEmptyWorldState() {
     narratorVoiceReferenceText: "",
     narratorVoicePromptText: "",
     narratorVoiceMixVoices: [] as VoiceMixItem[],
+    narratorVoiceGeneratedDownloadUrl: "",
     globalBackground: "",
     allowRoleView: true,
     allowChatShare: true,
@@ -830,6 +888,7 @@ interface StoryEditorSnapshot {
   worldCoverBgPath: string;
   playerName: string;
   playerDesc: string;
+  playerImagePrompt: string;
   playerVoice: string;
   playerVoicePresetId: string;
   playerVoiceMode: string;
@@ -838,6 +897,7 @@ interface StoryEditorSnapshot {
   playerVoiceReferenceText: string;
   playerVoicePromptText: string;
   playerVoiceMixVoices: VoiceMixItem[];
+  playerVoiceGeneratedDownloadUrl: string;
   narratorName: string;
   narratorVoice: string;
   narratorVoicePresetId: string;
@@ -847,6 +907,7 @@ interface StoryEditorSnapshot {
   narratorVoiceReferenceText: string;
   narratorVoicePromptText: string;
   narratorVoiceMixVoices: VoiceMixItem[];
+  narratorVoiceGeneratedDownloadUrl: string;
   globalBackground: string;
   allowRoleView: boolean;
   allowChatShare: boolean;
@@ -883,9 +944,11 @@ const GAME_MODEL_SLOTS = [
   { key: "storyFastSpeakerModel", label: "快速角色发言", configType: "text" },
   { key: "storySpeakerModel", label: "角色发言", configType: "text" },
   { key: "storyMemoryModel", label: "记忆管理", configType: "text" },
+  { key: "intentClassifierModel", label: "意图分析师", configType: "text" },
   { key: "storyImageModel", label: "AI生图", configType: "image" },
   { key: "storyAvatarMattingModel", label: "头像分离", configType: "image" },
   { key: "storyVoiceDesignModel", label: "语音设计", configType: "voice_design" },
+  { key: "storyVoiceCloneModel", label: "语音克隆", configType: "voice_clone" },
   { key: "storyVoiceModel", label: "语音生成", configType: "voice" },
   { key: "storyAsrModel", label: "语音识别", configType: "voice" },
 ] as const;
@@ -912,6 +975,11 @@ const STORY_PROMPT_CODES = [
   "story-mini-game-alchemy",
   "story-mini-game-upgrade-equipment",
   "story-safety",
+  "intent-analyzer",
+  "task-progress-agent",
+  "task-director-agent",
+  "task-speaker-agent",
+  "task-completion-agent",
 ] as const;
 
 function stripRoleVoiceConfig(role: StoryRole): StoryRole {
@@ -937,6 +1005,7 @@ function createToonflowStore() {
     userId: Number(storageGet("toonflow.userId", "0")) || 0,
     accountAvatarPath: storageGet("toonflow.accountAvatarPath", ""),
     accountAvatarBgPath: storageGet("toonflow.accountAvatarBgPath", ""),
+    accountAvatarSourcePath: storageGet("toonflow.accountAvatarSourcePath", ""),
     userAvatarPath: "",
     userAvatarBgPath: "",
     userAvatarSourcePath: "",
@@ -959,6 +1028,7 @@ function createToonflowStore() {
     settingsTextConfigs: [] as ModelConfigItem[],
     settingsImageConfigs: [] as ModelConfigItem[],
     settingsVoiceDesignConfigs: [] as ModelConfigItem[],
+    settingsVoiceCloneConfigs: [] as ModelConfigItem[],
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
     settingsTextModelList: {} as AiModelListMap,
@@ -1290,10 +1360,18 @@ function createToonflowStore() {
     if (!state.currentSessionId) {
       throw new Error("当前没有可回溯的会话");
     }
-    await api.revisitMessage(state.currentSessionId, messageId);
+    const result = await api.revisitMessage(state.currentSessionId, messageId);
     await refreshCurrentSession();
-    scheduleSessionNarrativeIfSystemTurn();
-    state.notice = "已回溯到这句台词，可继续编排";
+    // ★ 回溯到用户消息时，把原内容回填到输入框，方便用户直接修改/重发
+    const revisitedRoleType = String((result as any)?.revisitedRoleType || "").trim();
+    const revisitedContent = String((result as any)?.revisitedContent || "");
+    if (revisitedRoleType === "player" && revisitedContent) {
+      state.sendText = revisitedContent;
+      state.notice = "已回溯到这句话之前，原内容已填入输入框";
+    } else {
+      scheduleSessionNarrativeIfSystemTurn();
+      state.notice = "已回溯到这句台词，可继续编排";
+    }
   }
 
   async function requestSessionList(worldId?: number): Promise<SessionItem[]> {
@@ -1398,6 +1476,10 @@ function createToonflowStore() {
    * - 但只做预取，不在这里直接改 UI 或改回合状态。
    */
   function prefetchNextSessionOrchestration(triggerMessageId: number) {
+    WebDebugLogUtil.log("[voice时序] prefetchNextSessionOrchestration 触发", {
+      triggerMessageId,
+      timestamp: Date.now(),
+    });
     const sessionId = String(state.currentSessionId || "").trim();
     if (!sessionId || !Number.isFinite(Number(triggerMessageId)) || Number(triggerMessageId) <= 0) {
       return;
@@ -2336,6 +2418,10 @@ function createToonflowStore() {
 
   function applySessionOrchestrationResult(result: SessionOrchestrationResult) {
     const existingDetail = state.sessionDetail || null;
+    // 优先使用编排返回的 state（含最新的 executing_task），其次才是旧 state
+    const mergedState = (result.state && typeof result.state === "object")
+      ? { ...(existingDetail?.state || {}), ...(result.state as Record<string, unknown>) }
+      : (existingDetail?.state || {});
     state.sessionDetail = {
       ...(existingDetail || {}),
       sessionId: result.sessionId || existingDetail?.sessionId || state.currentSessionId,
@@ -2343,7 +2429,7 @@ function createToonflowStore() {
       endDialog: existingDetail?.endDialog || null,
       endDialogDetail: String(existingDetail?.endDialogDetail || "").trim(),
       chapterId: result.chapterId ?? existingDetail?.chapterId ?? null,
-      state: (existingDetail?.state || {}) as Record<string, unknown>,
+      state: mergedState,
       chapter: existingDetail?.chapter || null,
       world: existingDetail?.world || null,
       latestSnapshot: existingDetail?.latestSnapshot || null,
@@ -2532,6 +2618,13 @@ function createToonflowStore() {
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
     ].filter(Boolean) as MessageItem[];
+    console.log("[voice lifecycle] ② 编排结果合并，消息入 state.messages", {
+      sessionId: result.sessionId,
+      incomingCount: incoming.length,
+      incomingRoles: incoming.map(m => `${m.role}(${m.id}|${m.roleType})`),
+      firstContent: incoming[0]?.content?.slice(0, 60),
+      lastContent: incoming[incoming.length - 1]?.content?.slice(0, 60),
+    });
     const shouldForceClearMiniGame = options?.forceClearMiniGame === true || shouldForceClearMiniGameStateFromMessages(incoming);
     if (shouldForceClearMiniGame) {
       WebDebugLogUtil.log("[aiGame][miniGame] shouldForceClearMiniGame");
@@ -2596,15 +2689,13 @@ function createToonflowStore() {
    * - 这里集中维护“哪些小游戏会阻塞”的规则，避免发送消息和自动续编排各写一套判断。
    */
   function isBlockingMiniGameType(gameType: string): boolean {
-    return gameType !== "task";
+    // 任务（task）也是小游戏的一种，走 /game/orchestration/minigame 链路
+    // 必须返回 true 让前端走小游戏编排接口，否则任务内的发言会被主线条目遮挡
+    return Boolean(gameType);
   }
 
   /**
    * 判断某份正式会话运行态里的小游戏面板当前是否仍应显示。
-   *
-   * 用途：
-   * - 正式会话在 `addMessage / storyInfo / getSession` 之间也会出现中间响应；
-   * - 某些响应会短暂漏掉 `miniGame`，如果直接覆盖，面板会瞬间消失；
    * - 这里统一维护“仍可见小游戏”的判定，为状态合并与阻塞判断提供依据。
    */
   function hasVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): boolean {
@@ -2868,6 +2959,7 @@ function createToonflowStore() {
     await api.saveUser({
       avatarPath: state.accountAvatarPath,
       avatarBgPath: state.accountAvatarBgPath,
+      avatarSourcePath: state.accountAvatarSourcePath,
     });
   }
 
@@ -2961,6 +3053,7 @@ function createToonflowStore() {
       worldCoverBgPath: state.worldCoverBgPath,
       playerName: state.playerName,
       playerDesc: state.playerDesc,
+      playerImagePrompt: state.playerImagePrompt,
       playerVoice: state.playerVoice,
       playerVoicePresetId: state.playerVoicePresetId,
       playerVoiceMode: state.playerVoiceMode,
@@ -3025,6 +3118,7 @@ function createToonflowStore() {
     state.worldCoverBgPath = snapshot.worldCoverBgPath;
     state.playerName = snapshot.playerName;
     state.playerDesc = snapshot.playerDesc;
+    state.playerImagePrompt = snapshot.playerImagePrompt || "";
     state.playerVoice = snapshot.playerVoice;
     state.playerVoicePresetId = snapshot.playerVoicePresetId;
     state.playerVoiceMode = snapshot.playerVoiceMode;
@@ -3715,6 +3809,7 @@ function createToonflowStore() {
     state.playerVoiceReferenceText = binding.referenceText || "";
     state.playerVoicePromptText = binding.promptText || "";
     state.playerVoiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    state.playerVoiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNarratorVoiceBinding(binding: VoiceBindingDraft) {
@@ -3726,6 +3821,7 @@ function createToonflowStore() {
     state.narratorVoiceReferenceText = binding.referenceText || "";
     state.narratorVoicePromptText = binding.promptText || "";
     state.narratorVoiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    state.narratorVoiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNpcRoleVoice(index: number, binding: VoiceBindingDraft) {
@@ -3739,6 +3835,7 @@ function createToonflowStore() {
     role.voiceReferenceText = binding.referenceText || "";
     role.voicePromptText = binding.promptText || "";
     role.voiceMixVoices = normalizeMixVoices(binding.mixVoices || []);
+    role.voiceGeneratedDownloadUrl = binding.generatedDownloadUrl || "";
   }
 
   function setNpcRoleAvatar(index: number, avatarPath: string, avatarBgPath = "") {
@@ -3835,10 +3932,11 @@ function createToonflowStore() {
     return state.userId === 1 || state.userName.trim().toLowerCase() === "admin";
   }
 
-  function settingsConfigOptions(type: "text" | "image" | "voice" | "voice_design"): ModelConfigItem[] {
+  function settingsConfigOptions(type: "text" | "image" | "voice" | "voice_design" | "voice_clone"): ModelConfigItem[] {
     if (type === "text") return state.settingsTextConfigs;
     if (type === "image") return state.settingsImageConfigs;
     if (type === "voice_design") return state.settingsVoiceDesignConfigs;
+    if (type === "voice_clone") return state.settingsVoiceCloneConfigs;
     return state.settingsVoiceConfigs.map((item) => ({
       id: item.id,
       type: item.type || "voice",
@@ -3852,6 +3950,7 @@ function createToonflowStore() {
   }
 
   function settingsModelBinding(key: string): AiModelMapItem | null {
+     WebDebugLogUtil.log("[bindGameModel] settingsAiModelMap:", state.settingsAiModelMap);
     return state.settingsAiModelMap.find((item) => item.key === key) || null;
   }
 
@@ -3933,6 +4032,36 @@ function createToonflowStore() {
   }
 
   function settingsModelAdvisory(key: string): { tone: "info" | "warn"; text: string } | null {
+    if (key === "storyVoiceCloneModel") {
+      const voiceBinding = settingsModelBinding("storyVoiceModel");
+      const cloneBinding = settingsModelBinding("storyVoiceCloneModel");
+      const voiceModelLabel = voiceBinding ? formatSettingsModelLabel(voiceBinding) : "语音生成模型";
+      const cloneModelLabel = cloneBinding ? formatSettingsModelLabel(cloneBinding) : "语音克隆模型";
+      const consistencyHint = "语音合成与语音克隆必须使用相同供应商和匹配的模型。CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用。";
+      if (!cloneBinding?.configId) {
+        return {
+          tone: "warn",
+          text: `用于角色音色克隆。建议与语音合成（${voiceModelLabel}）使用相同供应商和模型。${consistencyHint}`,
+        };
+      }
+      if (voiceBinding?.configId && voiceBinding.manufacturer !== cloneBinding.manufacturer) {
+        return {
+          tone: "warn",
+          text: `当前语音合成（${voiceModelLabel}）和语音克隆（${cloneModelLabel}）不是同一家供应商，克隆音色无法在合成通道使用。${consistencyHint}`,
+        };
+      }
+      return {
+        tone: "info",
+        text: `当前语音克隆模型：${cloneModelLabel}。${consistencyHint}`,
+      };
+    }
+    if(key==="intentClassifierModel") {
+      const intentClassifierModel = settingsModelBinding("intentClassifierModel");
+      return {
+          tone: "warn",
+          text: `用于意图分类。建议绑定：${formatSettingsModelLabel(intentClassifierModel)}。`,
+        };
+    }
     if (key === "storyAvatarMattingModel") {
       const binding = settingsModelBinding("storyAvatarMattingModel");
       const recommendation = settingsRecommendedModel("storyAvatarMattingModel");
@@ -4147,7 +4276,7 @@ function createToonflowStore() {
     return String(result?.text || "").trim();
   }
 
-  async function generateImage(target: "role" | "scene", prompt: string, referenceList: string[], name: string): Promise<string> {
+  async function generateImage(target: "role" | "scene", prompt: string, referenceList: string[], name: string): Promise<{ path: string; sourcePath?: string }> {
     const result = await api.generateImage({
       projectId: state.selectedProjectId,
       type: target,
@@ -4157,7 +4286,10 @@ function createToonflowStore() {
       base64List: referenceList,
       size: "2K",
     });
-    return result.filePath || result.path || "";
+    return {
+      path: result.filePath || result.path || "",
+      sourcePath: result.originalPath || result.sourcePath || "",
+    };
   }
 
   async function uploadImagePayload(target: EditorImageTarget, fileName: string, base64Data: string): Promise<string> {
@@ -4194,9 +4326,10 @@ function createToonflowStore() {
     return await waitForAvatarVideoTask(taskId, target, roleIndex);
   }
 
-  async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string }> {
+  async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string; sourcePath?: string }> {
     if (target === "account" || target === "user" || target === "npc") {
-      return await separateRoleImageAsset(target, source, baseName);
+      const result = await separateRoleImageAsset(target, source, baseName);
+      return result; // separateRoleImageAsset already returns {path, bgPath, sourcePath, videoPath}
     }
     const safeBaseName = buildSafeUploadBaseName(baseName, target);
     const asset = await loadImageSourceAsset(state.baseUrl, source, safeBaseName);
@@ -4374,17 +4507,62 @@ function createToonflowStore() {
     return isAvatarProcessing(target, npcIndex) ? String(state.avatarProcessingMessages[key] || "").trim() : "";
   }
 
-  async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void) {
+  async function applyImageToTarget(target: "account" | "user" | "npc" | "cover" | "chapter", prompt: string, referenceList: string[], name: string, onReady?: (path: string, bgPath?: string) => void, npcIndex?: number | null) {
     state.aiGenerating = true;
     if (target === "account" || target === "user" || target === "npc") {
       clearAvatarFailureNotice();
     }
     try {
-      const path = await generateImage(target === "chapter" || target === "cover" ? "scene" : "role", prompt, referenceList, name);
-      if (!path) {
+      const { path: generatedPath, sourcePath } = await generateImage(target === "chapter" || target === "cover" ? "scene" : "role", prompt, referenceList, name);
+      if (!generatedPath) {
         throw new Error("未生成图片");
       }
-      const prepared = await uploadStandardizedImageAsset(target, path, name || target);
+      // 保存原图路径（用于"原图"按钮显示）
+      if (sourcePath) {
+        if (target === "user") {
+          state.userAvatarSourcePath = sourcePath;
+        } else if (target === "account") {
+          state.accountAvatarSourcePath = sourcePath;
+        } else if (target === "npc") {
+          const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+          if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+            state.npcRoles[npcIdx].avatarSourcePath = sourcePath;
+          }
+        }
+      }
+      // 保存AI生图形象描述（独立于角色设定）
+      if (prompt) {
+        if (target === "user") {
+          state.playerImagePrompt = prompt;
+        } else if (target === "account") {
+          state.playerImagePrompt = prompt; // 复用同一字段
+        } else if (target === "npc") {
+          const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+          if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+            state.npcRoles[npcIdx].avatarImagePrompt = prompt;
+          }
+        }
+      }
+      // 保存分离前的原始图片路径（用于"原图"按钮显示）
+      // generatedPath 是 AI 生成的原图，prepared.path 是分离后的前景图
+      if (target === "user") {
+        state.userAvatarSourcePath = generatedPath;
+      } else if (target === "account") {
+        state.accountAvatarSourcePath = generatedPath;
+      } else if (target === "npc") {
+        const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+        if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+          state.npcRoles[npcIdx].avatarSourcePath = generatedPath;
+        }
+      }
+      // 保存参考图路径（如果有）
+      if (referenceList && referenceList.length > 0 && target === "npc") {
+        const npcIdx = typeof npcIndex === "number" ? npcIndex : state.avatarProcessingNpcIndex;
+        if (typeof npcIdx === "number" && state.npcRoles[npcIdx]) {
+          state.npcRoles[npcIdx].avatarReferringPath = referenceList[0];
+        }
+      }
+      const prepared = await uploadStandardizedImageAsset(target, generatedPath, name || target);
       if (target === "account") {
         state.accountAvatarPath = prepared.path;
         state.accountAvatarBgPath = prepared.bgPath || prepared.path;
@@ -4421,9 +4599,11 @@ function createToonflowStore() {
       } else if (target === "user") {
         state.userAvatarPath = prepared.path;
         state.userAvatarBgPath = prepared.bgPath;
+        state.userAvatarSourcePath = prepared.sourcePath || "";
       } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
         state.npcRoles[roleIndex].avatarPath = prepared.path;
         state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        state.npcRoles[roleIndex].avatarSourcePath = prepared.sourcePath || "";
         onReady?.(prepared.path, prepared.bgPath);
       }
       clearAvatarFailureNotice();
@@ -4444,12 +4624,12 @@ function createToonflowStore() {
       } else if (target === "user") {
         state.userAvatarPath = prepared.path;
         state.userAvatarBgPath = prepared.bgPath;
+        // userAvatarVideoPath 已在 waitForAvatarVideoTask 中保存
       } else if (target === "npc" && typeof roleIndex === "number" && state.npcRoles[roleIndex]) {
+        state.npcRoles[roleIndex].avatarPath = prepared.path;
+        state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
+        // npc avatarVideoPath 已在 waitForAvatarVideoTask 中保存
         onReady?.(prepared.path, prepared.bgPath);
-        if (!onReady) {
-          state.npcRoles[roleIndex].avatarPath = prepared.path;
-          state.npcRoles[roleIndex].avatarBgPath = prepared.bgPath;
-        }
       }
       clearAvatarFailureNotice();
     } finally {
@@ -4484,6 +4664,7 @@ function createToonflowStore() {
       state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
       state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
       state.settingsVoiceDesignConfigs = configs.filter((item) => String(item.type || "").trim() === "voice_design");
+      state.settingsVoiceCloneConfigs = configs.filter((item) => String(item.type || "").trim() === "voice_clone");
       state.settingsVoiceConfigs = (voiceConfigs || [])
         .map(normalizeVoiceModelConfig)
         .filter((item) => String(item.type || "voice").trim() === "voice");
@@ -4501,6 +4682,7 @@ function createToonflowStore() {
   async function bindGameModel(key: string, configId: number) {
     const row = settingsModelBinding(key);
     if (!row?.id) {
+      WebDebugLogUtil.log("[bindGameModel] error:", row);
       throw new Error("模型槽位不存在");
     }
     await api.bindModelConfig(row.id, configId);
@@ -4613,6 +4795,18 @@ function createToonflowStore() {
         content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
       };
     }
+    if (type === "voice_clone") {
+      const result = await api.testVoiceCloneModel({
+        modelName: String(config.model || "").trim(),
+        apiKey: String(config.apiKey || "").trim(),
+        baseURL: String(config.baseUrl || "").trim() || undefined,
+        manufacturer: String(config.manufacturer || "").trim(),
+      });
+      return {
+        kind: "audio",
+        content: resolveMediaUrl(state.baseUrl, String(result || "").trim()),
+      };
+    }
     if (type === "text") {
       const result = await api.testTextModel({
         modelName: String(config.model || "").trim(),
@@ -4648,6 +4842,14 @@ function createToonflowStore() {
       return {
         kind: "text",
         content: "当前为语音识别模型。设置页暂不内置样本音频测试，请在录音入口验证。",
+      };
+    }
+    // 语音合成模型（voice）走专用测试接口
+    if (type === "voice") {
+      const result: any = await api.testVoiceSynthesisModel(config.id);
+      return {
+        kind: "audio",
+        content: resolveMediaUrl(state.baseUrl, String(result?.audioUrl || "").trim()),
       };
     }
     const presets = await api.getVoicePresets(config.id);
@@ -4743,11 +4945,14 @@ function createToonflowStore() {
   }
 
   function currentPlayerRole() {
-    return {
+    const pr = {
       ...createDefaultPlayerRole(),
       name: state.playerName,
       avatarPath: state.userAvatarPath,
       avatarBgPath: state.userAvatarBgPath,
+      avatarSourcePath: state.userAvatarSourcePath,
+      avatarImagePrompt: state.playerImagePrompt,
+      avatarReferringPath: state.accountAvatarSourcePath, // 用户的参考图
       description: state.playerDesc,
       voice: state.playerVoice,
       voiceMode: state.playerVoiceMode,
@@ -4759,6 +4964,8 @@ function createToonflowStore() {
       voiceMixVoices: state.playerVoiceMixVoices,
       parameterCardJson: null,
     };
+    console.log("[currentPlayerRole] state.playerDesc:", state.playerDesc, "=> description:", pr.description);
+    return pr;
   }
 
   function currentNarratorRole() {
@@ -4973,6 +5180,7 @@ function createToonflowStore() {
     state.settingsTextConfigs = [];
     state.settingsImageConfigs = [];
     state.settingsVoiceDesignConfigs = [];
+    state.settingsVoiceCloneConfigs = [];
     state.settingsVoiceConfigs = [];
     state.settingsAiModelMap = [];
     state.settingsTextModelList = {};
@@ -5050,8 +5258,10 @@ function createToonflowStore() {
       state.allowChatShare = worldDetail.settings?.allowChatShare ?? true;
       state.playerName = worldDetail.playerRole?.name || "用户";
       state.playerDesc = worldDetail.playerRole?.description || "";
+      state.playerImagePrompt = worldDetail.playerRole?.avatarImagePrompt || "";
       state.userAvatarPath = worldDetail.playerRole?.avatarPath || "";
       state.userAvatarBgPath = worldDetail.playerRole?.avatarBgPath || "";
+      state.userAvatarSourcePath = worldDetail.playerRole?.avatarSourcePath || "";
       state.playerVoice = worldDetail.playerRole?.voice || "";
       state.playerVoiceMode = worldDetail.playerRole?.voiceMode || "text";
       state.playerVoicePresetId = worldDetail.playerRole?.voicePresetId || "";
@@ -5093,7 +5303,10 @@ function createToonflowStore() {
       state.notice = "只能编辑自己的故事";
       return;
     }
-    await loadWorldForEdit(world);
+    console.log("[openWorldForEdit] world.playerRole.description:", world?.playerRole?.description);
+    // sessionDetail.world 可能是游玩开始时的旧快照，saveWorld 更新了 DB 但没有更新它。
+    // 必须用 world.id 重新从 DB 拉最新数据，避免用旧快照覆盖已保存的内容。
+    await loadWorldForEdit({ id: world.id } as WorldItem);
   }
 
   async function reopenPublishedWorldAsDraft(world: WorldItem) {
@@ -5311,6 +5524,10 @@ function createToonflowStore() {
     }
     state.worldId = result.id;
     state.worldPublishStatus = result.publishStatus || result.settings?.publishStatus || targetStatus;
+    // 用 result 更新 sessionDetail.world，避免下次 loadWorldForEdit 从 DB 读到异步覆盖后的旧值
+    if (state.sessionDetail && Number((state.sessionDetail as any).world?.id) === result.id) {
+      (state.sessionDetail as any).world = result;
+    }
     if (reloadAfter) {
       await reloadWorldsAfterSave();
     }
@@ -5644,6 +5861,12 @@ function createToonflowStore() {
   }
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
+    console.log("[aiGame] openSession start", {
+      sessionId,
+      playback: Boolean(options?.playback),
+      resumeLatest: Boolean(options?.resumeLatest),
+      isResume: Boolean(options?.resumeLatest),
+    });
     clearPendingSessionOrchestrationPrefetch();
     clearRuntimeRetryState();
     // 打开正式会话时同步清掉章节调试态，确保后续自动推进只走正式链。
@@ -5665,6 +5888,18 @@ function createToonflowStore() {
     state.messages = [];
     try {
       const detail = await api.getSession(sessionId);
+      const loadedMessageCount = Array.isArray(detail?.messages) ? detail.messages.length : 0;
+      const lastLoadedMessage = Array.isArray(detail?.messages) && detail.messages.length > 0
+        ? detail.messages[detail.messages.length - 1]
+        : null;
+      console.log("[aiGame] openSession session loaded", {
+        sessionId,
+        isResume: Boolean(options?.resumeLatest),
+        messageCount: loadedMessageCount,
+        lastMessageRole: lastLoadedMessage?.role,
+        lastMessageRoleType: lastLoadedMessage?.roleType,
+        lastMessageContent: lastLoadedMessage?.content?.slice(0, 60),
+      });
       state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
       state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
       applyLoadedSessionDetail(detail);
@@ -6155,6 +6390,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             content: accumulated,
@@ -6167,6 +6405,8 @@ function createToonflowStore() {
           finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalMessageRecord = finalMessage || {};
           const finalContent = resolveStreamDoneContent(eventData, finalMessageRecord, accumulated);
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessageRecord.role || message.role || ""),
@@ -6600,7 +6840,11 @@ function createToonflowStore() {
       }
       // 没有编排计划：正常处理
       if (hasActiveMiniGameInCurrentSession()) {
+        // ★ 任务/小游戏模式：addMessage 不再 intercept，需要手动调用 /game/orchestration/minigame 编排
+        // 走 continueSessionNarrative，里面会根据 isMiniGameActive 选择 resolveMinigameOrchestration
+        await refreshSessionStoryInfo();
         void refreshSessionListState();
+        await continueSessionNarrative();
         return;
       }
       await refreshSessionStoryInfo();
@@ -6656,6 +6900,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             content: accumulated,
@@ -6669,6 +6916,10 @@ function createToonflowStore() {
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
           const eventType = String(finalMessage?.eventType || streamingMessage.eventType || RUNTIME_STREAM_EVENT).trim();
           const roleType = String(finalMessage?.roleType || streamingMessage.roleType || "narrator").trim();
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
+          // 等待一小段时间让打字机完成
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           // 打 tag：台词生成完成（只在小游戏模式中打印）
           if (hasActiveMiniGameInCurrentSession()) {
             if (roleType === "narrator" && eventType.startsWith("on_mini_game")) {
@@ -6746,6 +6997,11 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
+      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+        messageId: fallbackCommittedMessage.id,
+        role: committedRole,
+        content: String(committedContent || "").slice(0, 60),
+      });
       if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
         applySessionNarrativeResult({
           ...committed,
@@ -6824,6 +7080,9 @@ function createToonflowStore() {
           const text = String(event.data?.text || "");
           if (!text) return;
           accumulated += text;
+          // 启动打字机动画（逐字追加显示）
+          startTypewriter(String(streamingMessage.id), accumulated);
+          // 仍同步完整 content；UI 层在 isTyping 时优先显示 typewriterDisplayText
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             content: accumulated,
@@ -6835,6 +7094,10 @@ function createToonflowStore() {
           const eventData = (event.data || {}) as Record<string, unknown>;
           finalMessage = (eventData.message || {}) as Record<string, unknown>;
           const finalContent = resolveStreamDoneContent(eventData, finalMessage, accumulated);
+          // 确保打字机动画显示完整内容
+          startTypewriter(String(streamingMessage.id), finalContent);
+          // 等待一小段时间让打字机完成
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
           updateMessageById(streamingMessage.id, (message) => ({
             ...message,
             role: String(finalMessage?.role || message.role || ""),
@@ -6899,6 +7162,11 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
+      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+        messageId: fallbackCommittedMessage.id,
+        role: committedRole,
+        content: String(committedContent || "").slice(0, 60),
+      });
       if (!committed.message && !(Array.isArray(committed.generatedMessages) && committed.generatedMessages.length)) {
         applySessionNarrativeResult({
           ...committed,
@@ -6909,6 +7177,7 @@ function createToonflowStore() {
       }
       await refreshSessionStoryInfo();
       await waitForSessionOpeningPresentation(committedContent);
+      console.log("[voice lifecycle] 编排→消息入store完成，等待自动触发watch→reveal流程");
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;
@@ -6920,6 +7189,7 @@ function createToonflowStore() {
     // 不再因小游戏活跃就提前退出：小游戏编排走独立的 /game/orchestration/minigame 接口，
     // 每条消息串行处理（编排 → streamlines → 语音播放 → 编排），避免链式中断语音。
     state.sessionRuntimeStage = "继续编排下一轮剧情";
+    console.log("[voice lifecycle] 编排开始", { sessionId: state.currentSessionId });
     if(WebDebugLogUtil.isEnabled()){
        console.log("继续编排下一轮剧情")
     }
@@ -6928,9 +7198,14 @@ function createToonflowStore() {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
         const isMiniGameActive = hasActiveMiniGameInCurrentSession();
-
+        console.log("[voice lifecycle] 编排中，等待 API 返回", { step, isMiniGameActive });
         // 小游戏模式下走专用编排接口，获取完整的 plan（含 eventType、presetContent 等）；
         // 普通模式走标准编排接口。
+        WebDebugLogUtil.log("[voice时序] performContinueSessionNarrative 开始编排", {
+          step,
+          isMiniGameActive,
+          当前消息数: conversationMessages().length,
+        });
         const orchestration = isMiniGameActive
           ? await resolveMinigameOrchestration()
           : await resolveSessionOrchestration(Number(conversationMessages().slice(-1)[0]?.id || 0));
@@ -6945,8 +7220,40 @@ function createToonflowStore() {
         }
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
         await refreshSessionStoryInfo();
+        // 如果 plan.roleType === "player" 且不需要走 streamSessionPlan，
+        // 说明这一轮编排明确把发言权交还给用户。前端需要主动设 awaitUser 兜底，
+        // 否则 storyInfo 慢一拍时用户输入框会持续灰着。
+        if (!shouldStreamPlan) {
+          const planRoleType = String(orchestration.plan?.roleType || "").trim().toLowerCase();
+          if (planRoleType === "player") {
+            WebDebugLogUtil.log("[voice时序] orchestration 返回 player，本地兜底 awaitUser", {
+              plan: orchestration.plan,
+            });
+            // 强制本地兜底：让 sessionCanPlayerSpeak 立即为 true
+            applyAwaitUserTurnFromPlan({
+              ...(orchestration.plan as any),
+              awaitUser: true,
+            });
+          }
+        }
         if (shouldStreamPlan) {
+          WebDebugLogUtil.log("[voice时序] streamSessionPlan 开始", {
+            step,
+            消息数: conversationMessages().length,
+          });
           await streamSessionPlan(orchestration.plan as DebugNarrativePlan, conversationMessages());
+          WebDebugLogUtil.log("[voice时序] streamSessionPlan 完成", {
+            step,
+            消息数: conversationMessages().length,
+            最新消息id: conversationMessages().slice(-1)[0]?.id,
+          });
+          console.log("[voice lifecycle] 编排→流式生成台词完成", {
+            step,
+            消息数: conversationMessages().length,
+            最新消息id: conversationMessages().slice(-1)[0]?.id,
+            最新角色: conversationMessages().slice(-1)[0]?.role,
+            nextStep: "等待Watch1触发waitForMessageReveal",
+          });
         }
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
@@ -6955,12 +7262,20 @@ function createToonflowStore() {
           advanced = true;
           break;
         }
-        // 小游戏模式下只处理一轮编排+发言，然后返回让前端等语音播放完成，
+        // 每次只处理一轮编排+发言，然后返回让前端等语音播放完成，
         // 下次 continueSessionNarrative 再走下一轮。
-        if (hasActiveMiniGameInCurrentSession() && shouldStreamPlan) {
+        // 无论普通模式还是小游戏模式都只走一轮，避免连续 NPC 台词互相打断。
+        if (shouldStreamPlan) {
+          WebDebugLogUtil.log("[voice时序] shouldStreamPlan=true，break 退出 for 循环", {
+            step,
+            canPlayerSpeakNow,
+            latestStatus,
+          });
           advanced = true;
           break;
         }
+        // 非流式编排（如系统指令）可以继续 step，但最多3轮安全限制，
+        // 防止死循环或一次产出过多消息导致前端语音互相打断。
       }
       if (!advanced) {
         throw new Error("自动推进没有产出新内容");
@@ -6990,6 +7305,12 @@ function createToonflowStore() {
 
   async function continueSessionNarrative() {
     clearRuntimeRetryState();
+    WebDebugLogUtil.log("[voice时序] continueSessionNarrative 入口", {
+      currentSessionId: state.currentSessionId,
+      hasMiniGame: hasActiveMiniGameInCurrentSession(),
+      miniGameVoiceWaitEnd: state.miniGameVoiceWaitEnd,
+      消息数: conversationMessages().length,
+    });
     // 小游戏模式下需要等待语音播放完成（或最小等待时间）后再继续编排
     // 规则：开语音-》上一个语音播放完（包括失败）-》获取当前台词
     //       没开语音-》台词获取完（最小等待时间3s）-》获取当前台词

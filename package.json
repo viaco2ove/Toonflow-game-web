@@ -1,23 +1,89 @@
 {
   "name": "toonflow-game-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
     "build": "vite build && node scripts/inline-dist-assets.mjs",
     "preview": "vite preview --host",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "electron:dev": "concurrently -k \"vite --host\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "vite build && node scripts/inline-dist-assets.mjs && electron-builder",
+    "electron:build:win": "vite build && node scripts/inline-dist-assets.mjs && electron-builder --win",
+    "electron:build:linux": "vite build && node scripts/inline-dist-assets.mjs && electron-builder --linux"
   },
   "dependencies": {
     "axios": "^1.8.2",
-    "vue": "^3.5.13"
+    "markdown-it": "^14.2.0",
+    "vue": "^3.5.13",
+    "vue3-markdown-it": "^1.0.10"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.13.10",
     "@vitejs/plugin-vue": "^5.2.1",
+    "concurrently": "^10.0.0",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "highlight.js": "^11.11.1",
+    "markdown-it-highlightjs": "^4.3.0",
     "typescript": "^5.8.2",
     "vite": "^6.2.0",
-    "vue-tsc": "^2.2.8"
+    "vue-tsc": "^2.2.8",
+    "wait-on": "^9.0.10"
+  },
+  "main": "electron/main.mjs",
+  "build": {
+    "appId": "com.toonflow.game",
+    "productName": "Toonflow Game",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": true
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
+      "category": "Game"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    }
   }
 }

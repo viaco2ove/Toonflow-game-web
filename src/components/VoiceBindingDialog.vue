@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
+import { ToonflowApi } from "../api/toonflow";
 import type { VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 
 const props = defineProps<{
@@ -15,6 +16,8 @@ const props = defineProps<{
   initialReferenceText?: string;
   initialPromptText?: string;
   initialMixVoices?: VoiceMixItem[];
+  // 下次打开时用于下载的已生成音色 URL
+  initialGeneratedDownloadUrl?: string;
 }>();
 
 const emit = defineEmits<{
@@ -23,6 +26,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useToonflowStore();
+const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const selectedPresetId = ref("");
 const selectedMode = ref("text");
 const referenceAudioPath = ref("");
@@ -41,6 +45,57 @@ const previewAudioUrl = ref("");
 const previewPlayer = ref<HTMLAudioElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 let previewObjectUrl = "";
+// 标记本次会话是否生成过音色文件，用于下次打开时依然可以下载
+const hasGeneratedVoiceInSession = ref(false);
+// 保存生成音色的下载 URL，供下次打开时使用
+const generatedDownloadUrl = ref("");
+// 阿里云 cosyvoice 预设音色搜索/过滤/分页
+const aliyunPresetSearch = ref("");
+const aliyunPresetGender = ref("all");
+const aliyunPresetAge = ref("all");
+const aliyunPresetPageIndex = ref(1);
+const aliyunPresetPageSize = 10;
+interface AliyunPresetRow {
+  voice: string;
+  name: string;
+  scene: string;
+  gender: string;
+  age: string;
+  language: string;
+  model: string;
+  family: string;
+}
+const aliyunPresetList = ref<AliyunPresetRow[]>([]);
+const aliyunPresetTotal = ref(0);
+const isAliyunDirectCosyVoice = computed(() => {
+  const manufacturer = String(selectedModel.value?.manufacturer || "").trim();
+  if (manufacturer !== "aliyun_direct") return false;
+  const m = String(selectedModel.value?.model || "").trim();
+  // 支持 CosyVoice 全系列 + Qwen TTS 全系列
+  return m.startsWith("cosyvoice") || m.startsWith("qwen");
+});
+const aliyunPresetPage = computed(() => aliyunPresetList.value);
+const aliyunPresetTotalPages = computed(() => Math.max(1, Math.ceil(aliyunPresetTotal.value / aliyunPresetPageSize)));
+const aliyunPresetModel = ref("all"); // 默认全部模型
+const aliyunPresetModels = ref<{ value: string; label: string; family: string }[]>([
+  { value: "all", label: "全部模型", family: "all" },
+]);
+function onAliyunModelChange() {
+  aliyunPresetPageIndex.value = 1;
+  loadAliyunPresets();
+}
+
+// minimax 专用音色列表状态
+const minimaxPresetList = ref<{ voice: string; name: string; voiceType: string; language: string; gender: string }[]>([]);
+const minimaxPresetTotal = ref(0);
+const minimaxPresetSearch = ref("");
+const minimaxPresetVoiceType = ref("all");
+const minimaxPresetGender = ref("all");
+const minimaxPresetPageIndex = ref(1);
+const isMiniMaxManufacturer = computed(() => {
+  return String(selectedModel.value?.manufacturer || "").trim() === "minimax";
+});
+const minimaxPresetTotalPages = computed(() => Math.max(1, Math.ceil(minimaxPresetTotal.value / aliyunPresetPageSize)));
 const modeOptions = [
   { key: "text", label: "预设音色" },
   { key: "clone", label: "克隆音色" },
@@ -56,15 +111,26 @@ const runtimeVoiceDesignConfigId = computed(() => {
   const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceDesignModel")?.configId;
   return value && value > 0 ? value : null;
 });
+const runtimeVoiceCloneConfigId = computed(() => {
+  const value = store.state.settingsAiModelMap.find((item) => item.key === "storyVoiceCloneModel")?.configId;
+  return value && value > 0 ? value : null;
+});
+// effectiveConfigId 始终用当前 TTS 模型（runtimeStoryVoiceConfigId）。
+// 后端会根据 mode === "prompt_voice" 自动加载 storyVoiceDesignModel 的配置，
+// 所以前端不需要在 prompt_voice 时切到设计模型 configId（否则后端会查不到 TTS 模型而报"语音模型配置不存在"）。
 const effectiveConfigId = computed(() => runtimeStoryVoiceConfigId.value);
 const presets = computed(() => store.voicePresetsForConfig(effectiveConfigId.value));
 const selectedModel = computed(() => store.state.voiceModels.find((item) => item.id === effectiveConfigId.value) || null);
 const selectedPreset = computed(() => presets.value.find((item) => item.voiceId === selectedPresetId.value) || null);
 const hasVoiceDesignModel = computed(() => !!runtimeVoiceDesignConfigId.value);
+const hasVoiceCloneModel = computed(() => !!runtimeVoiceCloneConfigId.value);
 const modelSupportedModes = computed(() => resolveModelSupportedModes(selectedModel.value));
 const supportedModes = computed(() => {
   const modes = new Set(modelSupportedModes.value);
-  if (!hasVoiceDesignModel.value) {
+  // prompt_voice 由"是否设置了语音设计模型"决定，不被当前 TTS 模型的 modes 限制
+  if (hasVoiceDesignModel.value) {
+    modes.add("prompt_voice");
+  } else {
     modes.delete("prompt_voice");
   }
   return Array.from(modes);
@@ -86,12 +152,9 @@ const modeSupportNote = computed(() => {
 
 function isAliyunDirectCosyVoiceModel(model?: string | null): boolean {
   const normalized = String(model || "").trim().toLowerCase();
-  return [
-    "cosyvoice-v3-flash",
-    "cosyvoice-v3-plus",
-    "cosyvoice-v3.5-flash",
-    "cosyvoice-v3.5-plus",
-  ].includes(normalized);
+  if (normalized.startsWith("cosyvoice")) return true;
+  if (normalized.startsWith("qwen")) return true;
+  return false;
 }
 
 /**
@@ -144,11 +207,17 @@ function resolveModelSupportedModes(model: { manufacturer?: string | null; model
 
 function unsupportedModeReason(mode: string): string {
   const normalizedMode = String(mode || "").trim();
-  if (!normalizedMode || !modelSupportedModes.value.includes(normalizedMode)) {
-    return normalizedMode ? "当前语音模型不支持该绑定模式" : "";
+  if (!normalizedMode) return "";
+  // 提示词音色（prompt_voice）只看是否配置了语音设计模型；
+  // 不依赖当前 TTS 模型的 modes 声明——只要设置了语音设计模型，就允许选择。
+  if (normalizedMode === "prompt_voice") {
+    if (!hasVoiceDesignModel.value) {
+      return "请先在设置里配置语音设计模型";
+    }
+    return "";
   }
-  if (normalizedMode === "prompt_voice" && !hasVoiceDesignModel.value) {
-    return "请先在设置里配置语音设计模型";
+  if (!modelSupportedModes.value.includes(normalizedMode)) {
+    return "当前语音模型不支持该绑定模式";
   }
   if (supportedModes.value.includes(normalizedMode)) {
     return "";
@@ -201,6 +270,11 @@ watch(
     previewText.value = DEFAULT_PREVIEW_TEXT;
     previewStatus.value = "";
     previewAudioUrl.value = "";
+    // 如果有初始的已生成音色 URL，恢复下载能力
+    if (props.initialGeneratedDownloadUrl || props.initialReferenceAudioPath) {
+      generatedDownloadUrl.value = props.initialGeneratedDownloadUrl || props.initialReferenceAudioPath || "";
+      hasGeneratedVoiceInSession.value = true;
+    }
     await store.fetchVoiceModels();
     if (effectiveConfigId.value) {
       await store.fetchVoicePresets(effectiveConfigId.value);
@@ -210,11 +284,115 @@ watch(
   { immediate: true },
 );
 
+// 加载阿里云模型列表
+async function loadAliyunModelList() {
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listAliyunPresets/listAliyunModels", {});
+    if (data?.items?.length) {
+      aliyunPresetModels.value = data.items;
+    }
+  } catch { /* ignore */ }
+}
+
+// 加载阿里云预设音色
+async function loadAliyunPresets() {
+  if (!isAliyunDirectCosyVoice.value) {
+    aliyunPresetList.value = [];
+    aliyunPresetTotal.value = 0;
+    return;
+  }
+  // 首次加载时拉取模型列表
+  if (aliyunPresetModels.value.length <= 1) {
+    await loadAliyunModelList();
+  }
+  const model = aliyunPresetModel.value || "all";
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listAliyunPresets", {
+      model,
+      page: aliyunPresetPageIndex.value,
+      pageSize: aliyunPresetPageSize,
+      search: aliyunPresetSearch.value,
+      gender: aliyunPresetGender.value,
+      age: aliyunPresetAge.value,
+    });
+    aliyunPresetList.value = data?.items || [];
+    aliyunPresetTotal.value = Number(data?.total || 0);
+  } catch (err) {
+    aliyunPresetList.value = [];
+    aliyunPresetTotal.value = 0;
+    previewStatus.value = `加载阿里云音色失败: ${(err as Error).message}`;
+  }
+}
+
+async function loadMiniMaxPresets() {
+  if (!isMiniMaxManufacturer.value) {
+    minimaxPresetList.value = [];
+    minimaxPresetTotal.value = 0;
+    return;
+  }
+  const configId = effectiveConfigId.value;
+  if (!configId) return;
+  try {
+    const data: any = await toonflowApi.postPublic<any>("/voice/listMiniMaxPresets", {
+      configId,
+      page: minimaxPresetPageIndex.value,
+      pageSize: aliyunPresetPageSize,
+      search: minimaxPresetSearch.value,
+      voiceType: minimaxPresetVoiceType.value,
+      gender: minimaxPresetGender.value,
+    });
+    minimaxPresetList.value = data?.items || [];
+    minimaxPresetTotal.value = Number(data?.total || 0);
+  } catch (err) {
+    minimaxPresetList.value = [];
+    minimaxPresetTotal.value = 0;
+    previewStatus.value = `加载 minimax 音色失败: ${(err as Error).message}`;
+  }
+}
+
 watch(
-  runtimeStoryVoiceConfigId,
-  async (configId) => {
-    if (!props.open || !configId) return;
-    await store.fetchVoicePresets(configId);
+  [minimaxPresetSearch, minimaxPresetVoiceType, minimaxPresetGender],
+  () => {
+    minimaxPresetPageIndex.value = 1;
+    loadMiniMaxPresets();
+  },
+);
+
+watch(minimaxPresetPageIndex, () => loadMiniMaxPresets());
+
+watch(
+  [isMiniMaxManufacturer, () => props.open],
+  () => {
+    if (props.open && isMiniMaxManufacturer.value) {
+      minimaxPresetPageIndex.value = 1;
+      loadMiniMaxPresets();
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  [aliyunPresetSearch, aliyunPresetGender, aliyunPresetAge],
+  () => {
+    aliyunPresetPageIndex.value = 1;
+    loadAliyunPresets();
+  },
+);
+
+watch(
+  aliyunPresetPageIndex,
+  () => loadAliyunPresets(),
+);
+
+watch(
+  [isAliyunDirectCosyVoice, () => props.open],
+  () => {
+    if (props.open && isAliyunDirectCosyVoice.value) {
+      // 默认展示全部模型，用户可手动切换
+      aliyunPresetModel.value = "all";
+      aliyunPresetPageIndex.value = 1;
+      loadAliyunPresets();
+    }
   },
   { immediate: true },
 );
@@ -249,7 +427,12 @@ function labelForSelected() {
       return promptText.value.trim() ? `提示词：${promptText.value.trim().slice(0, 12)}` : "提示词音色";
     default: {
       const preset = presets.value.find((item) => item.voiceId === selectedPresetId.value);
-      return preset?.name || props.initialLabel || "预设音色";
+      if (preset?.name) return preset.name;
+      const aliyunRow = aliyunPresetList.value.find((item) => item.voice === selectedPresetId.value);
+      if (aliyunRow?.name) return aliyunRow.name;
+      const minimaxRow = minimaxPresetList.value.find((item) => item.voice === selectedPresetId.value);
+      if (minimaxRow?.name) return minimaxRow.name;
+      return props.initialLabel || "预设音色";
     }
   }
 }
@@ -267,7 +450,7 @@ function validate(): string | null {
   const isDirectCosyVoice = String(selectedModel.value?.manufacturer || "").trim() === "aliyun_direct"
     && isAliyunDirectCosyVoiceModel(selectedModel.value?.model);
   if (isDirectCosyVoice && !isPlayableCosyVoicePreviewText(previewText.value)) {
-    return "当前 CosyVoice 试听文本不能只包含编号、标点或空白";
+    return "当前阿里云语音试听文本不能只包含编号、标点或空白";
   }
   return null;
 }
@@ -465,18 +648,31 @@ async function generateVoiceFile() {
     if (generated.referenceText) {
       referenceText.value = generated.referenceText;
     }
-    // 生成出的文件只是 clone 参考源，真正给用户听的应该还是“当前试听文本”的成品音频。
+    // 生成出的文件只是 clone 参考源，真正给用户听的应该还是"当前试听文本"的成品音频。
+    // 但如果当前 TTS 模型不支持 clone（比如 xiaomimimo mimo-v2.5-tts 只支持 text），
+    // 就直接把生成的参考音频当成试听音频回放，避免再次走不兼容的 clone 通道。
+    const modelSupportsCloneRetry = supportedModes.value.includes("clone");
     previewLoading.value = true;
-    const previewUrl = await requestPreviewAudio({
-      mode: "clone",
-      presetId: generated.customVoiceId || "",
-      referenceAudioPath: generated.audioPath,
-      referenceText: generated.referenceText || referenceText.value.trim(),
-      promptText: "",
-      mixVoices: [],
-    });
+    let previewUrl = "";
+    if (modelSupportsCloneRetry) {
+      previewUrl = await requestPreviewAudio({
+        mode: "clone",
+        presetId: generated.customVoiceId || "",
+        referenceAudioPath: generated.audioPath,
+        referenceText: generated.referenceText || referenceText.value.trim(),
+        promptText: "",
+        mixVoices: [],
+      });
+    } else {
+      // 直接拿生成出来的音频做试听（它本身就是音色设计的合成结果）
+      previewUrl = store.resolveMediaPath(generated.audioPath);
+    }
     await loadPreviewAudioUrl(previewUrl);
-    previewStatus.value = "音色文件已生成，并已按当前试听文本重新试听";
+    previewStatus.value = "音色文件已生成" + (modelSupportsCloneRetry ? "，并已按当前试听文本重新试听" : "（当前 TTS 模型不支持 clone 试听，已用生成的音色直接回放）");
+    // 标记本次会话已生成音色，下次打开依然可以下载
+    hasGeneratedVoiceInSession.value = true;
+    // 保存下载 URL，下次打开时可以用 referenceAudioPath 下载生成的文件
+    generatedDownloadUrl.value = previewUrl || generated.audioPath || "";
   } catch (err) {
     previewStatus.value = `生成音色失败: ${(err as Error).message}`;
   } finally {
@@ -492,9 +688,15 @@ function downloadAudioName() {
 }
 
 async function downloadPreviewAudio() {
-  const url = previewAudioUrl.value.trim();
+  let url = previewAudioUrl.value.trim();
+  // 如果没有试听音频但有生成过的音色文件，直接用该文件下载
+  if (!url && hasGeneratedVoiceInSession.value) {
+    url = generatedDownloadUrl.value.trim()
+      || referenceAudioPath.value.trim()
+      || (props.initialReferenceAudioPath ? props.initialReferenceAudioPath : "");
+  }
   if (!url) {
-    previewStatus.value = "请先试听后再下载";
+    previewStatus.value = "请先试听或生成音色后再下载";
     return;
   }
   previewStatus.value = "正在准备下载...";
@@ -537,6 +739,7 @@ function confirm() {
     referenceText: referenceText.value.trim(),
     promptText: promptText.value.trim(),
     mixVoices: mixVoices.value.filter((item) => item.voiceId),
+    generatedDownloadUrl: generatedDownloadUrl.value,
   });
 }
 
@@ -602,6 +805,102 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-section__title">音色预设</div>
             <div v-if="!effectiveConfigId" class="voice-dialog-note">请先在设置里配置语音生成模型。</div>
             <div v-else-if="!presets.length" class="voice-dialog-note">当前语音生成配置还没有返回可用音色。</div>
+            <!-- 阿里云 cosyvoice 专用搜索列表 -->
+            <div v-else-if="isAliyunDirectCosyVoice" class="voice-dialog-aliyun-presets">
+              <div class="voice-dialog-preset-row">
+                <select v-model="aliyunPresetModel" class="select voice-dialog-preset-filter" @change="onAliyunModelChange">
+                  <option v-for="m in aliyunPresetModels" :key="m.value" :value="m.value">{{ m.label }}</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-row">
+                <input
+                  v-model="aliyunPresetSearch"
+                  class="input voice-dialog-preset-search"
+                  type="text"
+                  placeholder="搜索音色名称或 voice id"
+                />
+                <select v-model="aliyunPresetGender" class="select voice-dialog-preset-filter">
+                  <option value="all">全部性别</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+                <select v-model="aliyunPresetAge" class="select voice-dialog-preset-filter">
+                  <option value="all">全部年龄</option>
+                  <option value="child">儿童</option>
+                  <option value="youth">少年</option>
+                  <option value="adult">青年</option>
+                  <option value="middle">中年</option>
+                  <option value="elder">老年</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-list">
+                <button
+                  v-for="row in aliyunPresetPage"
+                  :key="row.voice"
+                  class="voice-dialog-preset-row-item"
+                  :class="{ 'is-active': selectedPresetId === row.voice }"
+                  type="button"
+                  @click="selectedPresetId = row.voice"
+                >
+                  <span class="voice-dialog-preset-name">{{ row.name }}</span>
+                  <span class="voice-dialog-preset-id">{{ row.voice }}</span>
+                  <span v-if="row.family === 'business_preset'" class="voice-dialog-preset-scene" style="background:#e8f5e9;color:#2e7d32">预设克隆</span>
+                  <span v-else-if="row.family === 'qwen_tts'" class="voice-dialog-preset-scene" style="background:#e3f2fd;color:#1565c0">Qwen</span>
+                  <span v-else-if="row.model" class="voice-dialog-preset-scene">{{ row.model }}</span>
+                  <span v-if="row.scene && row.family !== 'business_preset'" class="voice-dialog-preset-scene">{{ row.scene }}</span>
+                </button>
+              </div>
+              <div v-if="aliyunPresetTotal === 0" class="voice-dialog-note">无匹配音色</div>
+              <div v-else class="voice-dialog-preset-pager">
+                <button class="button small" type="button" :disabled="aliyunPresetPageIndex <= 1" @click="aliyunPresetPageIndex = Math.max(1, aliyunPresetPageIndex - 1)">上一页</button>
+                <span class="voice-dialog-preset-page-text">{{ aliyunPresetPageIndex }} / {{ aliyunPresetTotalPages }}（共 {{ aliyunPresetTotal }} 条）</span>
+                <button class="button small" type="button" :disabled="aliyunPresetPageIndex >= aliyunPresetTotalPages" @click="aliyunPresetPageIndex = Math.min(aliyunPresetTotalPages, aliyunPresetPageIndex + 1)">下一页</button>
+              </div>
+            </div>
+            <!-- minimax 专用搜索列表 -->
+            <div v-else-if="isMiniMaxManufacturer" class="voice-dialog-aliyun-presets">
+              <div class="voice-dialog-preset-row">
+                <input
+                  v-model="minimaxPresetSearch"
+                  class="input voice-dialog-preset-search"
+                  type="text"
+                  placeholder="搜索 minimax 音色名称或 voice id"
+                />
+                <select v-model="minimaxPresetVoiceType" class="select voice-dialog-preset-filter">
+                  <option value="all">全部类型</option>
+                  <option value="business_preset">业务预设</option>
+                  <option value="system">系统音色</option>
+                  <option value="voice_cloning">克隆音色</option>
+                  <option value="voice_generation">文生音色</option>
+                </select>
+                <select v-model="minimaxPresetGender" class="select voice-dialog-preset-filter">
+                  <option value="all">全部性别</option>
+                  <option value="male">男</option>
+                  <option value="female">女</option>
+                </select>
+              </div>
+              <div class="voice-dialog-preset-list">
+                <button
+                  v-for="row in minimaxPresetList"
+                  :key="row.voice"
+                  class="voice-dialog-preset-row-item"
+                  :class="{ 'is-active': selectedPresetId === row.voice }"
+                  type="button"
+                  @click="selectedPresetId = row.voice"
+                >
+                  <span class="voice-dialog-preset-name">{{ row.name }}</span>
+                  <span class="voice-dialog-preset-id">{{ row.voice }}</span>
+                  <span v-if="row.voiceType" class="voice-dialog-preset-scene">{{ row.voiceType }}</span>
+                </button>
+              </div>
+              <div v-if="minimaxPresetTotal === 0" class="voice-dialog-note">无匹配音色</div>
+              <div v-else class="voice-dialog-preset-pager">
+                <button class="button small" type="button" :disabled="minimaxPresetPageIndex <= 1" @click="minimaxPresetPageIndex = Math.max(1, minimaxPresetPageIndex - 1)">上一页</button>
+                <span class="voice-dialog-preset-page-text">{{ minimaxPresetPageIndex }} / {{ minimaxPresetTotalPages }}（共 {{ minimaxPresetTotal }} 条）</span>
+                <button class="button small" type="button" :disabled="minimaxPresetPageIndex >= minimaxPresetTotalPages" @click="minimaxPresetPageIndex = Math.min(minimaxPresetTotalPages, minimaxPresetPageIndex + 1)">下一页</button>
+              </div>
+            </div>
+            <!-- 其他厂商用旧列表 -->
             <div v-else class="voice-dialog-list">
               <button
                 v-for="preset in presets"
@@ -618,6 +917,8 @@ onBeforeUnmount(() => {
 
           <section v-else-if="selectedMode === 'clone'" class="voice-dialog-section">
             <div class="voice-dialog-section__title">参考音频</div>
+            <div class="voice-dialog-note voice-dialog-note--warn">语音合成与语音克隆必须使用相同供应商和匹配的模型</div>
+            <div class="voice-dialog-note">CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用</div>
             <input ref="fileInput" type="file" accept="audio/*" hidden @change="chooseAudio" />
             <button class="voice-dialog-upload" type="button" :disabled="audioUploading" @click="openAudioPicker">
               {{ audioUploading ? "上传中..." : "选择并上传音频" }}
@@ -674,8 +975,8 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-preview-actions">
               <button class="voice-dialog-preview-btn voice-dialog-preview-btn--primary" type="button" :disabled="previewLoading" @click="playPreview">{{ previewLoading ? '加载中...' : '试听' }}</button>
               <button class="voice-dialog-preview-btn" type="button" :disabled="!previewAudioUrl" @click="stopPreview">停止</button>
-              <button class="voice-dialog-preview-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色' }}</button>
-              <button v-if="previewAudioUrl" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
+              <button class="voice-dialog-preview-btn  generated-timbre-btn" type="button" :disabled="generateLoading" @click="generateVoiceFile">{{ generateLoading ? '生成中...' : '生成音色文件' }}</button>
+              <button v-if="previewAudioUrl || (hasGeneratedVoiceInSession && (referenceAudioPath || generatedDownloadUrl)) || (props.initialReferenceAudioPath && hasGeneratedVoiceInSession)" class="voice-dialog-preview-btn voice-dialog-preview-btn--download" type="button" @click="downloadPreviewAudio">下载音色</button>
             </div>
             <div v-if="previewStatus" class="voice-dialog-note">{{ previewStatus }}</div>
             <audio v-if="previewAudioUrl" ref="previewPlayer" class="voice-dialog-audio" :src="previewAudioUrl" controls preload="metadata"></audio>

@@ -10,7 +10,7 @@ import { imageStyleForKey } from "../utils/imageStyles";
 
 type ImageTarget = "user" | "cover" | "chapter" | "npc";
 type VoiceTarget = "player" | "narrator" | "npc";
-type AvatarPreviewTarget = "user" | "npc";
+type AvatarPreviewTarget = "account" | "user" | "npc";
 type AvatarPreviewMode = "composed" | "foreground" | "background" | "source";
 type ChapterTabItem = {
   id: number | null;
@@ -180,6 +180,16 @@ const avatarPreviewState = computed(() => {
       fallbackText: (store.state.playerName || "用户").slice(0, 1) || "用",
     };
   }
+  if (avatarPreviewTarget.value === "account") {
+    return {
+      title: store.state.userName || "账号头像",
+      foregroundPath: store.resolveMediaPath(store.state.accountAvatarPath),
+      backgroundPath: store.resolveMediaPath(store.state.accountAvatarBgPath),
+      sourcePath: store.resolveMediaPath(store.state.accountAvatarSourcePath),
+      videoPath: "",
+      fallbackText: (store.state.userName || "账").slice(0, 1) || "账",
+    };
+  }
   if (avatarPreviewTarget.value === "npc") {
     const role = typeof avatarPreviewNpcIndex.value === "number" ? store.state.npcRoles[avatarPreviewNpcIndex.value] : null;
     return {
@@ -278,7 +288,7 @@ const imageDialogState = computed(() => {
     case "user":
       return {
         title: "创建角色",
-        initialPrompt: store.state.playerDesc || store.state.playerName || "用户头像",
+        initialPrompt: store.state.playerImagePrompt || store.state.playerDesc || store.state.playerName || "用户头像",
         initialStyleKey: "general_3",
       };
     case "cover":
@@ -297,7 +307,7 @@ const imageDialogState = computed(() => {
       const role = typeof imageDialogNpcIndex.value === "number" ? store.state.npcRoles[imageDialogNpcIndex.value] : null;
       return {
         title: "创建角色",
-        initialPrompt: role?.description || role?.sample || role?.name || "角色头像",
+        initialPrompt: role?.avatarImagePrompt || role?.description || role?.sample || role?.name || "角色头像",
         initialStyleKey: "general_3",
       };
     }
@@ -324,6 +334,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: store.state.playerVoiceReferenceText,
         initialPromptText: store.state.playerVoicePromptText,
         initialMixVoices: store.state.playerVoiceMixVoices,
+        initialGeneratedDownloadUrl: store.state.playerVoiceGeneratedDownloadUrl,
       };
     case "narrator":
       return {
@@ -337,6 +348,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: store.state.narratorVoiceReferenceText,
         initialPromptText: store.state.narratorVoicePromptText,
         initialMixVoices: store.state.narratorVoiceMixVoices,
+        initialGeneratedDownloadUrl: store.state.narratorVoiceGeneratedDownloadUrl,
       };
     case "npc": {
       const role = typeof voiceDialogNpcIndex.value === "number" ? store.state.npcRoles[voiceDialogNpcIndex.value] : null;
@@ -351,6 +363,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: role?.voiceReferenceText || "",
         initialPromptText: role?.voicePromptText || "",
         initialMixVoices: role?.voiceMixVoices || [],
+        initialGeneratedDownloadUrl: role?.voiceGeneratedDownloadUrl || "",
       };
     }
     default:
@@ -365,6 +378,7 @@ const voiceDialogState = computed(() => {
         initialReferenceText: "",
         initialPromptText: "",
         initialMixVoices: [],
+        initialGeneratedDownloadUrl: "",
       };
   }
 });
@@ -719,6 +733,8 @@ async function handleImageConfirm(payload: { prompt: string; styleKey: string; r
   try {
     if (target === "user") {
       await store.applyImageToTarget("user", mergedPrompt, payload.references, store.state.playerName || "用户");
+      // 用户生图后立即保存世界数据
+      await store.saveWorldOnly("preserve", false);
     } else if (target === "cover") {
       await store.applyImageToTarget("cover", mergedPrompt, payload.references, store.state.worldName || "故事封面");
     } else if (target === "chapter") {
@@ -728,7 +744,9 @@ async function handleImageConfirm(payload: { prompt: string; styleKey: string; r
       if (role) {
         await store.applyImageToTarget("npc", mergedPrompt, payload.references, role.name || "角色", (path, bgPath) => {
           store.setNpcRoleAvatar(imageDialogNpcIndex.value as number, path, bgPath);
-        });
+        }, imageDialogNpcIndex.value);
+        // NPC 生图后立即保存世界数据，确保 avatarSourcePath 和 avatarImagePrompt 持久化
+        await store.saveWorldOnly("preserve", false);
       }
     }
     store.state.notice = "图片已更新";
@@ -1644,6 +1662,7 @@ function cancelRemoveCurrentNpc() {
       :initial-reference-text="voiceDialogState.initialReferenceText"
       :initial-prompt-text="voiceDialogState.initialPromptText"
       :initial-mix-voices="voiceDialogState.initialMixVoices"
+      :initial-generated-download-url="voiceDialogState.initialGeneratedDownloadUrl"
       @close="closeVoiceDialog"
       @confirm="handleVoiceConfirm"
     />
