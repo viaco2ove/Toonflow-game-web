@@ -5430,6 +5430,16 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(238, 244, 255, 0.92);
 }
 
+/* 处理中状态：隐藏输入框，显示处理文字 */
+.play-textarea--processing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(214, 226, 243, 0.7);
+  font-size: 14px;
+  font-weight: normal;
+}
+
 .play-send-btn {
   min-width: 84px;
   height: 38px;

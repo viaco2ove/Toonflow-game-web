@@ -1102,6 +1102,30 @@ const playInputPlaceholder = computed(() => {
   // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成"下一位"，因此统一退回泛化提示。
   return "当前还没轮到用户发言";
 });
+
+// 安卓输入区处理中提示，涵盖所有不可输入状态
+const androidInputHint = computed(() => {
+  if (store.state.sessionOpening) return sessionOpeningStageText.value + "...";
+  if (sessionOpenErrorText.value) return "打开会话失败";
+  if (activeMiniGame.value) {
+    return miniGameInputPlaceholder(activeMiniGame.value, true);
+  }
+  const runtimeStatus = currentRuntimeInputStatus.value;
+  const status = sessionStatusKey(playSessionStatus.value);
+  if (runtimeStatus === "sending" || store.state.sendPending || store.state.runtimeProcessingPending) {
+    return `处理中${processingDots.value}`;
+  }
+  if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
+  if (runtimeStatus === "voicing") return `正在朗读${expectedSpeaker.value || "台词"}...`;
+  if (runtimeStatus === "streaming") return "台词生成中...";
+  if (runtimeStatus === "generated") return "台词生成完成...";
+  if (runtimeStatus === "revealing") return "台词展示中...";
+  if (runtimeStatus === "auto_advancing") return "自动推进中...";
+  if (runtimeStatus === "orchestrated") return "编排中...";
+  if (finishedSessionStatuses.has(status)) return "当前章节已完成";
+  if (failedSessionStatuses.has(status)) return "当前故事已失败";
+  return "当前还没轮到用户发言";
+});
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
@@ -4116,7 +4140,17 @@ onBeforeUnmount(() => {
         <template v-else-if="isAndroidDevice">
           <template v-if="inputMode === 'text'">
             <div class="play-text-bar android-text-bar">
-              <textarea v-model="store.state.sendText" class="play-textarea" rows="1" placeholder="输入一句话继续故事" :disabled="!canPlayerInput" @keydown.enter.prevent="submit"></textarea>
+              <textarea
+                v-if="canPlayerInput"
+                v-model="store.state.sendText"
+                class="play-textarea"
+                rows="1"
+                placeholder="输入一句话继续故事"
+                @keydown.enter.prevent="submit"
+              ></textarea>
+              <div v-else class="play-textarea play-textarea--processing">
+                {{ androidInputHint }}
+              </div>
               <button type="button" class="play-mini-round play-mini-round--voice" :disabled="!canPlayerInput" @click="inputMode = 'voice'">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>

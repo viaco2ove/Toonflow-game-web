@@ -359,7 +359,29 @@ export async function playRuntimeVoiceBlob(
     runtimeVoiceResolve = resolve;
     let finished = false;
     const timeoutMs = waitForCompletion ? estimatePlaybackTimeoutMs(speakable) : 8000;
-    const timer = window.setTimeout(() => {
+    let timer = window.setTimeout(handleTimeout, timeoutMs);
+    function handleTimeout() {
+      // ★ 防止短估算误杀：如果 player 仍在播放（未 ended、未暂停、currentTime 在前进），
+      // 不立即 finalize，而是按"剩余时长 + 5s"再续一次，最多续 3 次。
+      if (
+        !finished
+        && !player.ended
+        && !player.paused
+        && Number.isFinite(player.duration)
+        && player.duration > 0
+        && player.currentTime < player.duration
+      ) {
+        const remainingMs = Math.max(0, (player.duration - player.currentTime) * 1000);
+        const extendMs = Math.min(60000, remainingMs + 5000);
+        console.warn("[voiceGenPlay] playRuntimeVoiceBlob timeout but still playing, extending", {
+          extendMs,
+          currentTime: player.currentTime,
+          duration: player.duration,
+          remainingMs,
+        });
+        timer = window.setTimeout(handleTimeout, extendMs);
+        return;
+      }
       console.warn("[voiceGenPlay] playRuntimeVoiceBlob timeout", {
         timeoutMs,
         speakable: speakable.slice(0, 60),
@@ -372,7 +394,7 @@ export async function playRuntimeVoiceBlob(
         error: player.error ? { code: player.error.code, message: player.error.message } : null,
       });
       finalize(false, "朗读超时");
-    }, timeoutMs);
+    }
     const finalize = (ok: boolean, hint: string) => {
       if (finished) return;
       finished = true;

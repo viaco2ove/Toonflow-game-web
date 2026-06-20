@@ -134,8 +134,11 @@ export function setLimitedCacheValue<T>(cache: Map<string, T>, key: string, valu
 
 export function estimatePlaybackTimeoutMs(text: string): number {
   const normalized = sanitizeSpeechText(text);
-  const estimated = normalized.length * 180 + 6000;
-  return Math.max(8000, Math.min(45000, estimated));
+  // 中文 TTS 实际语速约 4-6 字/秒（约 200-250ms/字），加 30% 余量后取 320ms/字。
+  // 起始固定 12s 用于覆盖网络抖动 / 模型预热 / 浏览器解码。
+  // 上限 180s（3 分钟），覆盖最长的旁白段落，避免被 timeout 提前打断。
+  const estimated = normalized.length * 320 + 12000;
+  return Math.max(15000, Math.min(180000, estimated));
 }
 
 export function estimateRevealDelayMs(text: string): number {
