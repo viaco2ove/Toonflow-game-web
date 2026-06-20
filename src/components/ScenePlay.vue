@@ -1777,7 +1777,13 @@ const playbackCanPlay = computed(() => playbackMessages.value.length > 0 && play
 const allowRoleView = computed(() => currentWorld.value?.settings?.allowRoleView !== false);
 const canEditCurrentWorld = computed(() => store.canEditWorld(currentWorld.value));
 const settingSelectedRole = computed(() => roleCards.value.find((item) => item.id === settingRoleId.value) || roleCards.value[0] || null);
-const tipOptions = computed(() => {
+
+// 玩家行动提示器：动态拉取 3 条第一人称提示。
+// 每次点 play-tip-fab 切到 tips 视图，或在 tips 视图下手动刷新时都会拉新的。
+const tipOptions = ref<string[]>([]);
+const tipsLoading = ref(false);
+
+function defaultTipOptions(): string[] {
   const leadRole = roleCards.value.find((item) => item.roleType === "npc")?.name || currentChapter.value?.openingRole || "旁白";
   const chapterTitle = currentChapter.value?.title || "当前章节";
   return [
@@ -1785,7 +1791,20 @@ const tipOptions = computed(() => {
     `直接推进当前章节目标，别再绕路。`,
     `你先给我一个稳妥方案，我按方案执行。`,
   ];
-});
+}
+
+async function refreshPlayTips() {
+  if (tipsLoading.value) return;
+  tipsLoading.value = true;
+  try {
+    const tips = await store.fetchPlayTips();
+    tipOptions.value = tips.length ? tips : defaultTipOptions();
+  } catch {
+    tipOptions.value = defaultTipOptions();
+  } finally {
+    tipsLoading.value = false;
+  }
+}
 const browserSpeechSupported = computed(() => {
   if (typeof window === "undefined") return false;
   return Boolean(window.MediaRecorder && navigator.mediaDevices?.getUserMedia);
@@ -2941,7 +2960,13 @@ function toggleHistoryMode() {
 }
 
 function toggleTipsMode() {
-  playMode.value = playMode.value === "tips" ? "live" : "tips";
+  if (playMode.value !== "tips") {
+    // 切到 tips 模式时立刻拉新一批提示
+    void refreshPlayTips();
+    playMode.value = "tips";
+  } else {
+    playMode.value = "live";
+  }
 }
 
 function stopPlaybackSequence() {
@@ -3690,7 +3715,7 @@ onBeforeUnmount(() => {
                 </div>
               </article>
               <button
-                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips' && tipOptions.length"
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
                 type="button"
                 class="play-tip-fab"
                 @click="toggleTipsMode"
@@ -3901,8 +3926,24 @@ onBeforeUnmount(() => {
       </section>
 
       <section v-if="playMode === 'tips'" class="play-sheet play-sheet--tips">
-        <div class="play-sheet__title">AI 提示</div>
-        <button v-for="option in tipOptions" :key="option" type="button" class="play-tip-option" @click="pickTip(option)">{{ option }}</button>
+        <div class="play-sheet__title">
+          AI 提示
+          <button
+            type="button"
+            class="play-tip-refresh"
+            :disabled="tipsLoading"
+            @click="refreshPlayTips"
+          >{{ tipsLoading ? "生成中…" : "换一批" }}</button>
+        </div>
+        <div v-if="tipsLoading && !tipOptions.length" class="play-tip-loading">正在为你生成行动建议...</div>
+        <button
+          v-for="option in tipOptions"
+          :key="option"
+          type="button"
+          class="play-tip-option"
+          :disabled="tipsLoading"
+          @click="pickTip(option)"
+        >{{ option }}</button>
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
       </section>
 
