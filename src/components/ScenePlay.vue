@@ -1566,7 +1566,7 @@ const androidVoiceBtnText = computed(() => {
   if (androidVoiceMode.value === "action") return "动作: (xxx)";
   if (androidVoiceMode.value === "scene") return "场景: [xxx]";
   if (voiceListening.value) return androidVoiceText.value || "松开发送";
-  if (currentRuntimeInputStatus.value === "sending" || sessionRuntimeStageText.value) return `处理中${processingDots.value}`;
+  if (androidSubmitting.value || currentRuntimeInputStatus.value === "sending" || sessionRuntimeStageText.value) return androidInputHint.value;
   return "按住说话";
 });
 
@@ -4233,7 +4233,7 @@ onBeforeUnmount(() => {
           <template v-if="inputMode === 'text'">
             <div class="play-text-bar android-text-bar">
               <textarea
-                v-if="canPlayerInput"
+                v-if="canPlayerInput && !androidSubmitting"
                 v-model="store.state.sendText"
                 class="play-textarea"
                 rows="1"
