@@ -5581,7 +5581,7 @@ textarea::-webkit-scrollbar-thumb {
 
   .play-objective-chip {
     max-width: min(220px, calc(100% - 58px));
-    padding: 1px 11px;
+    padding: 2px 11px 1px 11px;
   }
 
   .play-live-card {
