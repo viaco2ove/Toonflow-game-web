@@ -1370,6 +1370,8 @@ watch(() => activeMiniGame.value?.gameType || "", () => {
 const playMode = ref<"live" | "history" | "tips" | "setting">("live");
 const playbackCursor = ref(0);
 const playbackPlaying = ref(false);
+// 观看模式视图模式：list = 列表式逐条堆叠；single = 单台词大屏（只显示当前 cursor 那一条）
+const playbackViewMode = ref<"list" | "single">("list");
 let playbackRunId = 0;
 const isSessionPlaybackMode = computed(() => !store.state.debugMode && store.state.sessionViewMode === "playback");
 const inputMode = ref<"voice" | "text">("text");
@@ -1660,9 +1662,16 @@ const menuX = ref(0);
 const menuY = ref(0);
 const pressTimer = ref<number | null>(null);
 const menuVisibleHint = ref("");
-const currentLiveMessage = computed(() =>
-  playMode.value === "history" ? null : (displayMessages.value[displayMessages.value.length - 1] || null),
-);
+const currentLiveMessage = computed(() => {
+  // 观看模式 + 单台词观看：currentLive 指向 cursor 那一条，让大图头像 + 单卡片 UI 复用游玩模式
+  if (playMode.value === "history") {
+    if (isSessionPlaybackMode.value && playbackViewMode.value === "single") {
+      return playbackMessages.value[playbackCursor.value] || null;
+    }
+    return null;
+  }
+  return displayMessages.value[displayMessages.value.length - 1] || null;
+});
 const currentLiveFigureRole = computed(() => {
   const message = currentLiveMessage.value;
   if (!message || isRuntimeRetryMessage(message)) return null;
@@ -1723,6 +1732,17 @@ const latestPendingPlayerMessage = computed(() => {
 });
 const displayMessages = computed(() => {
   if (playMode.value === "history") {
+    // 观看模式
+    if (isSessionPlaybackMode.value) {
+      // 单条模式：只显示 cursor 指向的那一条台词
+      if (playbackViewMode.value === "single") {
+        const current = playbackMessages.value[playbackCursor.value];
+        return current ? [current] : [];
+      }
+      // 列表模式：显示从 0 到 cursor 的所有台词，让"看到的内容 = 进度条位置"
+      const limit = Math.max(0, Math.min(playbackCursor.value + 1, playbackMessages.value.length));
+      return playbackMessages.value.slice(0, limit);
+    }
     return messages.value;
   }
   const pendingPlayerMessage = latestPendingPlayerMessage.value;
@@ -1997,6 +2017,7 @@ watch(
     playbackPlaying.value = false;
     playbackRunId += 1;
   },
+  { immediate: true },
 );
 
 watch(
@@ -3022,8 +3043,26 @@ async function startPlaybackSequence() {
     await nextTick();
     const message = playbackMessages.value[index];
     if (!message) continue;
-    await playMessageAudio(message, true, true);
-    if (runId !== playbackRunId) return;
+    // 观看模式下 player / narrator / NPC 都走同一套 playMessageAudio：
+    // - 有绑定 → 拉服务端 TTS，await 直到播放结束
+    // - 无绑定 / 失败 → 浏览器 SpeechSynthesis 兜底
+    // - 静音 (autoVoice=false) → 跳过语音，仅按文本长度停留
+    // 任一路径都会等"真实播放结束"或"最小阅读时间"才推进
+    const startedAt = Date.now();
+    if (autoVoice.value) {
+      await playMessageAudio(message, true, true);
+      if (runId !== playbackRunId) return;
+    }
+    // 兜底最小停留：静音模式 / 语音失败时，按文本长度补足"看完字"的时间，
+    // 防止字幕一闪而过；正常播放时 elapsed 已超过这个值，不会有额外等待。
+    const elapsed = Date.now() - startedAt;
+    const speakable = messageDisplayContent(message).trim();
+    const minDwellMs = Math.max(1500, Math.min(20000, speakable.length * 200 + 600));
+    const remainingMs = minDwellMs - elapsed;
+    if (remainingMs > 0) {
+      await sleep(remainingMs);
+      if (runId !== playbackRunId) return;
+    }
     await sleep(120);
   }
   if (runId === playbackRunId) {
@@ -3490,6 +3529,9 @@ onBeforeUnmount(() => {
   stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
+  // 退出页面时彻底停掉回放循环 + 当前正在播放的语音 +（最关键）置位 runId
+  // 防止 startPlaybackSequence 的 for 循环还在背后跑、继续触发 playMessageAudio 生成语音
+  stopPlaybackSequence();
   stopRuntimeVoicePlayback();
   clearRuntimeVoiceIndicator();
 });
@@ -3537,7 +3579,7 @@ onBeforeUnmount(() => {
       <div class="play-ai-mark">内容由 AI 生成</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">{{ isSessionPlaybackMode ? "剧情回放" : "历史模式" }}</div>
       <div
-        v-if="playMode !== 'history' && currentLiveFigureFgPath"
+        v-if="(playMode !== 'history' || (isSessionPlaybackMode && playbackViewMode === 'single')) && currentLiveFigureFgPath"
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
@@ -3547,10 +3589,13 @@ onBeforeUnmount(() => {
       <div
         ref="messageViewport"
         class="play-thread"
-        :class="{ 'play-thread--history': playMode === 'history', 'play-thread--single-mode': playMode !== 'history' }"
+        :class="{
+          'play-thread--history': playMode === 'history' && !(isSessionPlaybackMode && playbackViewMode === 'single'),
+          'play-thread--single-mode': playMode !== 'history' || (isSessionPlaybackMode && playbackViewMode === 'single'),
+        }"
       >
         <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">{{ emptySessionHint }}</div>
-        <div v-else-if="playMode === 'history'" class="play-thread__history">
+        <div v-else-if="playMode === 'history' && !(isSessionPlaybackMode && playbackViewMode === 'single')" class="play-thread__history">
           <template v-for="message in displayMessages" :key="message.id">
             <article
               v-if="isRuntimeRetryMessage(message)"
@@ -3972,7 +4017,7 @@ onBeforeUnmount(() => {
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
       </section>
 
-      <section v-if="activeMiniGame && playMode !== 'setting' && playMode !== 'tips'" class="play-mini-game-panel">
+      <section v-if="activeMiniGame && playMode !== 'setting' && playMode !== 'tips' && !isSessionPlaybackMode" class="play-mini-game-panel">
         <div class="play-mini-game-panel__head">
           <div>
             <div class="play-mini-game-panel__title">{{ activeMiniGame.displayName }}</div>
@@ -4036,7 +4081,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        <div class="play-story-actions">
+        <div v-if="!isSessionPlaybackMode" class="play-story-actions">
           <button type="button" class="play-story-action" @click="toggleFavorite">
             <span class="play-story-action__icon">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -4074,12 +4119,15 @@ onBeforeUnmount(() => {
                 <path d="M12 8v5l3 2"></path>
               </svg>
             </span>
-            <span>{{ playMode === "history" ? (isSessionPlaybackMode ? "继续聊" : "返回") : "历史" }}</span>
+            <span>{{ playMode === "history" ? "返回" : "历史" }}</span>
           </button>
         </div>
       </div>
 
-      <div class="play-input-shell" :class="{ 'play-input-shell--text': inputMode === 'text', 'play-input-shell--fallback': canPlayerInput && !canPlayerSpeak }">
+      <div
+        class="play-input-shell"
+        :class="{ 'play-input-shell--text': inputMode === 'text', 'play-input-shell--fallback': canPlayerInput && !canPlayerSpeak }"
+      >
         <div v-if="latestRuntimeChatTrace && runtimeDebugPanelOpen" class="play-debug-panel">
           <div class="play-debug-panel__meta">
             <span class="play-debug-badge">会话 {{ runtimeDebugConversationLabel }}</span>
@@ -4113,7 +4161,7 @@ onBeforeUnmount(() => {
               type="range"
               :min="0"
               :max="playbackMaxIndex"
-              :disabled="!playbackCanPlay || playbackPlaying"
+              :disabled="!playbackCanPlay"
               @input="onPlaybackCursorInput"
             >
             <div class="playback-panel__progress">{{ playbackProgressLabel }}</div>
@@ -4125,16 +4173,23 @@ onBeforeUnmount(() => {
               :disabled="!playbackCanPlay"
               @click="playbackPlaying ? stopPlaybackSequence() : startPlaybackSequence()"
             >
-              {{ playbackPlaying ? "暂停回放" : "开始回放" }}
+              {{ playbackPlaying ? "暂停" : (playbackCursor > 0 ? "继续播放" : "开始播放") }}
+            </button>
+            <button
+              type="button"
+              class="playback-panel__btn"
+              @click="playbackViewMode = playbackViewMode === 'single' ? 'list' : 'single'"
+            >
+              {{ playbackViewMode === "single" ? "列表式观看" : "单台词观看" }}
             </button>
             <button type="button" class="playback-panel__btn playback-panel__btn--primary" @click="continueFromPlayback">
-              继续聊
+              退出回放·继续聊
             </button>
           </div>
         </div>
         <div v-else-if="runtimeProgressHint" class="play-turn-hint" :class="{ 'play-turn-hint--loading': debugAutoAdvancing }">{{ runtimeProgressHint }}</div>
         <template v-if="playMode === 'history' && isSessionPlaybackMode">
-          <div class="play-playback-lock">当前为剧情回放模式，可查看全部历史台词。</div>
+          <!-- 观看模式下回放面板已在上方，这里不再重复展示锁定提示，避免占位 -->
         </template>
         <!-- 安卓设备模式 -->
         <template v-else-if="isAndroidDevice">

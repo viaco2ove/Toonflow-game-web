@@ -136,15 +136,54 @@ export function findMessageRole(message: MessageItem): StoryRole | null {
   return fallbackMatch;
 }
 
+/**
+ * 解析"用户角色"的语音绑定。
+ * 与 narrator/npc 路径对齐：观看模式回放用户台词时也需要用绑定的音色生成语音，
+ * 不再无视 world.playerRole 直接 return null。
+ */
+export function playerVoiceBinding(): VoiceBindingDraft | null {
+  const store = getStore();
+  const sessionDetail = store.state.sessionDetail;
+  const world = sessionDetail?.world || null;
+  const playerRole = world?.playerRole;
+  if (!playerRole) return null;
+  // 调试模式（无 world）允许从全局配置回退取一个默认 configId
+  const configId = playerRole.voiceConfigId ?? (store.state.debugMode && !world ? runtimeStoryVoiceConfigId() : null);
+  const mode = playerRole.voiceMode || store.state.playerVoiceMode || "text";
+  const presetId = playerRole.voicePresetId
+    || store.state.playerVoicePresetId
+    || (mode === "text" ? inferFallbackPreset("player", playerRole.name, playerRole.description) : "");
+  return createVoiceBindingDraft({
+    label: playerRole.voice || store.state.playerVoice || playerRole.name || store.state.playerName || "用户",
+    configId: configId ?? null,
+    roleId: playerRole.id || "player",
+    presetId,
+    mode,
+    referenceAudioPath: playerRole.voiceReferenceAudioPath || store.state.playerVoiceReferenceAudioPath || "",
+    referenceAudioName: playerRole.voiceReferenceAudioName || store.state.playerVoiceReferenceAudioName || "",
+    referenceText: playerRole.voiceReferenceText || store.state.playerVoiceReferenceText || "",
+    promptText: playerRole.voicePromptText || store.state.playerVoicePromptText || "",
+    mixVoices: playerRole.voiceMixVoices || store.state.playerVoiceMixVoices || [],
+  });
+}
+
 export function resolveMessageVoiceBinding(message: MessageItem): VoiceBindingDraft | null {
-  if (message.roleType === "player") return null;
+  if (message.roleType === "player") return playerVoiceBinding();
   if (message.roleType === "narrator") return narratorVoiceBinding();
   return roleVoiceBinding(findMessageRole(message));
 }
 
 export function resolveFallbackVoiceBinding(message: MessageItem, originalBinding?: VoiceBindingDraft | null): VoiceBindingDraft | null {
   const store = getStore();
-  if (message.roleType === "player") return null;
+  if (message.roleType === "player") {
+    return createVoiceBindingDraft({
+      label: originalBinding?.label || store.state.playerVoice || store.state.playerName || "用户",
+      configId: originalBinding?.configId ?? playerVoiceBinding()?.configId ?? null,
+      roleId: originalBinding?.roleId || "player",
+      mode: "text",
+      presetId: inferFallbackPreset("player", store.state.playerName || "", store.state.playerDesc || ""),
+    });
+  }
   if (message.roleType === "narrator") {
     return createVoiceBindingDraft({
       label: originalBinding?.label || store.state.narratorVoice || store.state.narratorName || "旁白",
