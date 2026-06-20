@@ -4980,6 +4980,7 @@ textarea::-webkit-scrollbar-thumb {
   border: 1px solid rgba(188, 204, 226, 0.18);
   box-shadow: 0 14px 28px rgba(5, 14, 26, 0.24);
   backdrop-filter: blur(12px);
+  line-height: 5px;
   /* 任务/小游戏面板需要始终压在立绘之上，否则展开详情时会被绝对定位的角色前景遮住。 */
 }
 
@@ -5185,7 +5186,7 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-story-info-btn {
   width: 20px;
-  height: 20px;
+  height: 14px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(255, 255, 255, 0.06);
@@ -5580,7 +5581,7 @@ textarea::-webkit-scrollbar-thumb {
 
   .play-objective-chip {
     max-width: min(220px, calc(100% - 58px));
-    padding: 1px 4px;
+    padding: 1px 11px;
   }
 
   .play-live-card {
