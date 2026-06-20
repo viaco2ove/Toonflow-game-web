@@ -320,6 +320,17 @@ export class ToonflowApi {
     return this.post<SessionNarrativeResult>("/game/commitNarrativeTurn", payload);
   }
 
+  /**
+   * 玩家行动提示器：每次点击 play-tip-fab 都调用一次，返回 3 条第一人称行动提示。
+   * 失败时后端兜底返回固定文案，前端永远拿得到非空数组。
+   */
+  getPlayTips(sessionId: string) {
+    return this.post<{ tips: string[]; source: "ai" | "fallback"; latencyMs: number }>(
+      "/game/getPlayTips",
+      { sessionId },
+    );
+  }
+
   continueSession(sessionId: string) {
     return this.post<SessionNarrativeResult>("/game/continueSession", { sessionId });
   }

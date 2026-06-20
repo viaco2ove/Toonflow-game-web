@@ -7356,6 +7356,22 @@ function createToonflowStore() {
     }
   }
 
+  /**
+   * 玩家行动提示器：每次点 play-tip-fab 都拉新的 3 条。
+   * 失败时不抛错（后端会兜底，前端 catch 仅写 notice）。
+   */
+  async function fetchPlayTips(): Promise<string[]> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) return [];
+    try {
+      const res = await api.getPlayTips(sessionId);
+      return Array.isArray(res?.tips) ? res.tips.filter(Boolean) : [];
+    } catch (err) {
+      state.notice = `获取提示失败：${err instanceof Error ? err.message : String(err)}`;
+      return [];
+    }
+  }
+
   async function sendMessage() {
     const content = state.sendText.trim();
     if (!content || state.sendPending || state.runtimeProcessingPending) return;
@@ -7567,6 +7583,7 @@ function createToonflowStore() {
     getDebugChapterIndex,
     syncDebugChapter,
     sendMessage,
+    fetchPlayTips,
     deleteMessage,
     copyMessageText,
     reactMessage,
