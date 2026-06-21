@@ -1022,6 +1022,33 @@ const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnStat
 const canPlayerSpeak = computed(() => store.sessionCanPlayerSpeak());
 const playSessionStatus = computed(() => scalarText(session.value?.status));
 const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
+const activeMiniGame = computed(() => {
+  const root = asMiniRecord(runtimeState.value.miniGame);
+  const sessionState = asMiniRecord(root.session);
+  const ui = asMiniRecord(root.ui);
+  const status = scalarText(sessionState.status);
+  const gameType = scalarText(sessionState.gameType || sessionState.game_type);
+  const uiStateItems = asMiniArray<Record<string, unknown>>(ui.state_items);
+  const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
+  const pendingExit = Boolean(sessionState.pending_exit);
+  if (!gameType) return null;
+  if (!visibleStatuses.has(status) && !pendingExit) return null;
+  return {
+    gameType,
+    displayName: scalarText(asMiniRecord(root.rulebook).displayName) || gameType,
+    status,
+    phase: miniGamePhaseLabel(gameType, scalarText(sessionState.phase), scalarText(ui.phase_label)),
+    round: Number(sessionState.round || 0),
+    publicState: asMiniRecord(sessionState.public_state),
+    ruleSummary: scalarText(ui.rule_summary),
+    narration: scalarText(ui.narration),
+    pendingExit,
+    stateItems: miniGameStateItems(gameType, asMiniRecord(sessionState.public_state), uiStateItems),
+    acceptsTextInput: Boolean(ui.accepts_text_input)
+      || ((status !== "finished" && status !== "aborted") && ["research_skill", "alchemy", "upgrade_equipment", "battle"].includes(gameType)),
+    inputHint: scalarText(ui.input_hint),
+  };
+});
 const latestConversationMessage = computed(() => {
   const list = conversationMessages();
   return list.length ? list[list.length - 1] : null;
@@ -1102,6 +1129,10 @@ const playInputPlaceholder = computed(() => {
   // 这里继续展示 expectedRole 很容易把当前说话人或旧缓存误显示成"下一位"，因此统一退回泛化提示。
   return "当前还没轮到用户发言";
 });
+
+// 本地发送中状态，解决点击发送到后端状态更新之间的空窗期
+// 必须在下面的 watch 之前声明，否则 setup() 执行到 watch 时会 ReferenceError
+const androidSubmitting = ref(false);
 
 // 当系统进入可输入/完成/失败等稳定状态时，自动清掉本地发送状态
 watch(
@@ -1333,33 +1364,6 @@ function battleGaugePercent(current: number, max: number): number {
   return Math.max(0, Math.min(100, Math.round((current / max) * 100)));
 }
 
-const activeMiniGame = computed(() => {
-  const root = asMiniRecord(runtimeState.value.miniGame);
-  const sessionState = asMiniRecord(root.session);
-  const ui = asMiniRecord(root.ui);
-  const status = scalarText(sessionState.status);
-  const gameType = scalarText(sessionState.game_type || sessionState.gameType);
-  const uiStateItems = asMiniArray<Record<string, unknown>>(ui.state_items);
-  const visibleStatuses = new Set(["preparing", "active", "settling", "suspended"]);
-  const pendingExit = Boolean(sessionState.pending_exit);
-  if (!gameType) return null;
-  if (!visibleStatuses.has(status) && !pendingExit) return null;
-  return {
-    gameType,
-    displayName: scalarText(asMiniRecord(root.rulebook).displayName) || gameType,
-    status,
-    phase: miniGamePhaseLabel(gameType, scalarText(sessionState.phase), scalarText(ui.phase_label)),
-    round: Number(sessionState.round || 0),
-    publicState: asMiniRecord(sessionState.public_state),
-    ruleSummary: scalarText(ui.rule_summary),
-    narration: scalarText(ui.narration),
-    pendingExit,
-    stateItems: miniGameStateItems(gameType, asMiniRecord(sessionState.public_state), uiStateItems),
-    acceptsTextInput: Boolean(ui.accepts_text_input)
-      || ((status !== "finished" && status !== "aborted") && ["research_skill", "alchemy", "upgrade_equipment", "battle"].includes(gameType)),
-    inputHint: scalarText(ui.input_hint),
-  };
-});
 const miniGameSummaryItems = computed(() => {
   if (!activeMiniGame.value) return [];
   return activeMiniGame.value.stateItems || [];
@@ -1554,8 +1558,7 @@ function ensureMicPermission(): Promise<boolean> {
 
 // 安卓语音模式：dialogue(台词/黑色), action(动作/白色), scene(场景/白色)
 const androidVoiceMode = ref<"dialogue" | "action" | "scene" | null>(null);
-// 本地发送中状态，解决点击发送到后端状态更新之间的空窗期
-const androidSubmitting = ref(false);
+// androidSubmitting 已提前到上方声明，避免 watch 里 TDZ
 const androidVoiceStartX = ref(0);
 const androidVoiceStartY = ref(0);
 const androidVoiceText = ref("");
