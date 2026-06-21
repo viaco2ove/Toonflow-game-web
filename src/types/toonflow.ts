@@ -222,7 +222,7 @@ export interface SessionItem {
   sessionId: string;
   worldId: number;
   worldName?: string;
-  worldIntro?: string;
+  worldGlobalBackground?: string;
   worldCoverPath?: string;
   chapterId?: number | null;
   chapterTitle?: string;

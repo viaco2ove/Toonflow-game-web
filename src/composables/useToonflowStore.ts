@@ -843,7 +843,7 @@ function createEmptyWorldState() {
   return {
     worldId: 0,
     worldName: "",
-    worldIntro: "",
+    worldGlobalBackground: "",
     worldCoverPath: "",
     worldCoverBgPath: "",
     playerName: "用户",
@@ -883,7 +883,7 @@ interface StoryEditorSnapshot {
   createStep: 0 | 1;
   worldId: number;
   worldName: string;
-  worldIntro: string;
+  worldGlobalBackground: string;
   worldCoverPath: string;
   worldCoverBgPath: string;
   playerName: string;
@@ -1080,7 +1080,7 @@ function createToonflowStore() {
     debugMode: false,
     debugSessionTitle: "",
     debugWorldName: "",
-    debugWorldIntro: "",
+    debugWorldGlobalBackground: "",
     debugChapterId: null as number | null,
     debugChapterTitle: "",
     debugRuntimeState: {} as Record<string, unknown>,
@@ -3008,7 +3008,7 @@ function createToonflowStore() {
     state.debugLoadingStage = "";
     state.debugSessionTitle = "";
     state.debugWorldName = "";
-    state.debugWorldIntro = "";
+    state.debugWorldGlobalBackground = "";
     state.debugChapterId = null;
     state.debugChapterTitle = "";
     state.debugRuntimeState = {};
@@ -3048,7 +3048,7 @@ function createToonflowStore() {
       createStep: state.createStep,
       worldId: state.worldId,
       worldName: state.worldName,
-      worldIntro: state.worldIntro,
+      worldGlobalBackground: state.worldGlobalBackground,
       worldCoverPath: state.worldCoverPath,
       worldCoverBgPath: state.worldCoverBgPath,
       playerName: state.playerName,
@@ -3113,7 +3113,7 @@ function createToonflowStore() {
     state.createStep = snapshot.createStep;
     state.worldId = snapshot.worldId;
     state.worldName = snapshot.worldName;
-    state.worldIntro = snapshot.worldIntro;
+    state.worldGlobalBackground = snapshot.worldGlobalBackground;
     state.worldCoverPath = snapshot.worldCoverPath;
     state.worldCoverBgPath = snapshot.worldCoverBgPath;
     state.playerName = snapshot.playerName;
@@ -3165,7 +3165,7 @@ function createToonflowStore() {
 
   function hasPersistableStoryEditorContent(snapshot = captureStoryEditorSnapshot()): boolean {
     if (snapshot.worldId > 0) return true;
-    if (snapshot.worldName.trim() || snapshot.worldIntro.trim()) return true;
+    if (snapshot.worldName.trim() || snapshot.worldGlobalBackground.trim()) return true;
     if (snapshot.worldCoverPath.trim() || snapshot.playerDesc.trim() || snapshot.globalBackground.trim()) return true;
     if (snapshot.chapterTitle.trim() || snapshot.chapterContent.trim() || snapshot.chapterOpeningLine.trim()) return true;
     if (snapshot.chapterEntryCondition.trim() || snapshot.chapterCondition.trim()) return true;
@@ -5249,7 +5249,7 @@ function createToonflowStore() {
       }
       state.worldId = worldDetail.id;
       state.worldName = worldDetail.name || "";
-      state.worldIntro = worldDetail.intro || "";
+      state.worldGlobalBackground = worldDetail.intro || "";
       state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || worldDetail.settings?.coverBgPath || "";
       state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.coverPath || worldDetail.settings?.coverPath || "";
       state.worldPublishStatus = worldDetail.publishStatus || worldDetail.settings?.publishStatus || "draft";
@@ -5511,7 +5511,7 @@ function createToonflowStore() {
       worldId: state.worldId || undefined,
       projectId: state.selectedProjectId,
       name: state.worldName.trim(),
-      intro: state.worldIntro.trim(),
+      intro: state.worldGlobalBackground.trim(),
       coverPath: state.worldCoverPath,
       publishStatus: targetStatus,
       settings: storySettingsObject(),
@@ -6045,7 +6045,7 @@ function createToonflowStore() {
       activeChapter?.sort,
     ) || "当前章节";
     state.debugWorldName = String(result.world?.name || state.debugWorldName || "");
-    state.debugWorldIntro = String(result.world?.intro || state.debugWorldIntro || "");
+    state.debugWorldGlobalBackground = String(result.world?.intro || state.debugWorldGlobalBackground || "");
     if (result.chapter) {
       const chapterIndex = state.chapters.findIndex((item) => Number(item.id || 0) === Number(result.chapter?.id || 0));
       if (chapterIndex >= 0) {
@@ -6506,7 +6506,7 @@ function createToonflowStore() {
     state.currentSessionId = `debug_${Date.now()}`;
     state.debugSessionTitle = state.worldName || "调试会话";
     state.debugWorldName = state.worldName || "";
-    state.debugWorldIntro = state.worldIntro || "";
+    state.debugWorldGlobalBackground = state.worldGlobalBackground || "";
     state.debugRuntimeState = {};
     state.debugLatestPlan = null;
     debugMessageSeed = Date.now();
