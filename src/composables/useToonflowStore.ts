@@ -5249,7 +5249,8 @@ function createToonflowStore() {
       }
       state.worldId = worldDetail.id;
       state.worldName = worldDetail.name || "";
-      state.worldGlobalBackground = worldDetail.intro || "";
+      state.worldIntro = worldDetail.intro || "";
+      state.worldGlobalBackground = worldDetail.worldGlobalBackground || "";
       state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || worldDetail.settings?.coverBgPath || "";
       state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.coverPath || worldDetail.settings?.coverPath || "";
       state.worldPublishStatus = worldDetail.publishStatus || worldDetail.settings?.publishStatus || "draft";
@@ -5511,7 +5512,8 @@ function createToonflowStore() {
       worldId: state.worldId || undefined,
       projectId: state.selectedProjectId,
       name: state.worldName.trim(),
-      intro: state.worldGlobalBackground.trim(),
+      intro: state.worldIntro.trim(),
+      worldGlobalBackground: state.worldGlobalBackground.trim(),
       coverPath: state.worldCoverPath,
       publishStatus: targetStatus,
       settings: storySettingsObject(),
