@@ -3071,6 +3071,7 @@ function createToonflowStore() {
       narratorVoiceReferenceText: state.narratorVoiceReferenceText,
       narratorVoicePromptText: state.narratorVoicePromptText,
       narratorVoiceMixVoices: JSON.parse(JSON.stringify(state.narratorVoiceMixVoices || [])) as VoiceMixItem[],
+      intro: state.intro,
       globalBackground: state.globalBackground,
       allowRoleView: state.allowRoleView,
       allowChatShare: state.allowChatShare,
@@ -3136,6 +3137,7 @@ function createToonflowStore() {
     state.narratorVoiceReferenceText = snapshot.narratorVoiceReferenceText;
     state.narratorVoicePromptText = snapshot.narratorVoicePromptText;
     state.narratorVoiceMixVoices = JSON.parse(JSON.stringify(snapshot.narratorVoiceMixVoices || [])) as VoiceMixItem[];
+    intro: state.intro,
     state.globalBackground = snapshot.globalBackground;
     state.allowRoleView = snapshot.allowRoleView;
     state.allowChatShare = snapshot.allowChatShare;
@@ -4934,6 +4936,7 @@ function createToonflowStore() {
       narratorVoiceReferenceText: state.narratorVoiceReferenceText,
       narratorVoicePromptText: state.narratorVoicePromptText,
       narratorVoiceMixVoices: state.narratorVoiceMixVoices,
+      intro: state.intro || "",
       globalBackground: state.globalBackground,
       coverPath: state.worldCoverPath,
       coverBgPath: state.worldCoverBgPath,
@@ -5249,11 +5252,12 @@ function createToonflowStore() {
       }
       state.worldId = worldDetail.id;
       state.worldName = worldDetail.name || "";
-      state.worldIntro = worldDetail.intro || "";
+
       state.worldGlobalBackground = worldDetail.worldGlobalBackground || "";
       state.worldCoverPath = worldDetail.coverPath || worldDetail.settings?.coverPath || worldDetail.settings?.coverBgPath || "";
       state.worldCoverBgPath = worldDetail.settings?.coverBgPath || worldDetail.coverPath || worldDetail.settings?.coverPath || "";
       state.worldPublishStatus = worldDetail.publishStatus || worldDetail.settings?.publishStatus || "draft";
+      state.intro = worldDetail.intro || "";
       state.globalBackground = worldDetail.settings?.globalBackground || "";
       state.allowRoleView = worldDetail.settings?.allowRoleView ?? true;
       state.allowChatShare = worldDetail.settings?.allowChatShare ?? true;
