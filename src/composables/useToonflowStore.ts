@@ -5516,7 +5516,7 @@ function createToonflowStore() {
       worldId: state.worldId || undefined,
       projectId: state.selectedProjectId,
       name: state.worldName.trim(),
-      intro: state.worldIntro.trim(),
+      intro: state.intro.trim(),
       worldGlobalBackground: state.worldGlobalBackground.trim(),
       coverPath: state.worldCoverPath,
       publishStatus: targetStatus,
