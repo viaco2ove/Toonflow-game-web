@@ -5505,7 +5505,7 @@ function createToonflowStore() {
     primeStoryEditorPersistState();
   }
 
-  async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve", reloadAfter = true) {
+  async function saveWorldOnly(statusMode: SaveWorldStatusMode = "preserve", reloadAfter = true, forceRefreshRoleCards = false) {
     const requestToken = storyEditorContextToken;
     const targetStatus = statusMode === "published"
       ? "published"
@@ -5523,6 +5523,7 @@ function createToonflowStore() {
       settings: storySettingsObject(),
       playerRole: currentPlayerRole(),
       narratorRole: currentNarratorRole(),
+      forceRefreshRoleCards,
     };
     const result = await api.saveWorld(payload);
     if (requestToken !== storyEditorContextToken) {
@@ -5678,7 +5679,7 @@ function createToonflowStore() {
           return null;
         }
       }
-      const world = await saveWorldOnly(targetWorldStatusMode);
+      const world = await saveWorldOnly(targetWorldStatusMode, true, publish === false);
       if (requestToken !== storyEditorContextToken) {
         return world;
       }
