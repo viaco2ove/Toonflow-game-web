@@ -1488,7 +1488,7 @@ function cancelRemoveCurrentNpc() {
             <input v-model="currentNpcRole.name" class="input" type="text" placeholder="角色名" />
           </div>
           <div class="field">
-            <label>角色设定(性别,年龄,性格,外貌,音色特点,技能,物品,装备,等级,血量,蓝量,金钱,其他)</label>
+            <label>角色设定(性别,年龄,角色类型,性格,外貌,音色特点,技能,物品,装备,等级,血量,蓝量,金钱,其他)</label>
             <textarea v-model="currentNpcRole.description" class="textarea" rows="5" placeholder="角色设定"></textarea>
           </div>
           <div class="field">
