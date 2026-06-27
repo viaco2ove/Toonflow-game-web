@@ -3960,6 +3960,10 @@ function createToonflowStore() {
     return settingsModelBinding("storyOrchestratorModel")?.payloadMode === "advanced" ? "advanced" : "compact";
   }
 
+  function storyMemoryPayloadMode(): "compact" | "advanced" {
+    return settingsModelBinding("storyMemoryModel")?.payloadMode === "advanced" ? "advanced" : "compact";
+  }
+
   function normalizeModelHintText(value: string | null | undefined): string {
     return String(value || "").trim().toLowerCase();
   }
@@ -4713,6 +4717,15 @@ function createToonflowStore() {
     } satisfies StoryRuntimeConfig);
     await ensureSettingsPanelData(true);
     state.notice = `编排师运行模式已切换为${storyOrchestratorPayloadMode === "advanced" ? "高级版" : "精简版"}`;
+  }
+
+  async function saveStoryMemoryPayloadMode(mode: "compact" | "advanced") {
+    const storyMemoryPayloadMode = mode === "advanced" ? "advanced" : "compact";
+    await api.saveStoryRuntimeConfig({
+      storyMemoryPayloadMode,
+    } satisfies StoryRuntimeConfig);
+    await ensureSettingsPanelData(true);
+    state.notice = `记忆管理运行模式已切换为${storyMemoryPayloadMode === "advanced" ? "高级版" : "精简版"}`;
   }
 
   async function addManagedModelConfig(payload: ModelConfigPayload) {
@@ -7614,6 +7627,8 @@ function createToonflowStore() {
     settingsModelBinding,
     storyOrchestratorPayloadMode,
     saveStoryOrchestratorPayloadMode,
+    storyMemoryPayloadMode,
+    saveStoryMemoryPayloadMode,
     settingsRecommendedModel,
     settingsModelAdvisory,
     currentStoryPromptValue,

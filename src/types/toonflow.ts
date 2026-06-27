@@ -584,6 +584,7 @@ export type AiModelListMap = Record<string, AiModelOptionItem[]>;
 
 export interface StoryRuntimeConfig {
   storyOrchestratorPayloadMode: "compact" | "advanced";
+  storyMemoryPayloadMode?: "compact" | "advanced";
 }
 
 export interface PromptItem {

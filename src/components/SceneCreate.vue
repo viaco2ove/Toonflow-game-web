@@ -60,7 +60,7 @@ const importRoleItems = ref<ImportableRoleListItem[]>([]);
 let runtimeAudioUnlockContext: AudioContext | null = null;
 let runtimeAudioUnlockElement: HTMLAudioElement | null = null;
 
-const coverAiPrompt = computed(() => store.state.worldIntro || store.state.worldName || "故事封面");
+const coverAiPrompt = computed(() => store.state.intro || store.state.worldName || "故事封面");
 const imageDialogOpen = computed(() => imageDialogTarget.value !== null);
 const voiceDialogOpen = computed(() => voiceDialogTarget.value !== null);
 const mentionRoles = computed(() => store.mentionRoleNames());
@@ -389,7 +389,7 @@ watch(
   () => JSON.stringify({
     step: store.state.createStep,
     worldName: store.state.worldName,
-    worldIntro: store.state.worldIntro,
+    worldIntro: store.state.intro,
     worldCoverPath: store.state.worldCoverPath,
     worldCoverBgPath: store.state.worldCoverBgPath,
     playerName: store.state.playerName,
@@ -998,7 +998,7 @@ function cancelRemoveCurrentNpc() {
         </div>
         <div class="field">
           <label>故事简介</label>
-          <textarea v-model="store.state.worldIntro" class="textarea" rows="5" placeholder="输入故事简介"></textarea>
+          <textarea v-model="store.state.intro" class="textarea" rows="5" placeholder="输入故事简介"></textarea>
         </div>
         <div class="create-footer-actions">
           <button class="create-footer-btn" type="button" :disabled="publishPending" @click="backToStoryStep">返回</button>

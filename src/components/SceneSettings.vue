@@ -42,7 +42,11 @@ const modelRows = computed(() =>
       binding,
       recommendation,
       advisory,
-      payloadMode: slot.key === "storyOrchestratorModel" ? store.storyOrchestratorPayloadMode() : null,
+      payloadMode: slot.key === "storyOrchestratorModel"
+          ? store.storyOrchestratorPayloadMode()
+          : slot.key === "storyMemoryModel"
+            ? store.storyMemoryPayloadMode()
+            : null,
       options: store.settingsConfigOptions(slot.configType),
     };
   }),
@@ -172,6 +176,10 @@ async function changeStoryOrchestratorPayloadMode(value: string) {
   await store.saveStoryOrchestratorPayloadMode(value === "advanced" ? "advanced" : "compact");
 }
 
+async function changeStoryMemoryPayloadMode(value: string) {
+  await store.saveStoryMemoryPayloadMode(value === "advanced" ? "advanced" : "compact");
+}
+
 function onModelManagerConfirmed() {
   activeModelKey.value = "";
 }
@@ -287,11 +295,27 @@ watch(
             <div class="settings-model-label">{{ row.label }}</div>
             <div class="settings-model-meta">{{ row.binding?.manufacturer || '未绑定' }} {{ row.binding?.model || '' }}</div>
             <div v-if="row.key === 'storyOrchestratorModel'" class="settings-model-inline-option">
-              <span class="settings-model-inline-label">运行模式</span>
+              <span class="settings-model-inline-label">编排师运行模式</span>
               <select
                 class="input settings-model-inline-select"
                 :value="row.payloadMode || 'compact'"
                 @change="changeStoryOrchestratorPayloadMode(String(($event.target as HTMLSelectElement | null)?.value || 'compact'))"
+              >
+                <option
+                  v-for="item in store.STORY_ORCHESTRATOR_PAYLOAD_OPTIONS"
+                  :key="item.value"
+                  :value="item.value"
+                >
+                  {{ item.label }}
+                </option>
+              </select>
+            </div>
+            <div v-if="row.key === 'storyMemoryModel'" class="settings-model-inline-option">
+              <span class="settings-model-inline-label">记忆管理运行模式</span>
+              <select
+                class="input settings-model-inline-select"
+                :value="row.payloadMode || 'compact'"
+                @change="changeStoryMemoryPayloadMode(String(($event.target as HTMLSelectElement | null)?.value || 'compact'))"
               >
                 <option
                   v-for="item in store.STORY_ORCHESTRATOR_PAYLOAD_OPTIONS"
