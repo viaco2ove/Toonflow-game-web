@@ -826,6 +826,7 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
   const ageText = scalarText(raw.age);
   const ageValue = ageText && /^\d+$/.test(ageText) ? Number(ageText) : null;
   const levelText = scalarText(raw.level);
+  const role_key_information = scalarText(raw.role_key_information);
   const levelValue = levelText && /^\d+$/.test(levelText) ? Number(levelText) : null;
   const expValue = Number(raw.exp);
   const nextLevelExpValue = Number(raw.next_level_exp ?? raw.nextLevelExp);
@@ -841,6 +842,7 @@ function normalizeRoleParameterCard(input: unknown): RoleParameterCard | null {
     // 参数卡里的经验值字段来自运行时 JSON，不在这里显式解析的话，
     // 详情面板就会把已有数字误判成"未设定"。
     exp: Number.isFinite(expValue) ? expValue : 0,
+    role_key_information: scalarText(raw.role_key_information),
     next_level_exp: Number.isFinite(nextLevelExpValue) ? nextLevelExpValue : 100,
     level_desc: scalarText(raw.level_desc || raw.levelDesc) || "初入此界",
     personality: scalarText(raw.personality),
@@ -1134,22 +1136,19 @@ const playInputPlaceholder = computed(() => {
 // 必须在下面的 watch 之前声明，否则 setup() 执行到 watch 时会 ReferenceError
 const androidSubmitting = ref(false);
 
-// 当系统进入可输入/完成/失败等稳定状态时，自动清掉本地发送状态
+// 当系统进入编排/生成/朗读/结束等稳定处理阶段时，自动清掉本地发送状态
 watch(
   () => [
     currentRuntimeInputStatus.value,
     sessionRuntimeStageText.value,
-    canPlayerInput.value,
     playSessionStatus.value,
   ],
   () => {
     if (!androidSubmitting.value) return;
     const status = sessionStatusKey(playSessionStatus.value);
     const rt = currentRuntimeInputStatus.value;
-    // 可输入了，或进入明确阶段，或会话结束/失败 → 清掉本地发送状态
-    if (canPlayerInput.value) {
-      androidSubmitting.value = false;
-    } else if (rt === "orchestrated" || rt === "streaming" || rt === "generated" || rt === "revealing" || rt === "voicing" || rt === "auto_advancing" || sessionRuntimeStageText.value) {
+    // 进入明确处理阶段，或会话结束/失败 → 清掉本地发送状态
+    if (rt === "orchestrated" || rt === "streaming" || rt === "generated" || rt === "revealing" || rt === "voicing" || rt === "auto_advancing" || sessionRuntimeStageText.value) {
       androidSubmitting.value = false;
     } else if (finishedSessionStatuses.has(status) || failedSessionStatuses.has(status)) {
       androidSubmitting.value = false;
@@ -2885,6 +2884,7 @@ function parameterCardEntries(card: RoleParameterCard | null | undefined) {
     { label: "蓝量", value: card.mp != null ? String(card.mp) : fallback },
     { label: "金钱", value: card.money != null ? String(card.money) : fallback },
     { label: "正在执行的任务", value: stringifyExecutingTask() },
+    { label: "角色关键信息", value: scalarText(card.role_key_information) || fallback },
     { label: "其他", value: stringifyOther() },
   ];
 }

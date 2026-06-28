@@ -19,6 +19,7 @@ export interface RoleParameterCard {
   exp?: number | null;
   next_level_exp?: number | null;
   level_desc?: string;
+  role_key_information?: string;
   personality?: string;
   appearance?: string;
   voice?: string;
@@ -611,6 +612,7 @@ export function createBasicRoleParameterCard(name: string, description = "", voi
     age: null,
     level: 1,
     level_desc: "初入此界",
+    role_key_information: "",
     personality: "",
     appearance: "",
     voice: voice || "",
