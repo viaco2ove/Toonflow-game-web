@@ -4199,6 +4199,154 @@ textarea::-webkit-scrollbar-thumb {
   stroke-linejoin: round;
 }
 
+/* 编排选项按钮：叠在 play-tip-fab 上方 */
+.orchestrate-tio-fab {
+  position: absolute;
+  right: -2px;
+  bottom: 52px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(15, 35, 58, 0.45);
+  color: #e5f1ff;
+  box-shadow: 0 10px 24px rgba(5, 14, 26, 0.24);
+}
+
+.orchestrate-tio-fab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.orchestrate-tio-fab svg {
+  width: 14px;
+  height: 14px;
+  stroke: #eef6ff;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 跳过发言按钮：叠在编排选项按钮上方 */
+.player-skip-btn {
+  position: absolute;
+  right: -2px;
+  bottom: 86px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(15, 35, 58, 0.45);
+  color: #e5f1ff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(5, 14, 26, 0.24);
+}
+
+.player-skip-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 编排选项弹窗 */
+.orchestrate-options-panel {
+  position: absolute;
+  right: 36px;
+  bottom: 18px;
+  width: 260px;
+  max-width: calc(100% - 48px);
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(15, 28, 48, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 14px 36px rgba(5, 14, 26, 0.4);
+  z-index: 20;
+  backdrop-filter: blur(8px);
+}
+
+.orchestrate-options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e5f1ff;
+  margin-bottom: 8px;
+}
+
+.orchestrate-options-close {
+  background: transparent;
+  border: none;
+  color: rgba(229, 241, 255, 0.7);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.orchestrate-options-loading {
+  font-size: 12px;
+  color: rgba(229, 241, 255, 0.7);
+  padding: 12px 0;
+  text-align: center;
+}
+
+.orchestrate-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orchestrate-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e5f1ff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orchestrate-option:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.orchestrate-option-role {
+  font-size: 12px;
+  font-weight: 700;
+  color: #8fd0ff;
+}
+
+.orchestrate-option-motive {
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(229, 241, 255, 0.9);
+}
+
+.orchestrate-options-refresh {
+  margin-top: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: transparent;
+  color: rgba(229, 241, 255, 0.8);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.orchestrate-options-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .play-figure-stage {
   position: absolute;
   inset: 68px 0 108px;

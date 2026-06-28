@@ -331,6 +331,27 @@ export class ToonflowApi {
     );
   }
 
+  /**
+   * 获取编排选项（剧情/任务编排选项生成器）
+   * refresh=true 表示"换一换"，温度略高避免重复
+   */
+  getOrchestrateOptions(sessionId: string, refresh: boolean) {
+    return this.post<{ options: Array<{ role: string; motive: string }>; source: "ai" | "fallback" }>(
+      "/game/getOrchestrateOptions",
+      { sessionId, refresh },
+    );
+  }
+
+  /**
+   * 应用编排选项：直接把 { role, motive } 透传给角色发言器，跳过编排师
+   */
+  applyOrchestrateOption(sessionId: string, option: { role: string; motive: string }) {
+    return this.post<SessionNarrativeResult>(
+      "/game/applyOrchestrateOption",
+      { sessionId, role: option.role, motive: option.motive },
+    );
+  }
+
   continueSession(sessionId: string) {
     return this.post<SessionNarrativeResult>("/game/continueSession", { sessionId });
   }

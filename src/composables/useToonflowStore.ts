@@ -7392,6 +7392,53 @@ function createToonflowStore() {
     }
   }
 
+  /**
+   * 获取剧情/任务编排选项（每次点击 orchestrate-tio-fab 触发）
+   * 返回 [{ role, motive }]，最多 3 条
+   */
+  async function fetchOrchestrateOptions(refresh: boolean): Promise<Array<{ role: string; motive: string }>> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) return [];
+    try {
+      const res = await api.getOrchestrateOptions(sessionId, refresh);
+      const raw = Array.isArray((res as any)?.options) ? (res as any).options : [];
+      return raw
+        .map((item: any) => ({
+          role: String(item?.role || "").trim(),
+          motive: String(item?.motive || "").trim(),
+        }))
+        .filter((item: { role: string; motive: string }) => item.role && item.motive)
+        .slice(0, 3);
+    } catch (err) {
+      state.notice = `编排选项生成失败：${err instanceof Error ? err.message : String(err)}`;
+      return [];
+    }
+  }
+
+  /**
+   * 应用编排选项：直接把 { role, motive } 透传给角色发言器，跳过编排师
+   */
+  async function applyOrchestrateOption(option: { role: string; motive: string }): Promise<void> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId || !option?.role || !option?.motive) return;
+    state.runtimeProcessingPending = true;
+    try {
+      // 后端构造 pending plan（指定 role+motive，跳过编排师），返回该 plan
+      const plan = await api.applyOrchestrateOption(sessionId, option);
+      // 直接用返回的 plan 走 streamlines 生成角色台词，不再经过编排师
+      if (plan) {
+        await streamSessionPlan(plan as unknown as DebugNarrativePlan, conversationMessages());
+        await refreshSessionStoryInfo();
+      }
+    } catch (err) {
+      state.notice = `触发选项失败：${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      state.runtimeProcessingPending = false;
+    }
+    // 台词落地后，若仍未轮到用户（多角色连续发言），继续推进
+    scheduleSessionNarrativeIfSystemTurn();
+  }
+
   async function sendMessage() {
     const content = state.sendText.trim();
     if (!content || state.sendPending || state.runtimeProcessingPending) return;
@@ -7604,6 +7651,8 @@ function createToonflowStore() {
     syncDebugChapter,
     sendMessage,
     fetchPlayTips,
+    fetchOrchestrateOptions,
+    applyOrchestrateOption,
     deleteMessage,
     copyMessageText,
     reactMessage,

@@ -3055,6 +3055,54 @@ function toggleTipsMode() {
   }
 }
 
+// 编排选项：用于 orchestrate-tio-fab 弹窗
+const orchestrateOptionsVisible = ref(false);
+const orchestrateOptionsLoading = ref(false);
+const orchestrateOptionsList = ref<Array<{ role: string; motive: string }>>([]);
+
+async function fetchOrchestrateOptions(refresh = false): Promise<void> {
+  orchestrateOptionsLoading.value = true;
+  try {
+    const options = await store.fetchOrchestrateOptions(refresh);
+    orchestrateOptionsList.value = Array.isArray(options) ? options : [];
+  } catch (err) {
+    store.state.notice = `编排选项生成失败:${(err as Error)?.message || err}`;
+    orchestrateOptionsList.value = [];
+  } finally {
+    orchestrateOptionsLoading.value = false;
+  }
+}
+
+function toggleOrchestrateOptions() {
+  if (orchestrateOptionsVisible.value) {
+    orchestrateOptionsVisible.value = false;
+    return;
+  }
+  // 每次展开都重新拉取
+  void fetchOrchestrateOptions(false);
+  orchestrateOptionsVisible.value = true;
+}
+
+async function onOrchestrateOptionPick(option: { role: string; motive: string }): Promise<void> {
+  orchestrateOptionsVisible.value = false;
+  await store.applyOrchestrateOption(option);
+}
+
+async function onOrchestrateRefresh(): Promise<void> {
+  await fetchOrchestrateOptions(true);
+}
+
+// 玩家跳过发言：发送 "." 给当前会话
+async function onPlayerSkip(): Promise<void> {
+  if (!canPlayerSpeak.value || store.state.sendPending || store.state.runtimeProcessingPending) return;
+  try {
+    store.state.sendText = ".";
+    await store.sendMessage();
+  } catch (err) {
+    store.state.notice = `跳过失败:${(err as Error)?.message || err}`;
+  }
+}
+
 function stopPlaybackSequence() {
   playbackPlaying.value = false;
   playbackRunId += 1;
@@ -3833,6 +3881,55 @@ onBeforeUnmount(() => {
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"></path>
                 </svg>
+              </button>
+              <button
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+                type="button"
+                class="orchestrate-tio-fab"
+                :disabled="orchestrateOptionsLoading"
+                @click="toggleOrchestrateOptions"
+                title="编排选项"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z"></path>
+                </svg>
+              </button>
+              <button
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+                type="button"
+                class="player-skip-btn"
+                :disabled="!canPlayerSpeak || store.state.sendPending || store.state.runtimeProcessingPending"
+                @click="onPlayerSkip"
+                title="跳过发言"
+              >
+                跳过
+              </button>
+            </div>
+          </div>
+          <div v-if="orchestrateOptionsVisible" class="orchestrate-options-panel">
+            <div class="orchestrate-options-header">
+              <span>编排选项</span>
+              <button type="button" class="orchestrate-options-close" @click="orchestrateOptionsVisible = false">关闭</button>
+            </div>
+            <div v-if="orchestrateOptionsLoading" class="orchestrate-options-loading">生成中...</div>
+            <div v-else class="orchestrate-options-list">
+              <button
+                v-for="(item, index) in orchestrateOptionsList"
+                :key="`opt-${index}`"
+                type="button"
+                class="orchestrate-option"
+                @click="onOrchestrateOptionPick(item)"
+              >
+                <span class="orchestrate-option-role">{{ item.role }}</span>
+                <span class="orchestrate-option-motive">{{ item.motive }}</span>
+              </button>
+              <button
+                type="button"
+                class="orchestrate-options-refresh"
+                :disabled="orchestrateOptionsLoading"
+                @click="onOrchestrateRefresh"
+              >
+                换一换
               </button>
             </div>
           </div>
