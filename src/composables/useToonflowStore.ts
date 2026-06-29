@@ -7408,7 +7408,7 @@ function createToonflowStore() {
           motive: String(item?.motive || "").trim(),
         }))
         .filter((item: { role: string; motive: string }) => item.role && item.motive)
-        .slice(0, 3);
+        .slice(0, 5);
     } catch (err) {
       state.notice = `编排选项生成失败：${err instanceof Error ? err.message : String(err)}`;
       return [];
