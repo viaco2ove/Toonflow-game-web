@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useToonflowStore } from "../composables/useToonflowStore";
 import { ToonflowApi } from "../api/toonflow";
 import type { VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
+import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
 const props = defineProps<{
   open: boolean;
@@ -183,26 +184,25 @@ function isAliyunDirectQwenVoiceDesignModel(model?: string | null): boolean {
 }
 
 function resolveModelSupportedModes(model: { manufacturer?: string | null; model?: string | null; modes?: string[] | null } | null): string[] {
+  WebDebugLogUtil.log("[voiceModels] resolveModelSupportedModes:", model);
+  // 克隆/提示词音色 由独立的克隆/设计模型决定，跟 TTS 模型无关
+  const supported: string[] = [];
+  // text / mix 模式由 TTS 模型决定
   const declaredModes = Array.isArray(model?.modes)
     ? model.modes.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
-  if (declaredModes.length) return declaredModes;
-  if (String(model?.manufacturer || "").trim() === "aliyun_direct") {
-    const normalizedModel = String(model?.model || "").trim().toLowerCase();
-    if (isAliyunDirectCosyVoiceModel(model?.model)) {
-      return normalizedModel.startsWith("cosyvoice-v3.5")
-        ? ["clone", "mix", "prompt_voice"]
-        : ["text", "clone", "mix", "prompt_voice"];
-    }
-    if (isAliyunDirectQwenVoiceCloneModel(model?.model)) {
-      return ["clone", "mix"];
-    }
-    if (isAliyunDirectQwenVoiceDesignModel(model?.model)) {
-      return ["prompt_voice"];
-    }
-    return ["text"];
+  if (declaredModes.length) {
+    if (declaredModes.includes("text")) supported.push("text");
+    if (declaredModes.includes("mix")) supported.push("mix");
+  } else {
+    // 没有声明 modes 的厂商，默认支持 text 和 mix
+    supported.push("text", "mix");
   }
-  return modeOptions.map((item) => item.key);
+  // prompt_voice 由语音设计模型决定
+  if (hasVoiceDesignModel.value) supported.push("prompt_voice");
+  // clone 由语音克隆模型决定
+  if (hasVoiceCloneModel.value) supported.push("clone");
+  return supported;
 }
 
 function unsupportedModeReason(mode: string): string {

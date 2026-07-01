@@ -3891,11 +3891,13 @@ function createToonflowStore() {
   }
 
   async function fetchVoiceModels() {
+    WebDebugLogUtil.log("[voiceModels] fetchVoiceModels:",state.voiceModels);
     if (state.voiceLoading || state.voiceModels.length) return;
     state.voiceLoading = true;
     try {
       state.voiceModels = (await api.getVoiceModels()).map(normalizeVoiceModelConfig).filter((item) => {
         const modelType = String(item.modelType || "").trim();
+        WebDebugLogUtil.log("[voiceModels] voiceModels:",modelType);
         return !modelType || modelType === "tts";
       });
       if (state.notice.startsWith("加载音色模型失败")) {
