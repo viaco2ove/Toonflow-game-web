@@ -1359,11 +1359,11 @@ function cancelRemoveCurrentNpc() {
       <button class="create-primary-btn" type="button" @click="goNextStep">下一步</button>
     </div>
 
-    <input ref="storyCoverInput" type="file" accept="image/*" hidden @change="onCoverFile" />
-    <input ref="chapterBgInput" type="file" accept="image/*" hidden @change="onChapterBgFile" />
-    <input ref="chapterMusicInput" type="file" accept="audio/*" hidden @change="onChapterMusicFile" />
-    <input ref="userAvatarInput" type="file" accept="image/*" hidden @change="onUserAvatarFile" />
-    <input ref="userAvatarVideoInput" type="file" accept="video/mp4" hidden @change="onUserAvatarVideoFile" />
+    <input ref="storyCoverInput" type="file" accept="image/*" class="file-input-hidden" @change="onCoverFile" />
+    <input ref="chapterBgInput" type="file" accept="image/*" class="file-input-hidden" @change="onChapterBgFile" />
+    <input ref="chapterMusicInput" type="file" accept="audio/*" class="file-input-hidden" @change="onChapterMusicFile" />
+    <input ref="userAvatarInput" type="file" accept="image/*" class="file-input-hidden" @change="onUserAvatarFile" />
+    <input ref="userAvatarVideoInput" type="file" accept="video/mp4" class="file-input-hidden" @change="onUserAvatarVideoFile" />
 
     <div v-if="showUserEditor" class="modal-backdrop">
       <div class="modal-panel fullscreen create-editor-panel">
@@ -1480,8 +1480,8 @@ function cancelRemoveCurrentNpc() {
                 </svg>
               </button>
             </div>
-            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="image/*" hidden @change="editingNpcIndex !== null ? onNpcAvatarFile(editingNpcIndex, $event) : undefined" />
-            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarVideoInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="video/mp4" hidden @change="editingNpcIndex !== null ? onNpcAvatarVideoFile(editingNpcIndex, $event) : undefined" />
+            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="image/*" class="file-input-hidden" @change="editingNpcIndex !== null ? onNpcAvatarFile(editingNpcIndex, $event) : undefined" />
+            <input :ref="(el) => { if (typeof editingNpcIndex === 'number') npcAvatarVideoInputs[editingNpcIndex] = el as HTMLInputElement | null; }" type="file" accept="video/mp4" class="file-input-hidden" @change="editingNpcIndex !== null ? onNpcAvatarVideoFile(editingNpcIndex, $event) : undefined" />
           </div>
           <div class="field">
             <label>角色名</label>

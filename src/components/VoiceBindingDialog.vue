@@ -919,7 +919,7 @@ onBeforeUnmount(() => {
             <div class="voice-dialog-section__title">参考音频</div>
             <div class="voice-dialog-note voice-dialog-note--warn">语音合成与语音克隆必须使用相同供应商和匹配的模型</div>
             <div class="voice-dialog-note">CosyVoice 音色只认该模型，换模型（包括 Qwen‑TTS）会导致音色无法使用</div>
-            <input ref="fileInput" type="file" accept="audio/*" hidden @change="chooseAudio" />
+            <input ref="fileInput" type="file" accept="audio/*" class="file-input-hidden" @change="chooseAudio" />
             <button class="voice-dialog-upload" type="button" :disabled="audioUploading" @click="openAudioPicker">
               {{ audioUploading ? "上传中..." : "选择并上传音频" }}
             </button>

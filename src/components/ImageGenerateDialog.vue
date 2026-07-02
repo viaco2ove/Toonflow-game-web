@@ -167,7 +167,7 @@ function confirm() {
 
         <section class="surface section-block stack-gap">
           <div class="subtle">参考图（可选）</div>
-          <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onChooseFiles" />
+          <input ref="fileInput" type="file" accept="image/*" multiple class="file-input-hidden" @change="onChooseFiles" />
           <div class="surface story-cover" style="height:92px; border-radius:18px; border:1px solid var(--line); cursor:pointer;" @click="fileInput?.click()">
             <div v-if="references.length" class="placeholder" style="background:rgba(246,248,252,0.78); flex-direction:column; gap:4px;">
               <div style="font-weight:800;">已选择 {{ references.length }} 张参考图</div>

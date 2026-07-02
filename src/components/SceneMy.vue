@@ -195,8 +195,8 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         </div>
         <div class="badge">+</div>
       </button>
-      <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatarFile" />
-      <input ref="avatarVideoInput" type="file" accept="video/mp4" hidden @change="onAvatarVideoFile" />
+      <input ref="avatarInput" type="file" accept="image/*" class="file-input-hidden" @change="onAvatarFile" />
+      <input ref="avatarVideoInput" type="file" accept="video/mp4" class="file-input-hidden" @change="onAvatarVideoFile" />
       <div class="my-profile-meta">
         <div class="my-profile-name">{{ store.state.userName || "未登录" }}</div>
         <div v-if="accountAvatarProcessing" class="my-avatar-processing-text">{{ accountAvatarProcessingText }}</div>

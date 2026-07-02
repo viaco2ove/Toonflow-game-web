@@ -5588,6 +5588,16 @@ textarea::-webkit-scrollbar-thumb {
   font-weight: normal;
 }
 
+/* 隐藏文件输入框：视觉隐藏但仍可程序化触发（解决 Android WebView 点击无响应问题） */
+.file-input-hidden {
+  opacity: 0;
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
 .play-send-btn {
   min-width: 84px;
   height: 38px;
