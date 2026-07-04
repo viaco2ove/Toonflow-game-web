@@ -1181,6 +1181,14 @@ const androidInputHint = computed(() => {
   if (failedSessionStatuses.has(status)) return "当前故事已失败";
   return "当前还没轮到用户发言";
 });
+// 编排/运行时错误时显示可重试的提示
+const playTurnRetryable = computed(() => {
+  const rt = currentRuntimeInputStatus.value;
+  if (rt === "error") return true;
+  if (isLocalFailedPlayerMessage(latestConversationMessage.value)) return true;
+  return false;
+});
+
 const playTurnHint = computed(() => {
   if (store.state.sessionOpening) return sessionOpeningStageText.value;
   if (sessionOpenErrorText.value) return `打开会话失败：${sessionOpenErrorText.value}`;
@@ -1197,7 +1205,7 @@ const playTurnHint = computed(() => {
     return `正在处理${processingDots.value}`;
   }
   if (runtimeStatus === "error") {
-    return "发送失败，可重试或重新输入。";
+    return "发送失败，可重试或重新输入";
   }
   if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
@@ -1207,7 +1215,7 @@ const playTurnHint = computed(() => {
     return "当前故事已失败，可返回历史重新开始。";
   }
   if (isLocalFailedPlayerMessage(latestConversationMessage.value)) {
-    return "发送失败，可重试或重新输入。";
+    return "发送失败，可重试或重新输入";
   }
   if (runtimeStatus === "voicing") {
     return `正在朗读${expectedSpeaker.value}的发言，稍后继续。`;
@@ -3682,7 +3690,7 @@ onBeforeUnmount(() => {
           'play-thread--single-mode': playMode !== 'history' || (isSessionPlaybackMode && playbackViewMode === 'single'),
         }"
       >
-        <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">{{ emptySessionHint }}</div>
+        <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">{{ emptySessionHint }}<button v-if="playTurnRetryable" type="button" class="play-empty-retry" @click="retryRuntimeMessage">[重试]</button></div>
         <div v-else-if="playMode === 'history' && !(isSessionPlaybackMode && playbackViewMode === 'single')" class="play-thread__history">
           <template v-for="message in displayMessages" :key="message.id">
             <article
@@ -3920,8 +3928,8 @@ onBeforeUnmount(() => {
                 class="orchestrate-option"
                 @click="onOrchestrateOptionPick(item)"
               >
-                <span class="orchestrate-option-role">{{ item.role }}</span>
-                <span class="orchestrate-option-motive">{{ item.motive }}</span>
+                <span class="orchestrate-option-role marquee-container"><span class="marquee-content">{{ item.role }}</span></span>
+                <span class="orchestrate-option-motive marquee-container"><span class="marquee-content">{{ item.motive }}</span></span>
               </button>
               <button
                 type="button"
@@ -4150,7 +4158,7 @@ onBeforeUnmount(() => {
           class="play-tip-option"
           :disabled="tipsLoading"
           @click="pickTip(option)"
-        >{{ option }}</button>
+        ><span class="marquee-container"><span class="marquee-content">{{ option }}</span></span></button>
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
       </section>
 

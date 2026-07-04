@@ -1,3 +1,28 @@
+/* 跑马灯动画 */
+@keyframes marquee-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@keyframes marquee-right {
+  0% { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+
+.marquee-container {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.marquee-content {
+  display: inline-block;
+  animation: marquee-left 8s linear infinite;
+}
+
+.marquee-container:hover .marquee-content {
+  animation-play-state: paused;
+}
+
 :root {
   color-scheme: light;
   --bg: #eef2f8;
@@ -4323,12 +4348,24 @@ textarea::-webkit-scrollbar-thumb {
   font-size: 12px;
   font-weight: 700;
   color: #8fd0ff;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.orchestrate-option-role .marquee-content {
+  display: inline-block;
 }
 
 .orchestrate-option-motive {
   font-size: 12px;
   line-height: 1.4;
   color: rgba(229, 241, 255, 0.9);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.orchestrate-option-motive .marquee-content {
+  display: inline-block;
 }
 
 .orchestrate-options-refresh {
@@ -4611,7 +4648,22 @@ textarea::-webkit-scrollbar-thumb {
   background: rgba(6, 16, 30, 0.26);
   border: 1px solid rgba(213, 223, 236, 0.16);
   color: rgba(230, 237, 248, 0.9);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.play-empty-retry {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  color: #60a5fa;
+  border-radius: 8px;
+  padding: 4px 10px;
   font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.play-empty-retry:hover {
+  background: rgba(59, 130, 246, 0.25);
 }
 
 .play-loading-mask {
@@ -5090,7 +5142,8 @@ textarea::-webkit-scrollbar-thumb {
 .play-tip-option,
 .play-tip-back {
   width: 100%;
-  height: 32px;
+  min-height: 32px;
+  height: auto;
   padding: 0 10px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.28);
@@ -5101,6 +5154,12 @@ textarea::-webkit-scrollbar-thumb {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.play-tip-option .marquee-content {
+  display: inline-block;
+  animation: marquee-left 6s linear infinite;
+  padding-right: 30px;
 }
 
 .play-tip-back {
