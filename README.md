@@ -2,6 +2,10 @@
 
 V3 设计功能版 Web 客户端（重建版）。
 
+## web日志
+禁止使用 `console.log`
+只能使用 WebDebugLogUtil.log
+
 ## 启动
 
 ```bash

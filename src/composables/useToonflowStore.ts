@@ -843,6 +843,7 @@ function createEmptyWorldState() {
   return {
     worldId: 0,
     worldName: "",
+    intro: "",
     worldGlobalBackground: "",
     worldCoverPath: "",
     worldCoverBgPath: "",
@@ -883,6 +884,7 @@ interface StoryEditorSnapshot {
   createStep: 0 | 1;
   worldId: number;
   worldName: string;
+  intro: string;
   worldGlobalBackground: string;
   worldCoverPath: string;
   worldCoverBgPath: string;
@@ -3137,7 +3139,7 @@ function createToonflowStore() {
     state.narratorVoiceReferenceText = snapshot.narratorVoiceReferenceText;
     state.narratorVoicePromptText = snapshot.narratorVoicePromptText;
     state.narratorVoiceMixVoices = JSON.parse(JSON.stringify(snapshot.narratorVoiceMixVoices || [])) as VoiceMixItem[];
-    intro: state.intro,
+    state.intro = snapshot.intro || "";
     state.globalBackground = snapshot.globalBackground;
     state.allowRoleView = snapshot.allowRoleView;
     state.allowChatShare = snapshot.allowChatShare;

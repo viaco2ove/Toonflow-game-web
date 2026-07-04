@@ -1206,7 +1206,7 @@ const playTurnHint = computed(() => {
     return `正在处理${processingDots.value}`;
   }
   if (runtimeStatus === "error") {
-    return "发送失败，可重试或重新输入";
+    return "编排失败，可点击重试";
   }
   if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
@@ -1718,12 +1718,6 @@ const currentLiveFigureRole = computed(() => {
 const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
 
-// WebP 动画控制 - 用于大头像（动画播放 3 秒后定格）
-const liveFigureAvatar = useWebpAvatar(currentLiveFigureFgPath, {
-  playDuration: 3000,
-  autoPlay: true,
-});
-
 let speechRecognition: any = null;
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
@@ -1788,6 +1782,14 @@ const latestRevealedMessage = computed(() => {
   const list = revealedMessages.value;
   return list.length ? list[list.length - 1] : null;
 });
+
+// WebP 动画控制 - 用于大头像（动画播放 3 秒后定格）
+// 注意：必须放在所有相关 computed 定义之后，避免循环依赖
+const liveFigureAvatar = useWebpAvatar(currentLiveFigureFgPath, {
+  playDuration: 3000,
+  autoPlay: true,
+});
+
 const playStageStyle = computed(() => {
   // 轻微的暗角效果（四个角有淡淡的阴影）
   const vignette = "radial-gradient(circle at center, rgba(10, 21, 36, 0.05) 0%, rgba(10, 21, 36, 0.15) 70%, rgba(10, 21, 36, 0.2) 100%)";
@@ -2641,6 +2643,16 @@ async function submit() {
 
 async function retryRuntimeMessage() {
   playMode.value = "live";
+  // 编排失败 + 用户消息已落地时：仅触发新一轮编排（不要把同一条消息重发一次）
+  if (currentRuntimeInputStatus.value === "error" && !isLocalFailedPlayerMessage(latestConversationMessage.value)) {
+    try {
+      await store.continueSessionNarrative();
+    } catch (err) {
+      store.state.notice = `重试编排失败:${(err as Error)?.message || err}`;
+    }
+    return;
+  }
+  // 发送失败：调原逻辑重发用户文本
   await store.retryRuntimeFailure();
 }
 
