@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import { useOrchestrationVoiceFlow } from "../composables/orchestrationVoiceFlow";
+import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
@@ -1717,16 +1718,11 @@ const currentLiveFigureRole = computed(() => {
 const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
 
-// WebP 动画控制
-const WAIT_DURATION = 3000; // 定格等待时间
-let figureAnimTimer: ReturnType<typeof setTimeout> | null = null;
-let isAnimatedWebp = false;
-function clearFigureAnimTimer() {
-  if (figureAnimTimer !== null) {
-    clearTimeout(figureAnimTimer);
-    figureAnimTimer = null;
-  }
-}
+// WebP 动画控制 - 用于大头像（动画播放 3 秒后定格）
+const liveFigureAvatar = useWebpAvatar(currentLiveFigureFgPath, {
+  playDuration: 3000,
+  autoPlay: true,
+});
 
 let speechRecognition: any = null;
 let mediaRecorder: MediaRecorder | null = null;
@@ -2165,7 +2161,7 @@ watch(
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
-      console.log("[voice lifecycle] 继玩进入故事：历史台词已显示", {
+      WebDebugLogUtil.log("[voice lifecycle] 继玩进入故事：历史台词已显示", {
         messageCount: nextMessages.length,
         lastRole: nextMessages[nextMessages.length - 1]?.role,
         lastRoleType: nextMessages[nextMessages.length - 1]?.roleType,
@@ -2173,10 +2169,10 @@ watch(
       // 找最后一条 非 player 消息，触发语音播放（继玩重听最后一条 NPC/旁白台词）
       const lastNonPlayer = [...nextMessages].reverse().find((m) => m.roleType !== "player");
       if (!lastNonPlayer) {
-        console.log("[voice lifecycle] 继玩：最后一条是用户发言，等待自动编排下一轮");
+        WebDebugLogUtil.log("[voice lifecycle] 继玩：最后一条是用户发言，等待自动编排下一轮");
         return;
       }
-      console.log("[voice lifecycle] 继玩：对最后一条 NPC/旁白消息触发 reveal 播放语音", {
+      WebDebugLogUtil.log("[voice lifecycle] 继玩：对最后一条 NPC/旁白消息触发 reveal 播放语音", {
         messageId: lastNonPlayer.id,
         role: lastNonPlayer.role,
         content: String(lastNonPlayer.content || "").slice(0, 60),
@@ -3621,7 +3617,7 @@ onBeforeUnmount(() => {
     window.clearInterval(pendingDotsTimer);
     pendingDotsTimer = null;
   }
-  clearFigureAnimTimer();
+  // WebP 动画清理已由 useWebpAvatar 的 onBeforeUnmount 处理
   stopChapterBgmPlayback();
   clearPressTimer();
   stopVoiceRecognition();
@@ -3679,7 +3675,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${currentLiveFigureFgPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${liveFigureAvatar.displayedPath.value})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
@@ -3719,6 +3715,8 @@ onBeforeUnmount(() => {
                   :foreground-path="messageAvatarPath(message)"
                   :background-path="messageAvatarBgPath(message)"
                   :alt="messageTitle(message)"
+                  :animated="true"
+                  :animation-duration="3000"
                 >
                   <span>{{ messageTitle(message).slice(0, 1) }}</span>
                 </LayeredAvatar>
@@ -3791,6 +3789,8 @@ onBeforeUnmount(() => {
                   :foreground-path="messageAvatarPath(message)"
                   :background-path="messageAvatarBgPath(message)"
                   :alt="messageTitle(message)"
+                  :animated="true"
+                  :animation-duration="3000"
                 >
                   <span>{{ messageTitle(message).slice(0, 1) }}</span>
                 </LayeredAvatar>
@@ -3990,6 +3990,8 @@ onBeforeUnmount(() => {
                 :foreground-path="roleAvatarForeground(role)"
                 :background-path="roleAvatarBackground(role)"
                 :alt="role.name"
+                :animated="true"
+                :animation-duration="3000"
               >
                 <span>{{ role.name.slice(0, 1) }}</span>
               </LayeredAvatar>
@@ -4028,6 +4030,8 @@ onBeforeUnmount(() => {
                       :foreground-path="enemy.avatarPath || null"
                       :background-path="enemy.avatarBgPath || null"
                       :alt="enemy.name"
+                      :animated="true"
+                      :animation-duration="3000"
                     >
                       <span>{{ enemy.name.slice(0, 1) || "敌" }}</span>
                     </LayeredAvatar>
@@ -4546,6 +4550,8 @@ onBeforeUnmount(() => {
                 :foreground-path="roleAvatarForeground(roleDetail)"
                 :background-path="roleAvatarBackground(roleDetail)"
                 :alt="roleDetail.name"
+                :animated="true"
+                :animation-duration="3000"
               >
                 <span>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
               </LayeredAvatar>

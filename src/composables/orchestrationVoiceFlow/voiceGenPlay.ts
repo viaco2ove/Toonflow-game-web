@@ -175,7 +175,7 @@ export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: s
   WebDebugLogUtil.log("resolveRuntimeVoiceUrl inflight", inflight);
   if (inflight) return inflight;
 
-  console.log("[voice lifecycle] ⑥ 开始调用 streamVoice TTS API", {
+  WebDebugLogUtil.log("[voice lifecycle] ⑥ 开始调用 streamVoice TTS API", {
     mode: playableBinding.mode,
     presetId: playableBinding.presetId,
     configId: playableBinding.configId,
@@ -243,7 +243,7 @@ export async function warmVoiceBinding(binding: VoiceBindingDraft) {
 
 // ============== 语音 Blob 获取 ==============
 export async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
-  console.log("[voice lifecycle] ⑦ 拉取音频 audioProxy", { audioUrl });
+  WebDebugLogUtil.log("[voice lifecycle] ⑦ 拉取音频 audioProxy", { audioUrl });
   console.log("[voiceGenPlay] fetchRuntimeVoiceBlob start", { audioUrl });
   const cached = runtimeVoiceBlobCache.get(audioUrl);
   if (cached) {
@@ -280,12 +280,12 @@ export async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
     throw new Error(`HTTP ${response.status}`);
   }
   const blob = await response.blob();
-  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob blob", {
+  WebDebugLogUtil.log("[voiceGenPlay] fetchRuntimeVoiceBlob blob", {
     audioUrl,
     blobSize: blob.size,
     blobType: blob.type,
   });
-  console.log("[voice lifecycle] ⑧ 音频获取成功，即将交给 Audio 元素播放", {
+  WebDebugLogUtil.log("[voice lifecycle] ⑧ 音频获取成功，即将交给 Audio 元素播放", {
     blobSize: blob.size,
     blobType: blob.type,
   });
@@ -342,7 +342,7 @@ export async function playRuntimeVoiceBlob(
     manual,
     speakable: speakable.slice(0, 60),
   });
-  console.log("[voice lifecycle] ⑨ Audio.play() 即将调用", { blobSize: blob.size, blobType: blob.type });
+  WebDebugLogUtil.log("[voice lifecycle] ⑨ Audio.play() 即将调用", { blobSize: blob.size, blobType: blob.type });
   runtimeVoiceObjectUrl = URL.createObjectURL(blob);
   console.log("[voiceGenPlay] playRuntimeVoiceBlob objectURL", { objectUrl: runtimeVoiceObjectUrl });
   const player = new Audio(runtimeVoiceObjectUrl);
@@ -410,12 +410,12 @@ export async function playRuntimeVoiceBlob(
       resolve(ok);
     };
     player.onplay = () => {
-      console.log("[voiceGenPlay] playRuntimeVoiceBlob onplay", {
+      WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob onplay", {
         currentTime: player.currentTime,
         duration: Number.isFinite(player.duration) ? player.duration : -1,
         speakable: speakable.slice(0, 60),
       });
-      console.log("[voice lifecycle] ⑩ 音频真正开始播放", { currentTime: player.currentTime });
+      WebDebugLogUtil.log("[voice lifecycle] ⑩ 音频真正开始播放", { currentTime: player.currentTime });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 真正开始播放", {
         waitForCompletion,
         currentTime: player.currentTime,
@@ -433,7 +433,7 @@ export async function playRuntimeVoiceBlob(
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),
       });
-      console.log("[voice lifecycle] ⑪ 音频播放完毕", { currentTime: player.currentTime });
+      WebDebugLogUtil.log("[voice lifecycle] ⑪ 音频播放完毕", { currentTime: player.currentTime });
       WebDebugLogUtil.log("[aiGame][miniGame] playRuntimeVoiceBlob 播放结束", {
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),

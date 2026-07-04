@@ -2618,7 +2618,7 @@ function createToonflowStore() {
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
     ].filter(Boolean) as MessageItem[];
-    console.log("[voice lifecycle] ② 编排结果合并，消息入 state.messages", {
+    WebDebugLogUtil.log("[voice lifecycle] ② 编排结果合并，消息入 state.messages", {
       sessionId: result.sessionId,
       incomingCount: incoming.length,
       incomingRoles: incoming.map(m => `${m.role}(${m.id}|${m.roleType})`),
@@ -7019,7 +7019,7 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
-      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+      WebDebugLogUtil.log("[voice lifecycle] 编排后端完成，台词已 commit", {
         messageId: fallbackCommittedMessage.id,
         role: committedRole,
         content: String(committedContent || "").slice(0, 60),
@@ -7184,7 +7184,7 @@ function createToonflowStore() {
       };
       state.messages = [...historyMessages];
       syncRuntimeChatTrace();
-      console.log("[voice lifecycle] 编排后端完成，台词已 commit", {
+      WebDebugLogUtil.log("[voice lifecycle] 编排后端完成，台词已 commit", {
         messageId: fallbackCommittedMessage.id,
         role: committedRole,
         content: String(committedContent || "").slice(0, 60),
@@ -7199,7 +7199,7 @@ function createToonflowStore() {
       }
       await refreshSessionStoryInfo();
       await waitForSessionOpeningPresentation(committedContent);
-      console.log("[voice lifecycle] 编排→消息入store完成，等待自动触发watch→reveal流程");
+      WebDebugLogUtil.log("[voice lifecycle] 编排→消息入store完成，等待自动触发watch→reveal流程");
     } catch (error) {
       updateMessageById(streamingMessage.id, () => null, true);
       throw error;
@@ -7211,7 +7211,7 @@ function createToonflowStore() {
     // 不再因小游戏活跃就提前退出：小游戏编排走独立的 /game/orchestration/minigame 接口，
     // 每条消息串行处理（编排 → streamlines → 语音播放 → 编排），避免链式中断语音。
     state.sessionRuntimeStage = "继续编排下一轮剧情";
-    console.log("[voice lifecycle] 编排开始", { sessionId: state.currentSessionId });
+    WebDebugLogUtil.log("[voice lifecycle] 编排开始", { sessionId: state.currentSessionId });
     if(WebDebugLogUtil.isEnabled()){
        console.log("继续编排下一轮剧情")
     }
@@ -7220,7 +7220,7 @@ function createToonflowStore() {
       let advanced = false;
       for (let step = 0; step < 3; step += 1) {
         const isMiniGameActive = hasActiveMiniGameInCurrentSession();
-        console.log("[voice lifecycle] 编排中，等待 API 返回", { step, isMiniGameActive });
+        WebDebugLogUtil.log("[voice lifecycle] 编排中，等待 API 返回", { step, isMiniGameActive });
         // 小游戏模式下走专用编排接口，获取完整的 plan（含 eventType、presetContent 等）；
         // 普通模式走标准编排接口。
         WebDebugLogUtil.log("[voice时序] performContinueSessionNarrative 开始编排", {
@@ -7269,7 +7269,7 @@ function createToonflowStore() {
             消息数: conversationMessages().length,
             最新消息id: conversationMessages().slice(-1)[0]?.id,
           });
-          console.log("[voice lifecycle] 编排→流式生成台词完成", {
+          WebDebugLogUtil.log("[voice lifecycle] 编排→流式生成台词完成", {
             step,
             消息数: conversationMessages().length,
             最新消息id: conversationMessages().slice(-1)[0]?.id,
