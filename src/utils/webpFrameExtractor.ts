@@ -7,6 +7,9 @@
  * 3. 基于 URL 作为 key 进行缓存，避免重复解码
  */
 
+import { WebDebugLogUtil } from "./WebDebugLogUtil";
+import { WEBP_LOG_TAGS } from "./logTagList";
+
 // ============== 类型定义 ==============
 
 export interface WebpFrameCacheEntry {
@@ -74,6 +77,7 @@ function getCacheEntry(url: string): WebpFrameCacheEntry | null {
 
   // 检查是否过期
   if (Date.now() - entry.extractedAt > MEMORY_CACHE_TTL) {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "缓存过期，删除", { url });
     memoryCache.delete(url);
     const index = cacheAccessOrder.indexOf(url);
     if (index > -1) cacheAccessOrder.splice(index, 1);
@@ -95,6 +99,7 @@ function setCacheEntry(url: string, entry: WebpFrameCacheEntry): void {
   if (memoryCache.size >= MEMORY_CACHE_LIMIT) {
     const lruUrl = cacheAccessOrder.shift();
     if (lruUrl) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "LRU 淘汰", { evictedUrl: lruUrl, cacheSize: memoryCache.size });
       memoryCache.delete(lruUrl);
     }
   }
@@ -126,12 +131,16 @@ export async function detectWebpAnimation(url: string): Promise<boolean> {
     });
 
     if (!rangeResponse.ok) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.detect, "Range 请求失败，保守返回 true(动画)", { url, status: rangeResponse.status });
       return true; // 无法检测时保守返回 true
     }
 
     const buffer = await rangeResponse.arrayBuffer();
-    return checkWebpAnimated(new Uint8Array(buffer));
-  } catch {
+    const isAnimated = checkWebpAnimated(new Uint8Array(buffer));
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.detect, "检测完成", { url, isAnimated });
+    return isAnimated;
+  } catch (err) {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.detect, "检测异常，保守返回 true(动画)", { url, error: err instanceof Error ? err.message : String(err) });
     return true; // 检测失败时保守返回 true
   }
 }
@@ -174,6 +183,7 @@ function checkWebpAnimated(data: Uint8Array): boolean {
  * 使用 Canvas 提取 WebP 第一帧
  */
 async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResult> {
+  WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取开始", { url });
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -193,12 +203,14 @@ async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResu
         canvas.height = img.naturalHeight || img.height;
 
         if (canvas.width === 0 || canvas.height === 0) {
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取失败：尺寸为0", { url });
           resolve({ success: false, dataUrl: "", isAnimated: false, error: "图片尺寸为 0" });
           return;
         }
 
         const ctx = canvas.getContext("2d");
         if (!ctx) {
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取失败：无法获取2D上下文", { url });
           resolve({ success: false, dataUrl: "", isAnimated: false, error: "无法获取 Canvas 2D 上下文" });
           return;
         }
@@ -209,8 +221,10 @@ async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResu
         // 转换为 PNG DataURL
         const dataUrl = canvas.toDataURL("image/png");
 
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取成功", { url, width: canvas.width, height: canvas.height, dataUrlLength: dataUrl.length });
         resolve({ success: true, dataUrl, isAnimated: true });
       } catch (error) {
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取异常", { url, error: error instanceof Error ? error.message : "未知错误" });
         resolve({
           success: false,
           dataUrl: "",
@@ -222,6 +236,7 @@ async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResu
 
     const handleError = () => {
       cleanup();
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 图片加载失败", { url });
       resolve({ success: false, dataUrl: "", isAnimated: false, error: "图片加载失败" });
     };
 
@@ -232,6 +247,7 @@ async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResu
     timeoutId = setTimeout(() => {
       img.removeEventListener("load", handleLoad);
       img.removeEventListener("error", handleError);
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取超时(10s)", { url });
       resolve({ success: false, dataUrl: "", isAnimated: false, error: "加载超时" });
     }, 10000);
 
@@ -259,6 +275,7 @@ export async function extractWebpFirstFrame(
   if (!forceRefresh) {
     const cached = getCacheEntry(url);
     if (cached) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "命中", { url, isAnimated: cached.isAnimated });
       return {
         success: true,
         dataUrl: cached.firstFrameDataUrl,
@@ -267,11 +284,14 @@ export async function extractWebpFirstFrame(
     }
   }
 
+  WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "未命中，开始提取", { url, forceRefresh });
+
   // 提取第一帧
   const result = await extractFrameWithCanvas(url);
 
   // 缓存结果
   if (result.success) {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "写入缓存", { url, isAnimated: result.isAnimated });
     setCacheEntry(url, {
       firstFrameDataUrl: result.dataUrl,
       isAnimated: result.isAnimated,

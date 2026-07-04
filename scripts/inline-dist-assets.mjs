@@ -65,7 +65,7 @@ async function main() {
   }
 
   await writeFile(htmlPath, html, "utf8");
-  WebDebugLogUtil.log("Inlined dist assets into dist/index.html");
+  console.log("Inlined dist assets into dist/index.html");
 }
 
 await main();

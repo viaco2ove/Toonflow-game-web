@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, useSlots } from "vue";
 import { useWebpAvatar } from "../composables/useWebpAvatar";
+import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
+import { WEBP_LOG_TAGS } from "../utils/logTagList";
 
 const props = defineProps<{
   foregroundPath?: string | null;
@@ -17,6 +19,13 @@ const emit = defineEmits<{
   (e: "animation-end"): void;
 }>();
 
+WebDebugLogUtil.log(WEBP_LOG_TAGS.render, "LayeredAvatar 初始化", {
+  foregroundPath: props.foregroundPath,
+  backgroundPath: props.backgroundPath,
+  animated: props.animated,
+  animationDuration: props.animationDuration ?? 3000,
+});
+
 // WebP 动画控制
 const {
   displayedPath: effectiveFgPath,
@@ -28,7 +37,10 @@ const {
 } = useWebpAvatar(props.foregroundPath, {
   playDuration: props.animationDuration ?? 3000,
   autoPlay: props.animated ?? false,
-  onAnimationEnd: () => emit("animation-end"),
+  onAnimationEnd: () => {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.render, "动画播放结束，定格", { foregroundPath: props.foregroundPath });
+    emit("animation-end");
+  },
 });
 
 const slots = useSlots();

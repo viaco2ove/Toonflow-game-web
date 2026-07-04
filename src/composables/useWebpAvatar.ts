@@ -8,13 +8,15 @@
  * 4. 提供可逆的切换能力
  */
 
-import { ref, computed, watch, onBeforeUnmount, nextTick } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import {
   extractWebpFirstFrame,
   isWebpUrl,
   clearWebpFrameCache,
   type ExtractWebpFrameResult,
 } from "../utils/webpFrameExtractor";
+import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
+import { WEBP_LOG_TAGS } from "../utils/logTagList";
 
 export interface UseWebpAvatarOptions {
   /** 动画播放时长（毫秒），0 表示无限循环 */
@@ -103,11 +105,13 @@ export function useWebpAvatar(
 
     // 非 WebP 或空路径直接跳过
     if (!path || !isWebpUrl(path)) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "skip: 非webp或空路径", { path, isWebp: !!path && isWebpUrl(path) });
       isAnimated.value = false;
       isLoading.value = false;
       return;
     }
 
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "开始提取第一帧", { path, forceRefresh });
     isLoading.value = true;
     error.value = null;
 
@@ -117,17 +121,24 @@ export function useWebpAvatar(
       if (result.success) {
         firstFrameDataUrl.value = result.dataUrl;
         isAnimated.value = result.isAnimated;
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "提取成功", {
+          path,
+          isAnimated: result.isAnimated,
+          dataUrlLength: result.dataUrl?.length || 0,
+        });
         onLoaded?.(result);
       } else {
         error.value = result.error || "提取第一帧失败";
         // 失败时使用原始路径
         firstFrameDataUrl.value = "";
         isAnimated.value = false;
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "提取失败，降级原始路径", { path, error: error.value });
       }
     } catch (err) {
       error.value = err instanceof Error ? err.message : "未知错误";
       firstFrameDataUrl.value = "";
       isAnimated.value = false;
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "提取异常，降级原始路径", { path, error: error.value });
     } finally {
       isLoading.value = false;
     }
@@ -137,9 +148,17 @@ export function useWebpAvatar(
    * 开始播放动画
    */
   function play(): void {
-    if (!isAnimated.value || isPlaying.value) return;
+    if (!isAnimated.value || isPlaying.value) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "play 跳过", {
+        path: originalPath.value,
+        isAnimated: isAnimated.value,
+        isPlaying: isPlaying.value,
+      });
+      return;
+    }
 
     isPlaying.value = true;
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放", { path: originalPath.value, playDuration });
 
     // 如果还没有第一帧，先提取
     if (!firstFrameDataUrl.value) {
@@ -150,6 +169,7 @@ export function useWebpAvatar(
     if (playDuration > 0) {
       clearAnimationTimer();
       animationTimer = setTimeout(() => {
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
         pause();
         onAnimationEnd?.();
       }, playDuration);
@@ -164,6 +184,7 @@ export function useWebpAvatar(
 
     isPlaying.value = false;
     clearAnimationTimer();
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "暂停/定格", { path: originalPath.value });
   }
 
   /**
@@ -186,6 +207,7 @@ export function useWebpAvatar(
       clearWebpFrameCache(originalPath.value);
     }
     firstFrameDataUrl.value = "";
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "refresh 重新提取", { path: originalPath.value });
 
     // 重新提取
     await extractFrame(true);
@@ -199,6 +221,7 @@ export function useWebpAvatar(
     firstFrameDataUrl.value = "";
     isAnimated.value = false;
     error.value = null;
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "reset 重置", { path: originalPath.value });
   }
 
   /**
@@ -213,40 +236,37 @@ export function useWebpAvatar(
 
   // ============== 监听器 ==============
 
-  // 监听路径变化（不使用 immediate，避免在 setup 阶段过早执行）
+  // 监听路径变化
   watch(
     () => avatarPath,
     async (newPath) => {
-      // 重置状态
-      reset();
-      originalPath.value = newPath || "";
+      try {
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "路径变化", { newPath, autoPlay });
+        // 重置状态
+        reset();
+        originalPath.value = newPath || "";
 
-      // 如果有新路径且自动播放，开始处理
-      if (originalPath.value && autoPlay) {
-        await extractFrame();
-        if (isAnimated.value) {
-          play();
+        // 如果有新路径且自动播放，开始处理
+        if (originalPath.value && autoPlay) {
+          await extractFrame();
+          if (isAnimated.value) {
+            play();
+          } else {
+            WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "非动画或提取未成功，不自动播放", { path: originalPath.value });
+          }
         }
+      } catch (e) {
+        // 忽略 watch 中的错误，避免中断
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "watch 异常", { error: e instanceof Error ? e.message : String(e) });
       }
-    }
+    },
+    { immediate: true }
   );
-
-  // 初始路径处理（在 nextTick 中执行，避免访问未初始化的 computed）
-  if (avatarPath) {
-    nextTick(async () => {
-      originalPath.value = avatarPath || "";
-      if (autoPlay) {
-        await extractFrame();
-        if (isAnimated.value) {
-          play();
-        }
-      }
-    });
-  }
 
   // ============== 清理 ==============
 
   onBeforeUnmount(() => {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "组件卸载，清理定时器", { path: originalPath.value, isPlaying: isPlaying.value });
     clearAnimationTimer();
   });
 
@@ -257,6 +277,9 @@ export function useWebpAvatar(
     isPlaying,
     error,
     originalPath,
+    setPath: (path: string) => {
+      originalPath.value = path;
+    },
     play,
     pause,
     toggle,
