@@ -550,7 +550,7 @@ export class ToonflowApi {
       }
     } catch (error) {
       if (timedOut) {
-         console.log("[aiGame][streamDebugLines]", { error });
+         WebDebugLogUtil.log("[aiGame][streamDebugLines]", { error });
         throw new Error("调试台词流空闲超时");
       }
       throw error;

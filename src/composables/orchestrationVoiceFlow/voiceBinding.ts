@@ -5,6 +5,7 @@
  */
 import { useToonflowStore } from "../useToonflowStore";
 import type { MessageItem, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../../types/toonflow";
+import {WebDebugLogUtil} from "../../utils/WebDebugLogUtil";
 
 // ============== Store 延迟获取 ==============
 let cachedStore: ReturnType<typeof useToonflowStore> | null = null;
@@ -124,7 +125,7 @@ export function findMessageRole(message: MessageItem): StoryRole | null {
     return role.name === roleName || role.id === roleName;
   });
   const fallbackMatch = exactMatch || roleCards.find((role: StoryRole) => role.roleType === message.roleType) || null;
-  console.log("[voiceBinding] findMessageRole", {
+  WebDebugLogUtil.log("[voiceBinding] findMessageRole", {
     messageId: message.id,
     role: message.role,
     roleType: message.roleType,

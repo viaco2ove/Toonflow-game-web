@@ -163,7 +163,7 @@ export async function ensureRuntimeCloneBinding(binding: VoiceBindingDraft): Pro
 // ============== 语音 URL 解析 ==============
 export async function resolveRuntimeVoiceUrl(binding: VoiceBindingDraft, text: string, source: "common" | "warmVoiceBinding" = "common"): Promise<string> {
   if (WebDebugLogUtil.isEnabled()) {
-    console.log("resolveRuntimeVoiceUrl");
+    WebDebugLogUtil.log("resolveRuntimeVoiceUrl");
   }
 
   const playableBinding = await ensureRuntimeCloneBinding(binding);
@@ -244,10 +244,10 @@ export async function warmVoiceBinding(binding: VoiceBindingDraft) {
 // ============== 语音 Blob 获取 ==============
 export async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
   WebDebugLogUtil.log("[voice lifecycle] ⑦ 拉取音频 audioProxy", { audioUrl });
-  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob start", { audioUrl });
+  WebDebugLogUtil.log("[voiceGenPlay] fetchRuntimeVoiceBlob start", { audioUrl });
   const cached = runtimeVoiceBlobCache.get(audioUrl);
   if (cached) {
-    console.log("[voiceGenPlay] fetchRuntimeVoiceBlob cache hit", {
+    WebDebugLogUtil.log("[voiceGenPlay] fetchRuntimeVoiceBlob cache hit", {
       audioUrl,
       blobSize: cached.size,
       blobType: cached.type,
@@ -264,7 +264,7 @@ export async function fetchRuntimeVoiceBlob(audioUrl: string): Promise<Blob> {
     });
     throw err;
   }
-  console.log("[voiceGenPlay] fetchRuntimeVoiceBlob response", {
+  WebDebugLogUtil.log("[voiceGenPlay] fetchRuntimeVoiceBlob response", {
     audioUrl,
     status: response.status,
     statusText: response.statusText,
@@ -335,7 +335,7 @@ export async function playRuntimeVoiceBlob(
   speakable: string,
   onPlay?: () => void,
 ): Promise<boolean> {
-  console.log("[voiceGenPlay] playRuntimeVoiceBlob start", {
+  WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob start", {
     blobSize: blob.size,
     blobType: blob.type,
     waitForCompletion,
@@ -344,7 +344,7 @@ export async function playRuntimeVoiceBlob(
   });
   WebDebugLogUtil.log("[voice lifecycle] ⑨ Audio.play() 即将调用", { blobSize: blob.size, blobType: blob.type });
   runtimeVoiceObjectUrl = URL.createObjectURL(blob);
-  console.log("[voiceGenPlay] playRuntimeVoiceBlob objectURL", { objectUrl: runtimeVoiceObjectUrl });
+  WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob objectURL", { objectUrl: runtimeVoiceObjectUrl });
   const player = new Audio(runtimeVoiceObjectUrl);
   player.preload = "auto";
   runtimeVoicePlayer = player;
@@ -406,7 +406,7 @@ export async function playRuntimeVoiceBlob(
       }
       runtimeVoiceResolve = null;
       if (manual) getStore().state.menuVisibleHint = hint;
-      console.log("[voiceGenPlay] playRuntimeVoiceBlob finalize", { ok, hint, speakable: speakable.slice(0, 60) });
+      WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob finalize", { ok, hint, speakable: speakable.slice(0, 60) });
       resolve(ok);
     };
     player.onplay = () => {
@@ -429,7 +429,7 @@ export async function playRuntimeVoiceBlob(
       }
     };
     player.onended = () => {
-      console.log("[voiceGenPlay] playRuntimeVoiceBlob onended", {
+      WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob onended", {
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),
       });
@@ -462,7 +462,7 @@ export async function playRuntimeVoiceBlob(
       finalize(false, "朗读失败");
     };
     player.onpause = () => {
-      console.log("[voiceGenPlay] playRuntimeVoiceBlob onpause", {
+      WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob onpause", {
         currentTime: player.currentTime,
         speakable: speakable.slice(0, 60),
       });
@@ -553,7 +553,7 @@ export async function playMessageAudioWithBinding(
   });
   stopRuntimeVoicePlayback();
   const requestId = runtimeVoiceRequestId;
-  console.log("[voiceGenPlay] playMessageAudioWithBinding init", {
+  WebDebugLogUtil.log("[voiceGenPlay] playMessageAudioWithBinding init", {
     messageId: message.id,
     requestId,
     binding: { mode: binding.mode, presetId: binding.presetId, roleId: binding.roleId, configId: binding.configId },
@@ -577,9 +577,9 @@ export async function playMessageAudioWithBinding(
       }
       try {
         setRuntimeVoiceIndicator(message, "loading", messageUiKey(message));
-        console.log("[voiceGenPlay] calling resolveRuntimeVoiceUrl", { segment: segment.slice(0, 30), attempt });
+        WebDebugLogUtil.log("[voiceGenPlay] calling resolveRuntimeVoiceUrl", { segment: segment.slice(0, 30), attempt });
         const audioUrl = await resolveRuntimeVoiceUrl(binding, segment);
-        console.log("[voiceGenPlay] resolveRuntimeVoiceUrl result", {
+        WebDebugLogUtil.log("[voiceGenPlay] resolveRuntimeVoiceUrl result", {
           audioUrl,
           requestId,
           runtimeVoiceRequestId,
@@ -587,7 +587,7 @@ export async function playMessageAudioWithBinding(
           attempt,
         });
         if (WebDebugLogUtil.isEnabled()) {
-          console.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
+          WebDebugLogUtil.log(`[debug:fetchRuntimeVoiceBlob] audioUrl=${audioUrl} requestId=${requestId} runtimeVoiceRequestId=${runtimeVoiceRequestId}`);
         }
         if (!audioUrl || requestId !== runtimeVoiceRequestId) {
           console.warn("[voiceGenPlay] abort before fetchRuntimeVoiceBlob", {
@@ -597,13 +597,13 @@ export async function playMessageAudioWithBinding(
           });
           return false;
         }
-        console.log("[voiceGenPlay] calling fetchRuntimeVoiceBlob", { audioUrl });
+        WebDebugLogUtil.log("[voiceGenPlay] calling fetchRuntimeVoiceBlob", { audioUrl });
         const blob = await fetchRuntimeVoiceBlob(audioUrl);
-        console.log("[voiceGenPlay] fetchRuntimeVoiceBlob done", { blobSize: blob.size, blobType: blob.type });
+        WebDebugLogUtil.log("[voiceGenPlay] fetchRuntimeVoiceBlob done", { blobSize: blob.size, blobType: blob.type });
         segmentPlayed = await playRuntimeVoiceBlob(blob, manual, waitForCompletion, segment, () => {
           setRuntimeVoiceIndicator(message, "playing", messageUiKey(message));
         });
-        console.log("[voiceGenPlay] playRuntimeVoiceBlob result", { segmentPlayed, attempt });
+        WebDebugLogUtil.log("[voiceGenPlay] playRuntimeVoiceBlob result", { segmentPlayed, attempt });
         if (getStore().hasActiveMiniGameInCurrentSession()) {
           WebDebugLogUtil.log("[aiGame][miniGame] 台词-语音播放-playRuntimeVoiceBlob", segmentPlayed);
         } else {
@@ -659,7 +659,7 @@ export async function playMessageAudio(
     manual,
     waitForCompletion,
   });
-  console.log("[voiceGenPlay] playMessageAudio entry", {
+  WebDebugLogUtil.log("[voiceGenPlay] playMessageAudio entry", {
     messageId: message.id,
     role: message.role,
     roleType: message.roleType,
@@ -670,7 +670,7 @@ export async function playMessageAudio(
   const playableContent = overrideContent ?? messageDisplayContent(message);
   const speakable = normalizePlayableSpeechText(playableContent);
   if (!speakable) {
-    console.log("[voiceGenPlay] speakable empty, abort", { messageId: message.id });
+    WebDebugLogUtil.log("[voiceGenPlay] speakable empty, abort", { messageId: message.id });
     if (manual) getStore().state.menuVisibleHint = "这条内容没有可朗读文本";
     return false;
   }
@@ -679,7 +679,7 @@ export async function playMessageAudio(
     const store = getStore();
     const roleCards = Array.isArray(store.state.roleCards) ? store.state.roleCards : [];
     const matchedRole = roleCards.find((r: any) => r.name === message.role || r.id === message.role);
-    console.log("[voiceGenPlay] no binding, fallback to browser speech", {
+    WebDebugLogUtil.log("[voiceGenPlay] no binding, fallback to browser speech", {
       messageId: message.id,
       role: message.role,
       roleType: message.roleType,
@@ -689,7 +689,7 @@ export async function playMessageAudio(
     });
     return replayWithBrowserSpeech(overrideContent ?? message.content, waitForCompletion);
   }
-  console.log("[voiceGenPlay] resolved binding", {
+  WebDebugLogUtil.log("[voiceGenPlay] resolved binding", {
     messageId: message.id,
     binding: { mode: binding.mode, presetId: binding.presetId, roleId: binding.roleId, configId: binding.configId, hasRefAudio: !!binding.referenceAudioPath },
   });

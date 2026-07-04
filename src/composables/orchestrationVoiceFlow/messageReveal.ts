@@ -102,7 +102,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   const isAutoVoiceEnabled = () => resolveAutoVoice(context);
   const canSpeak = () => resolveCanPlayerSpeak(context);
 
-  console.log("[messageReveal] waitForMessageReveal entry", {
+  WebDebugLogUtil.log("[messageReveal] waitForMessageReveal entry", {
     messageKey,
     autoVoice: isAutoVoiceEnabled(),
     canSpeak: canSpeak(),
@@ -110,10 +110,10 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
 
   let currentMessage = getLatest(messageKey);
   if (!currentMessage) {
-    console.log("[messageReveal] waitForMessageReveal early return: no message", { messageKey });
+    WebDebugLogUtil.log("[messageReveal] waitForMessageReveal early return: no message", { messageKey });
     return;
   }
-  console.log("[messageReveal] waitForMessageReveal got message", {
+  WebDebugLogUtil.log("[messageReveal] waitForMessageReveal got message", {
     messageKey,
     messageId: currentMessage.id,
     role: currentMessage.role,
@@ -163,7 +163,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
       // 流式生成中：每轮 tick 打印一次 snapshot，看到 content / sentences 增量
       logMessageSnapshot("streaming-tick", currentMessage, getSentences(currentMessage), messageKey);
       const sentences = getSentences(currentMessage);
-      console.log("[messageReveal] streaming loop", {
+      WebDebugLogUtil.log("[messageReveal] streaming loop", {
         messageId: currentMessage.id,
         isStreaming: isStreamingMsg(currentMessage),
         isCancelled: isCancelled(),
@@ -186,13 +186,13 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
           句内容: sentence?.slice(0, 30),
         });
         startSentencePlayback(messageKey, sentenceIndex);
-        console.log("[messageReveal] playMessageAudio start", {
+        WebDebugLogUtil.log("[messageReveal] playMessageAudio start", {
           messageId: currentMessage.id,
           sentenceIndex,
           sentence: sentence?.slice(0, 60),
         });
         const played = await playMessageAudio(currentMessage, false, true, sentence);
-        console.log("[messageReveal] playMessageAudio result", {
+        WebDebugLogUtil.log("[messageReveal] playMessageAudio result", {
           messageId: currentMessage.id,
           sentenceIndex,
           played,
@@ -253,7 +253,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     return;
   }
   if (currentMessage.roleType === "player") {
-    console.log("[messageReveal] roleType=player, return", {
+    WebDebugLogUtil.log("[messageReveal] roleType=player, return", {
       messageId: currentMessage.id,
       autoVoice: isAutoVoiceEnabled(),
     });
@@ -307,7 +307,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     return;
   }
   getStore().setRuntimeMessageStatus(currentMessage.id, "voicing");
-  console.log("[messageReveal] non-streaming voicing", {
+  WebDebugLogUtil.log("[messageReveal] non-streaming voicing", {
     messageId: currentMessage.id,
     role: currentMessage.role,
     roleType: currentMessage.roleType,

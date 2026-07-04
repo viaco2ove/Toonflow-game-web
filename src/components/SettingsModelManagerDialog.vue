@@ -17,6 +17,7 @@ import {
   modelOptionsFor,
   type ModelConfigKind,
 } from "../utils/modelConfigCatalog";
+import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -884,7 +885,7 @@ async function submitEditor() {
         remark: form.remark.trim() || undefined,
       });
     } else {
-      console.log("[submitEditor] addManagedModelConfig", {
+      WebDebugLogUtil.log("[submitEditor] addManagedModelConfig", {
         configType: props.configType,
         slotKey: props.slotKey,
         manufacturer,

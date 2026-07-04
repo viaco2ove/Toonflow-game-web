@@ -4982,7 +4982,7 @@ function createToonflowStore() {
       voiceMixVoices: state.playerVoiceMixVoices,
       parameterCardJson: null,
     };
-    console.log("[currentPlayerRole] state.playerDesc:", state.playerDesc, "=> description:", pr.description);
+    WebDebugLogUtil.log("[currentPlayerRole] state.playerDesc:", state.playerDesc, "=> description:", pr.description);
     return pr;
   }
 
@@ -5323,7 +5323,7 @@ function createToonflowStore() {
       state.notice = "只能编辑自己的故事";
       return;
     }
-    console.log("[openWorldForEdit] world.playerRole.description:", world?.playerRole?.description);
+    WebDebugLogUtil.log("[openWorldForEdit] world.playerRole.description:", world?.playerRole?.description);
     // sessionDetail.world 可能是游玩开始时的旧快照，saveWorld 更新了 DB 但没有更新它。
     // 必须用 world.id 重新从 DB 拉最新数据，避免用旧快照覆盖已保存的内容。
     await loadWorldForEdit({ id: world.id } as WorldItem);
@@ -5883,7 +5883,7 @@ function createToonflowStore() {
   }
 
   async function openSession(sessionId: string, options?: { playback?: boolean; playbackIndex?: number; resumeLatest?: boolean }) {
-    console.log("[aiGame] openSession start", {
+    WebDebugLogUtil.log("[aiGame] openSession start", {
       sessionId,
       playback: Boolean(options?.playback),
       resumeLatest: Boolean(options?.resumeLatest),
@@ -5914,7 +5914,7 @@ function createToonflowStore() {
       const lastLoadedMessage = Array.isArray(detail?.messages) && detail.messages.length > 0
         ? detail.messages[detail.messages.length - 1]
         : null;
-      console.log("[aiGame] openSession session loaded", {
+      WebDebugLogUtil.log("[aiGame] openSession session loaded", {
         sessionId,
         isResume: Boolean(options?.resumeLatest),
         messageCount: loadedMessageCount,
@@ -6884,7 +6884,7 @@ function createToonflowStore() {
     historyMessages: MessageItem[],
   ) {
     if(WebDebugLogUtil.isEnabled()){
-      console.log("[aiGame][streamSessionPlan]", { plan });
+      WebDebugLogUtil.log("[aiGame][streamSessionPlan]", { plan });
     }
     if (hasActiveMiniGameInCurrentSession()) {
       WebDebugLogUtil.log("[aiGame][miniGame] 编排通道进行中，streamSessionPlan check",plan);
@@ -7213,7 +7213,7 @@ function createToonflowStore() {
     state.sessionRuntimeStage = "继续编排下一轮剧情";
     WebDebugLogUtil.log("[voice lifecycle] 编排开始", { sessionId: state.currentSessionId });
     if(WebDebugLogUtil.isEnabled()){
-       console.log("继续编排下一轮剧情")
+       WebDebugLogUtil.log("继续编排下一轮剧情")
     }
 
     try {

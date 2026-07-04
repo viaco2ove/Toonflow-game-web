@@ -612,12 +612,12 @@ const allEventStageProgress = computed(() => {
   // 调试模式：从 debugRuntimeState 读取
   if (store.state.debugMode) {
     const fromDebug = (store.state.debugRuntimeState as any)?.allEventStageProgress;
-    console.log("[ScenePlay][debug] allEventStageProgress from debugRuntimeState:", fromDebug);
+    WebDebugLogUtil.log("[ScenePlay][debug] allEventStageProgress from debugRuntimeState:", fromDebug);
     return (fromDebug || []) as StageProgress[];
   }
   // 正式模式：从 sessionDetail 读取
   const fromSession = (session.value as any)?.allEventStageProgress;
-  console.log("[ScenePlay][session] allEventStageProgress:", fromSession, "session keys:", Object.keys(session.value || {}));
+  WebDebugLogUtil.log("[ScenePlay][session] allEventStageProgress:", fromSession, "session keys:", Object.keys(session.value || {}));
   if (fromSession) return fromSession as StageProgress[];
   return [] as StageProgress[];
 });
@@ -2148,13 +2148,13 @@ watch(
   () => [store.state.currentSessionId, liveMessageProgressFingerprint.value, playMode.value],
   async () => {
     if (playMode.value === "history") {
-      console.log("[ScenePlay Watch2] history mode");
+      WebDebugLogUtil.log("[ScenePlay Watch2] history mode");
       revealedMessages.value = [...messages.value];
       return;
     }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
-      console.log("[ScenePlay Watch2] messages empty");
+      WebDebugLogUtil.log("[ScenePlay Watch2] messages empty");
       revealedMessages.value = [];
       return;
     }
@@ -2246,24 +2246,24 @@ watch(
 
     if (playMode.value === "history") {
       revealedMessages.value = [...messages.value];
-      console.log("[ScenePlay Watch1] history mode, sync all messages");
+      WebDebugLogUtil.log("[ScenePlay Watch1] history mode, sync all messages");
       return;
     }
     if (playMode.value === "setting" || playMode.value === "tips" || debugLoading.value) {
-      console.log("[ScenePlay Watch1] skip: setting/tips/debugLoading");
+      WebDebugLogUtil.log("[ScenePlay Watch1] skip: setting/tips/debugLoading");
       return;
     }
     const nextMessages = [...messages.value];
     if (!nextMessages.length) {
       revealedMessages.value = [];
-      console.log("[ScenePlay Watch1] messages empty");
+      WebDebugLogUtil.log("[ScenePlay Watch1] messages empty");
       return;
     }
     if (playMode.value === "live" && store.state.sessionResumeLatestOnOpen) {
       // Watch1 是后置触发，Watch2 已经处理过继玩 reveal 逻辑了
       revealedMessages.value = [...nextMessages];
       store.state.sessionResumeLatestOnOpen = false;
-      console.log("[ScenePlay Watch1] resumeLatestOnOpen=true, Watch2 already handled");
+      WebDebugLogUtil.log("[ScenePlay Watch1] resumeLatestOnOpen=true, Watch2 already handled");
       return;
     }
     const nextKeys = nextMessages.map((message) => messageUiKey(message));
@@ -2271,12 +2271,12 @@ watch(
     const mismatched = nextKeys.length < revealedKeys.length || revealedKeys.some((key, index) => nextKeys[index] !== key);
     if (mismatched) {
       revealedMessages.value = [...nextMessages];
-      console.log("[ScenePlay Watch1] mismatched, sync all");
+      WebDebugLogUtil.log("[ScenePlay Watch1] mismatched, sync all");
       return;
     }
     const newMessages = nextMessages.slice(revealedKeys.length);
     if (!newMessages.length) {
-      console.log("[ScenePlay Watch1] no new messages", {
+      WebDebugLogUtil.log("[ScenePlay Watch1] no new messages", {
         revealedCount: revealedKeys.length,
         nextCount: nextKeys.length,
       });
@@ -2288,7 +2288,7 @@ watch(
       myToken,
       revealRunActive,
     });
-    console.log("[ScenePlay] new messages detected, will call waitForMessageReveal", {
+    WebDebugLogUtil.log("[ScenePlay] new messages detected, will call waitForMessageReveal", {
       count: newMessages.length,
       roles: newMessages.map(m => `${m.role}(${m.id}|${m.roleType})`),
       lastContent: newMessages[newMessages.length - 1]?.content?.slice(0, 60),
@@ -2301,7 +2301,7 @@ watch(
       // 把流式消息也先入框（即便 content 还空），目的是让"生成中"圆点指示器
       // 能立刻挂在新消息尾部。当首个 delta 到达时内容会自然出现。
       const messageKey = messageUiKey(message);
-      console.log("[ScenePlay] waitForMessageReveal about to call", {
+      WebDebugLogUtil.log("[ScenePlay] waitForMessageReveal about to call", {
         messageId: message.id,
         role: message.role,
         roleType: message.roleType,
@@ -3366,9 +3366,9 @@ async function startVoiceRecognition() {
     return;
   }
   try {
-     console.log("getUserMedia ing");
+     WebDebugLogUtil.log("getUserMedia ing");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-     console.log("getUserMedia ed");
+     WebDebugLogUtil.log("getUserMedia ed");
     mediaStream = stream;
     mediaChunks = [];
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -3381,22 +3381,22 @@ async function startVoiceRecognition() {
     // 立即进入录音态，避免 onstart 延迟时看起来像"没有按住效果"。
     voiceListening.value = true;
     recorder.onstart = () => {
-       console.log("recorder.onstart ");
+       WebDebugLogUtil.log("recorder.onstart ");
       voiceListening.value = true;
     };
     recorder.ondataavailable = (event) => {
-      console.log(" recorder.ondataavailable ");
+      WebDebugLogUtil.log(" recorder.ondataavailable ");
       if (event.data && event.data.size > 0) {
         mediaChunks.push(event.data);
       }
     };
     recorder.onerror = () => {
-       console.log(" recorder.onerror ");
+       WebDebugLogUtil.log(" recorder.onerror ");
       voiceListening.value = false;
       store.state.notice = "语音识别失败";
     };
     recorder.onstop = async () => {
-       console.log(" recorder.onstop ");
+       WebDebugLogUtil.log(" recorder.onstop ");
       const chunks = mediaChunks.slice();
       mediaChunks = [];
       voiceListening.value = false;
@@ -3416,12 +3416,12 @@ async function startVoiceRecognition() {
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       await transcribeVoiceBlob(blob);
     };
-    console.log("recorder.start ing ");
+    WebDebugLogUtil.log("recorder.start ing ");
     recorder.start();
-    console.log("recorder.start ed ");
+    WebDebugLogUtil.log("recorder.start ed ");
   } catch (error: any) {
-    console.log("startVoiceRecognition");
-    console.log(error);
+    WebDebugLogUtil.log("startVoiceRecognition");
+    WebDebugLogUtil.log(error);
     voiceListening.value = false;
     resetVoiceHoldState();
     // 安卓设备模式下不切换到文字模式
