@@ -10,7 +10,7 @@
  *   其余全部打印。适合排除个别噪音模块、其余全开的场景。
  *
  * 匹配规则：前缀匹配。
- * - 名单条目为“前缀串”，日志 tag 以该串开头即视为命中。
+ * - 名单条目为"前缀串"，日志 tag 以该串开头即视为命中。
  * - 例：`"[webp]"` 命中 `"[webp:play]"`、`"[webp] xxx"`、`"[webp:extract]"`。
  * - 选前缀而非精确全匹配：现有日志 tag 命名较杂（`[aiGame][xxx]`、`[voice lifecycle] ...`、
  *   `[ScenePlay Watch1] ...`、裸字符串 `getUserMedia ing` 等），精确匹配需登记数百条且每加一句
@@ -50,6 +50,8 @@ export const webDebugLogConfig = {
   ] as string[],
 };
 
+// 验证模块加载
+
 /**
  * 判断 tag 是否命中给定名单（前缀匹配）。
  *
@@ -76,17 +78,6 @@ function matchesList(tag: string, list: string[]): boolean {
  */
 export function shouldLogTag(tag: unknown): boolean {
   const tagStr = typeof tag === "string" ? tag : "";
-
-  // TODO: 调试用，正式环境删除
-  console.debug("[shouldLogTag]", {
-    tag,
-    tagStr,
-    debugLogMode: webDebugLogConfig.debugLogMode,
-    whitelist: webDebugLogConfig.debugLogWhitelist,
-    blacklist: webDebugLogConfig.debugLogBlacklist,
-    isString: typeof tag === "string",
-    tagLen: tagStr.length,
-  });
 
   switch (webDebugLogConfig.debugLogMode) {
     case "whitelist":

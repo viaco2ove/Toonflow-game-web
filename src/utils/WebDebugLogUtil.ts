@@ -55,12 +55,9 @@ export class WebDebugLogUtil {
       return;
     }
     if (!shouldLogTag(tag)) {
+      console.log("[WebDebugLogUtil] ", tag, "is not allowed to log");
       return;
     }
     console.log(tag, ...args);
   }
-}
-console.log("WebDebugLogUtil isEnabled:",WebDebugLogUtil.isEnabled());
-if (WebDebugLogUtil.isEnabled()) {
-    console.log(webDebugLogConfig)
 }
