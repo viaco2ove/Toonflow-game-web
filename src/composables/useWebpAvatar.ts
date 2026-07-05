@@ -8,7 +8,7 @@
  * 4. 提供可逆的切换能力
  */
 
-import { ref, computed, watch, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onBeforeUnmount, onMounted } from "vue";
 import {
   extractWebpFirstFrame,
   isWebpUrl,
@@ -17,6 +17,9 @@ import {
 } from "../utils/webpFrameExtractor";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import { WEBP_LOG_TAGS } from "../utils/logTagList";
+
+// TODO: 调试用，验证模块是否被打包加载
+console.warn("[webp:module] useWebpAvatar 模块加载");
 
 export interface UseWebpAvatarOptions {
   /** 动画播放时长（毫秒），0 表示无限循环 */
@@ -236,18 +239,37 @@ export function useWebpAvatar(
 
   // ============== 监听器 ==============
 
-  // 监听路径变化
+  // 初始化：在 onMounted 中处理初始路径，避免 setup 阶段 immediate watch 的 reactive 只读问题
+  onMounted(async () => {
+    const initPath = avatarPath;
+    if (!initPath) return;
+    try {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "初始化路径", { initPath, autoPlay });
+      reset();
+      originalPath.value = initPath;
+      if (autoPlay) {
+        await extractFrame();
+        if (isAnimated.value) {
+          play();
+        } else {
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "非动画或提取未成功，不自动播放", { path: originalPath.value });
+        }
+      }
+    } catch (e) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "初始化异常", { error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // 监听路径变化（setup 完成后才触发，不会与初始化冲突）
   watch(
     () => avatarPath,
     async (newPath) => {
+      if (!newPath) return; // onMounted 已处理过 initPath，这里只管后续切换
       try {
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "路径变化", { newPath, autoPlay });
-        // 重置状态
         reset();
-        originalPath.value = newPath || "";
-
-        // 如果有新路径且自动播放，开始处理
-        if (originalPath.value && autoPlay) {
+        originalPath.value = newPath;
+        if (autoPlay) {
           await extractFrame();
           if (isAnimated.value) {
             play();
@@ -256,11 +278,9 @@ export function useWebpAvatar(
           }
         }
       } catch (e) {
-        // 忽略 watch 中的错误，避免中断
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "watch 异常", { error: e instanceof Error ? e.message : String(e) });
       }
-    },
-    { immediate: true }
+    }
   );
 
   // ============== 清理 ==============

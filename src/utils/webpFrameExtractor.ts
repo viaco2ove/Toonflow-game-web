@@ -10,6 +10,9 @@
 import { WebDebugLogUtil } from "./WebDebugLogUtil";
 import { WEBP_LOG_TAGS } from "./logTagList";
 
+// TODO: 调试用，验证模块加载 + 工具调用是否执行
+console.warn("[webpFrameExtractor] 模块已加载");
+
 // ============== 类型定义 ==============
 
 export interface WebpFrameCacheEntry {

@@ -77,6 +77,17 @@ function matchesList(tag: string, list: string[]): boolean {
 export function shouldLogTag(tag: unknown): boolean {
   const tagStr = typeof tag === "string" ? tag : "";
 
+  // TODO: 调试用，正式环境删除
+  console.debug("[shouldLogTag]", {
+    tag,
+    tagStr,
+    debugLogMode: webDebugLogConfig.debugLogMode,
+    whitelist: webDebugLogConfig.debugLogWhitelist,
+    blacklist: webDebugLogConfig.debugLogBlacklist,
+    isString: typeof tag === "string",
+    tagLen: tagStr.length,
+  });
+
   switch (webDebugLogConfig.debugLogMode) {
     case "whitelist":
       // 白名单模式：仅命中白名单的打印；空串/非字符串必然不命中

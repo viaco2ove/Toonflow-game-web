@@ -13,7 +13,7 @@
  *
  * 模式与名单在 `WebDebugLogConfig` 中配置；所有 logtag 记录在 `logTagList.ts`（仅文档，不参与判断）。
  */
-import { shouldLogTag } from "./WebDebugLogConfig";
+import {shouldLogTag, webDebugLogConfig} from "./WebDebugLogConfig";
 
 export class WebDebugLogUtil {
   /**
@@ -59,4 +59,8 @@ export class WebDebugLogUtil {
     }
     console.log(tag, ...args);
   }
+}
+console.log("WebDebugLogUtil isEnabled:",WebDebugLogUtil.isEnabled());
+if (WebDebugLogUtil.isEnabled()) {
+    console.log(webDebugLogConfig)
 }
