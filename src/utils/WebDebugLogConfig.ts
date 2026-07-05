@@ -46,7 +46,7 @@ export const webDebugLogConfig = {
   debugLogBlacklist: [] as string[],
   /** 白名单前缀（whitelist 模式下，仅 tag 命中此处前缀才打印） */
   debugLogWhitelist: [
-    WEBP_LOG_TAG_PREFIX, // [webp:play] / [webp:extract] / [webp:cache] / [webp:render] / [webp:detect]
+    WEBP_LOG_TAG_PREFIX,"[webp:.*]", // [webp:play] / [webp:extract] / [webp:cache] / [webp:render] / [webp:detect]
   ] as string[],
 };
 
@@ -63,7 +63,25 @@ function matchesList(tag: string, list: string[]): boolean {
   if (list.length === 0) {
     return false;
   }
-  return list.some((prefix) => tag.startsWith(prefix));
+  return list.some((pattern) => {
+    if (pattern.endsWith("*")) {
+      // 通配符模式：去除末尾 * 后做前缀匹配
+      // 例如 "[webp*" 匹配 "[webp:play"、"[webp:extract"
+      const prefix = pattern.slice(0, -1);
+      return tag.startsWith(prefix);
+    }
+    // 正则模式：以 / 开头和结尾
+    if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
+      try {
+        const regex = new RegExp(pattern.slice(1, -1));
+        return regex.test(tag);
+      } catch {
+        return false;
+      }
+    }
+    // 普通前缀匹配
+    return tag.startsWith(pattern);
+  });
 }
 
 /**
