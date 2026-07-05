@@ -9,12 +9,11 @@
  * - "blacklist" 黑名单模式：tag 命中 `debugLogBlacklist`（前缀匹配）的日志被屏蔽，
  *   其余全部打印。适合排除个别噪音模块、其余全开的场景。
  *
- * 匹配规则：前缀匹配。
- * - 名单条目为"前缀串"，日志 tag 以该串开头即视为命中。
- * - 例：`"[webp]"` 命中 `"[webp:play]"`、`"[webp] xxx"`、`"[webp:extract]"`。
- * - 选前缀而非精确全匹配：现有日志 tag 命名较杂（`[aiGame][xxx]`、`[voice lifecycle] ...`、
- *   `[ScenePlay Watch1] ...`、裸字符串 `getUserMedia ing` 等），精确匹配需登记数百条且每加一句
- *   日志都要同步登记，维护成本高；前缀匹配只需登记一级前缀即可放行/屏蔽整组。
+ * 匹配规则：三种模式。
+ * - 【普通前缀】直接写前缀串，如 `"[webp]"` 命中 `"[webp:play]"`，`"getUserMedia"` 命中 `"getUserMedia ing"`。
+ * - 【通配符前缀】末尾加 `*`，如 `"[webp*"` 命中 `"[webp:play]"`、`"[webp:extract]"`。
+ * - 【正则模式】用 `/` 包裹，如 `"/\[webp:.*\]/"` 命中 `"[webp:play]"`、`"[webp:cache]"`。
+ *   正则模式支持精确匹配、反向匹配等复杂规则，如 `"/^((?!voice).)*$/"` 排除含 voice 的 tag。
  *
  * 名单维护：
  * - 在 `webDebugLogConfig.debugLogWhitelist` / `debugLogBlacklist` 数组里追加前缀串即可。
@@ -46,7 +45,7 @@ export const webDebugLogConfig = {
   debugLogBlacklist: [] as string[],
   /** 白名单前缀（whitelist 模式下，仅 tag 命中此处前缀才打印） */
   debugLogWhitelist: [
-    WEBP_LOG_TAG_PREFIX,"[webp:.*]", // [webp:play] / [webp:extract] / [webp:cache] / [webp:render] / [webp:detect]
+    WEBP_LOG_TAG_PREFIX,"/\\[webp:.*\\]/", // [webp:play] / [webp:extract] / [webp:cache] / [webp:render] / [webp:detect]
   ] as string[],
 };
 
