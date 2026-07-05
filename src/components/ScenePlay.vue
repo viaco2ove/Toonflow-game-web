@@ -914,6 +914,8 @@ function runtimeNpcSnapshot(baseRole: StoryRole): StoryRole | null {
     name: scalarText(raw.name) || baseRole.name,
     avatarPath: scalarText(raw.avatarPath),
     avatarBgPath: scalarText(raw.avatarBgPath),
+    avatarFirstFramePath: scalarText(raw.avatarFirstFramePath) || baseRole.avatarFirstFramePath,
+    avatarDurationMs: raw.avatarDurationMs ?? baseRole.avatarDurationMs,
     description: scalarText(raw.description),
     voice: scalarText(raw.voice),
     voiceMode: scalarText(raw.voiceMode),
@@ -939,6 +941,8 @@ function mergeRoleSnapshot(base: StoryRole, runtime: StoryRole | null): StoryRol
     name: runtime.name || base.name,
     avatarPath: runtime.avatarPath || base.avatarPath,
     avatarBgPath: runtime.avatarBgPath || base.avatarBgPath,
+    avatarFirstFramePath: runtime.avatarFirstFramePath || base.avatarFirstFramePath,
+    avatarDurationMs: runtime.avatarDurationMs ?? base.avatarDurationMs,
     description: runtime.description || base.description,
     voice: runtime.voice || base.voice,
     voiceMode: runtime.voiceMode || base.voiceMode,
@@ -979,6 +983,8 @@ const roleCards = computed(() => {
       voiceMixVoices: store.state.playerVoiceMixVoices,
       avatarPath: store.state.userAvatarPath,
       avatarBgPath: store.state.userAvatarBgPath,
+      avatarFirstFramePath: store.state.userAvatarFirstFramePath,
+      avatarDurationMs: store.state.userAvatarDurationMs,
       sample: "",
       parameterCardJson: null,
     } as StoryRole);
@@ -2934,6 +2940,22 @@ function messageAvatarBgPath(message: MessageItem): string {
   return roleAvatarBackground(messageAvatarRole(message));
 }
 
+function roleAvatarFirstFrame(role?: StoryRole | null): string {
+  return store.resolveMediaPath(role?.avatarFirstFramePath || "");
+}
+
+function roleAvatarDuration(role?: StoryRole | null): number {
+  return role?.avatarDurationMs ?? 0;
+}
+
+function messageAvatarFirstFrame(message: MessageItem): string {
+  return roleAvatarFirstFrame(messageAvatarRole(message));
+}
+
+function messageAvatarDuration(message: MessageItem): number {
+  return roleAvatarDuration(messageAvatarRole(message));
+}
+
 function messageTitle(message: MessageItem): string {
   return message.role || (message.roleType === "player" ? "用户" : "旁白");
 }
@@ -3680,7 +3702,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div class="play-ai-mark">内容由 AI 生成</div>
+      <div class="play-ai-mark">AI</div>
       <div v-if="playMode === 'history'" class="play-mode-badge">{{ isSessionPlaybackMode ? "剧情回放" : "历史模式" }}</div>
       <div
         v-if="(playMode !== 'history' || (isSessionPlaybackMode && playbackViewMode === 'single')) && currentLiveFigureFgPath"
@@ -3728,7 +3750,8 @@ onBeforeUnmount(() => {
                   :background-path="messageAvatarBgPath(message)"
                   :alt="messageTitle(message)"
                   :animated="true"
-                  :animation-duration="3000"
+                  :animation-duration="messageAvatarDuration(message)"
+                  :first-frame-path="messageAvatarFirstFrame(message)"
                 >
                   <span>{{ messageTitle(message).slice(0, 1) }}</span>
                 </LayeredAvatar>
@@ -3802,7 +3825,8 @@ onBeforeUnmount(() => {
                   :background-path="messageAvatarBgPath(message)"
                   :alt="messageTitle(message)"
                   :animated="true"
-                  :animation-duration="3000"
+                  :animation-duration="messageAvatarDuration(message)"
+                  :first-frame-path="messageAvatarFirstFrame(message)"
                 >
                   <span>{{ messageTitle(message).slice(0, 1) }}</span>
                 </LayeredAvatar>
@@ -4003,7 +4027,8 @@ onBeforeUnmount(() => {
                 :background-path="roleAvatarBackground(role)"
                 :alt="role.name"
                 :animated="true"
-                :animation-duration="3000"
+                :animation-duration="roleAvatarDuration(role)"
+                :first-frame-path="roleAvatarFirstFrame(role)"
               >
                 <span>{{ role.name.slice(0, 1) }}</span>
               </LayeredAvatar>
@@ -4043,7 +4068,8 @@ onBeforeUnmount(() => {
                       :background-path="enemy.avatarBgPath || null"
                       :alt="enemy.name"
                       :animated="true"
-                      :animation-duration="3000"
+                      :animation-duration="enemy.avatarDurationMs || 0"
+                      :first-frame-path="enemy.avatarFirstFramePath || null"
                     >
                       <span>{{ enemy.name.slice(0, 1) || "敌" }}</span>
                     </LayeredAvatar>
@@ -4563,7 +4589,8 @@ onBeforeUnmount(() => {
                 :background-path="roleAvatarBackground(roleDetail)"
                 :alt="roleDetail.name"
                 :animated="true"
-                :animation-duration="3000"
+                :animation-duration="roleAvatarDuration(roleDetail)"
+                :first-frame-path="roleAvatarFirstFrame(roleDetail)"
               >
                 <span>{{ roleDetail.name?.slice(0, 1) || "角" }}</span>
               </LayeredAvatar>

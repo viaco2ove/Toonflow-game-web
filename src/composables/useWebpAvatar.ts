@@ -8,18 +8,17 @@
  * 4. 提供可逆的切换能力
  */
 
-import { ref, computed, watch, onBeforeUnmount, onMounted } from "vue";
+import { ref, computed, watch, onBeforeUnmount, onMounted, unref, type ComputedRef } from "vue";
 import {
   extractWebpFirstFrame,
   isWebpUrl,
   clearWebpFrameCache,
+  extractFrameFromImgEl,
   type ExtractWebpFrameResult,
 } from "../utils/webpFrameExtractor";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import { WEBP_LOG_TAGS } from "../utils/logTagList";
 
-// TODO: 调试用，验证模块是否被打包加载
-console.warn("[webp:module] useWebpAvatar 模块加载");
 
 export interface UseWebpAvatarOptions {
   /** 动画播放时长（毫秒），0 表示无限循环 */
@@ -30,21 +29,27 @@ export interface UseWebpAvatarOptions {
   onLoaded?: (result: ExtractWebpFrameResult) => void;
   /** 动画结束后的回调 */
   onAnimationEnd?: () => void;
+  /** 后端预处理的第一帧 URL，优先级高于前端 canvas 提取 */
+  backendFirstFrameUrl?: string;
 }
 
 export interface UseWebpAvatarReturn {
   /** 显示的图像路径（可能是第一帧 DataURL） */
-  displayedPath: string;
+  displayedPath: string | ComputedRef<string>;
   /** 是否正在加载 */
-  isLoading: boolean;
+  isLoading: boolean | ComputedRef<boolean>;
   /** 是否为动画 WebP */
-  isAnimated: boolean;
+  isAnimated: boolean | ComputedRef<boolean>;
   /** 当前是否为播放状态 */
-  isPlaying: boolean;
+  isPlaying: boolean | ComputedRef<boolean>;
   /** 错误信息 */
-  error: string | null;
-  /** 原始路径 */
-  originalPath: string;
+  error: string | null | ComputedRef<string | null>;
+  /** 当前原始路径 */
+  path: string | ComputedRef<string>;
+  /** 注册 DOM img 元素，用于从已加载的图片提取第一帧（绕过 CORS） */
+  registerImgEl: (imgEl: HTMLImageElement) => void;
+  /** 注入已提取好的第一帧 DataURL（推荐从 DOM img 元素提取后传入） */
+  setExtractedFirstFrame: (dataUrl: string, isAnimated: boolean) => void;
   /** 播放动画 */
   play: () => void;
   /** 暂停/定格 */
@@ -61,10 +66,10 @@ export function useWebpAvatar(
   avatarPath: string | null | undefined,
   options: UseWebpAvatarOptions = {}
 ): UseWebpAvatarReturn {
-  const { playDuration = 3000, autoPlay = false, onLoaded, onAnimationEnd } = options;
+  const { playDuration = 3000, autoPlay = false, onLoaded, onAnimationEnd, backendFirstFrameUrl } = options;
 
   // ============== 状态 ==============
-  const originalPath = ref(avatarPath || "");
+  const originalPath = ref(unref(avatarPath) || "");
   const firstFrameDataUrl = ref("");
   const isLoading = ref(false);
   const isAnimated = ref(false);
@@ -73,6 +78,13 @@ export function useWebpAvatar(
 
   // 定时器引用
   let animationTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 如果后端提供了第一帧，直接注入（无需前端 canvas 提取）
+  if (backendFirstFrameUrl) {
+    firstFrameDataUrl.value = backendFirstFrameUrl;
+    isAnimated.value = true;
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "使用后端第一帧", { path: originalPath.value, backendFirstFrameUrl });
+  }
 
   // ============== 计算属性 ==============
 
@@ -228,6 +240,44 @@ export function useWebpAvatar(
   }
 
   /**
+   * 注册 DOM img 元素：提取完成后自动用该元素提取第一帧并注入状态。
+   * 用于从已加载的 DOM img 元素提取第一帧，绕过 CORS。
+   */
+  function registerImgEl(imgEl: HTMLImageElement): void {
+    if (!originalPath.value || !isWebpUrl(originalPath.value)) return;
+    void (async () => {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "registerImgEl 开始提取", { url: originalPath.value });
+      const result = await extractFrameFromImgEl(imgEl, originalPath.value);
+      if (result.success) {
+        firstFrameDataUrl.value = result.dataUrl;
+        isAnimated.value = result.isAnimated;
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "registerImgEl 提取成功", {
+          url: originalPath.value,
+          isAnimated: result.isAnimated,
+          dataUrlLength: result.dataUrl.length,
+        });
+        onLoaded?.(result);
+      } else {
+        error.value = result.error || "提取第一帧失败";
+        firstFrameDataUrl.value = "";
+        isAnimated.value = false;
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "registerImgEl 提取失败", { url: originalPath.value, error: result.error });
+      }
+      isLoading.value = false;
+    })();
+  }
+
+  /**
+   * 注入已提取好的第一帧 DataURL。
+   * 推荐从 DOM img 元素提取后传入，绕过 CORS。
+   */
+  function setExtractedFirstFrame(dataUrl: string, isAnimatedFlag: boolean): void {
+    firstFrameDataUrl.value = dataUrl;
+    isAnimated.value = isAnimatedFlag;
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "注入第一帧", { path: originalPath.value, isAnimated: isAnimatedFlag, dataUrlLength: dataUrl.length });
+  }
+
+  /**
    * 清除动画定时器
    */
   function clearAnimationTimer(): void {
@@ -239,48 +289,32 @@ export function useWebpAvatar(
 
   // ============== 监听器 ==============
 
-  // 初始化：在 onMounted 中处理初始路径，避免 setup 阶段 immediate watch 的 reactive 只读问题
-  onMounted(async () => {
-    const initPath = avatarPath;
-    if (!initPath) return;
-    try {
-      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "初始化路径", { initPath, autoPlay });
-      reset();
-      originalPath.value = initPath;
-      if (autoPlay) {
-        await extractFrame();
-        if (isAnimated.value) {
-          play();
-        } else {
-          WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "非动画或提取未成功，不自动播放", { path: originalPath.value });
-        }
-      }
-    } catch (e) {
-      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "初始化异常", { error: e instanceof Error ? e.message : String(e) });
-    }
-  });
-
-  // 监听路径变化（setup 完成后才触发，不会与初始化冲突）
+  // 监听路径变化：设置 originalPath，不发网络请求。
+  // DOM img :src 自然加载，完成后 registerImgEl 提取第一帧并自动播放。
   watch(
-    () => avatarPath,
-    async (newPath) => {
-      if (!newPath) return; // onMounted 已处理过 initPath，这里只管后续切换
-      try {
-        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "路径变化", { newPath, autoPlay });
-        reset();
-        originalPath.value = newPath;
-        if (autoPlay) {
-          await extractFrame();
-          if (isAnimated.value) {
-            play();
-          } else {
-            WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "非动画或提取未成功，不自动播放", { path: originalPath.value });
-          }
+    () => unref(avatarPath),
+    (newPath) => {
+      if (!newPath) return;
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "路径变化", { newPath, autoPlay });
+      reset();
+      originalPath.value = newPath;
+      // 不发网络请求：让 Vue 模板的 <img :src> 自然加载
+      // DOM img 加载完成后 registerImgEl 会自动提取第一帧
+      if (autoPlay) {
+        isPlaying.value = true;
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration });
+        // 设置定时器（如果是限时播放）
+        if (playDuration > 0) {
+          clearAnimationTimer();
+          animationTimer = setTimeout(() => {
+            WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
+            pause();
+            onAnimationEnd?.();
+          }, playDuration);
         }
-      } catch (e) {
-        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "watch 异常", { error: e instanceof Error ? e.message : String(e) });
       }
-    }
+    },
+    { immediate: true }
   );
 
   // ============== 清理 ==============
@@ -291,15 +325,14 @@ export function useWebpAvatar(
   });
 
   return {
-    displayedPath,
-    isLoading,
-    isAnimated,
-    isPlaying,
-    error,
-    originalPath,
-    setPath: (path: string) => {
-      originalPath.value = path;
-    },
+    displayedPath: displayedPath,
+    isLoading: computed(() => isLoading.value),
+    isAnimated: computed(() => isAnimated.value),
+    isPlaying: computed(() => isPlaying.value),
+    error: computed(() => error.value),
+    path: computed(() => originalPath.value),
+    registerImgEl,
+    setExtractedFirstFrame,
     play,
     pause,
     toggle,

@@ -49,8 +49,6 @@ export const webDebugLogConfig = {
   ] as string[],
 };
 
-// 验证模块加载
-
 /**
  * 判断 tag 是否命中给定名单（前缀匹配）。
  *
