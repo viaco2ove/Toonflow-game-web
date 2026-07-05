@@ -58,6 +58,15 @@ export class WebDebugLogUtil {
       // console.log("[WebDebugLogUtil] ", tag, "is not allowed to log");
       return;
     }
-    console.log(tag, ...args);
+    // 捕获调用堆栈
+    const stack = new Error().stack;
+    // 拆分堆栈，跳过当前log函数本身，取真正调用方那一行
+    const stackLines = stack?.split('\n') || [];
+    // stackLines[0] = Error
+    // stackLines[1] = 本log函数
+    // stackLines[2] = 调用log的业务代码
+    const callerInfo = stackLines.length >= 3 ? stackLines[2].trim() : 'unknown caller';
+
+    console.log(`[${tag}] ${callerInfo}`, ...args);
   }
 }

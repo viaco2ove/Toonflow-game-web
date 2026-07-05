@@ -90,23 +90,20 @@ export function useWebpAvatar(
 
   /**
    * 最终显示的路径
-   * - 如果是动画且正在播放：显示原始 WebP
-   * - 否则：显示第一帧 DataURL（如果是动画）或原始路径
+   * - 有第一帧 DataURL（后端/canvas/DOM提取）且不在播放 → 显示第一帧（定格）
+   * - 在播放动画中 → 显示原始 WebP
+   * - 有第一帧但动画已暂停 → 显示原始 WebP（播放结束停在动画最后一帧）
+   * - 无第一帧 → 显示原始路径
    */
   const displayedPath = computed(() => {
     if (!originalPath.value) return "";
 
-    // 如果正在播放动画，显示原始路径
-    if (isPlaying.value && isAnimated.value) {
-      return originalPath.value;
-    }
-
-    // 如果有第一帧缓存，优先使用
-    if (firstFrameDataUrl.value) {
+    // 有第一帧缓存，且不在播放动画 → 显示第一帧（定格）
+    if (firstFrameDataUrl.value && !isPlaying.value) {
       return firstFrameDataUrl.value;
     }
 
-    // 降级：使用原始路径
+    // 正在播放 → 显示原始 WebP
     return originalPath.value;
   });
 
@@ -173,6 +170,7 @@ export function useWebpAvatar(
     }
 
     isPlaying.value = true;
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
     WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放", { path: originalPath.value, playDuration });
 
     // 如果还没有第一帧，先提取
@@ -184,6 +182,7 @@ export function useWebpAvatar(
     if (playDuration > 0) {
       clearAnimationTimer();
       animationTimer = setTimeout(() => {
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
         pause();
         onAnimationEnd?.();
@@ -198,7 +197,8 @@ export function useWebpAvatar(
     if (!isPlaying.value) return;
 
     isPlaying.value = false;
-    clearAnimationTimer();
+    stopTimer();
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
     WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "暂停/定格", { path: originalPath.value });
   }
 
@@ -229,14 +229,23 @@ export function useWebpAvatar(
   }
 
   /**
-   * 重置到初始状态
+   * 停止播放定时器（不清 firstFrameDataUrl/isAnimated，定格帧跨路径保持）
+   */
+  function stopTimer(): void {
+    if (animationTimer !== null) {
+      clearTimeout(animationTimer);
+      animationTimer = null;
+    }
+  }
+
+  /**
+   * 重置播放状态（停定时器、停播放，清 error，保留 firstFrameDataUrl 和 isAnimated）
    */
   function reset(): void {
-    pause();
-    firstFrameDataUrl.value = "";
-    isAnimated.value = false;
+    stopTimer();
+    isPlaying.value = false;
     error.value = null;
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "reset 重置", { path: originalPath.value });
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "reset", { path: originalPath.value, hasFirstFrame: !!firstFrameDataUrl.value, isAnimated: isAnimated.value });
   }
 
   /**
@@ -305,7 +314,7 @@ export function useWebpAvatar(
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration });
         // 设置定时器（如果是限时播放）
         if (playDuration > 0) {
-          clearAnimationTimer();
+          stopTimer();
           animationTimer = setTimeout(() => {
             WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
             pause();
