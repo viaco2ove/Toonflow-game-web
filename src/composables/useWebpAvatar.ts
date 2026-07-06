@@ -8,7 +8,7 @@
  * 4. 提供可逆的切换能力
  */
 
-import { ref, computed, watch, onBeforeUnmount, onMounted, unref, type ComputedRef } from "vue";
+import { ref, computed, watch, onBeforeUnmount, onMounted, unref, type ComputedRef, type Ref } from "vue";
 import {
   extractWebpFirstFrame,
   isWebpUrl,
@@ -21,16 +21,16 @@ import { WEBP_LOG_TAGS } from "../utils/logTagList";
 
 
 export interface UseWebpAvatarOptions {
-  /** 动画播放时长（毫秒），0 表示无限循环 */
-  playDuration?: number;
+  /** 动画播放时长（毫秒），0 表示无限循环。支持 getter 以便响应式更新 */
+  playDuration?: number | (() => number);
   /** 是否自动开始播放 */
   autoPlay?: boolean;
   /** 加载完成后的回调 */
   onLoaded?: (result: ExtractWebpFrameResult) => void;
   /** 动画结束后的回调 */
   onAnimationEnd?: () => void;
-  /** 后端预处理的第一帧 URL，优先级高于前端 canvas 提取 */
-  backendFirstFrameUrl?: string;
+  /** 后端预处理的第一帧 URL，优先级高于前端 canvas 提取。支持 getter 以便响应式更新 */
+  backendFirstFrameUrl?: string | (() => string | undefined);
 }
 
 export interface UseWebpAvatarReturn {
@@ -63,13 +63,31 @@ export interface UseWebpAvatarReturn {
 }
 
 export function useWebpAvatar(
-  avatarPath: string | null | undefined,
+  avatarPath: string | ComputedRef<string | null | undefined> | Ref<string | null | undefined> | (() => string | null | undefined),
   options: UseWebpAvatarOptions = {}
 ): UseWebpAvatarReturn {
-  const { playDuration = 3000, autoPlay = false, onLoaded, onAnimationEnd, backendFirstFrameUrl } = options;
+  WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "UseWebpAvatarOptions", options);
+
+  const { playDuration: playDurationOpt = 3000, autoPlay = false, onLoaded, onAnimationEnd, backendFirstFrameUrl: backendFirstFrameUrlOpt } = options;
+
+  // 把 avatarPath 解包成响应式 ref，支持 string / ComputedRef / Ref / Getter
+  const avatarPathRef = computed(() => {
+    if (typeof avatarPath === "function") {
+      return avatarPath() ?? "";
+    }
+    return unref(avatarPath) ?? "";
+  });
+
+  // playDuration / backendFirstFrameUrl 也支持 getter 以便响应式更新
+  const playDurationRef = computed(() => {
+    return typeof playDurationOpt === "function" ? (playDurationOpt() || 3000) : (playDurationOpt || 3000);
+  });
+  const backendFirstFrameUrlRef = computed(() => {
+    return typeof backendFirstFrameUrlOpt === "function" ? backendFirstFrameUrlOpt() : backendFirstFrameUrlOpt;
+  });
 
   // ============== 状态 ==============
-  const originalPath = ref(unref(avatarPath) || "");
+  const originalPath = ref(avatarPathRef.value);
   const firstFrameDataUrl = ref("");
   const isLoading = ref(false);
   const isAnimated = ref(false);
@@ -79,12 +97,23 @@ export function useWebpAvatar(
   // 定时器引用
   let animationTimer: ReturnType<typeof setTimeout> | null = null;
 
+  WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl: backendFirstFrameUrlRef.value, playDuration: playDurationRef.value });
   // 如果后端提供了第一帧，直接注入（无需前端 canvas 提取）
-  if (backendFirstFrameUrl) {
-    firstFrameDataUrl.value = backendFirstFrameUrl;
+  const initialBackendUrl = backendFirstFrameUrlRef.value;
+  if (initialBackendUrl) {
+    firstFrameDataUrl.value = initialBackendUrl;
     isAnimated.value = true;
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "使用后端第一帧", { path: originalPath.value, backendFirstFrameUrl });
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "使用后端第一帧", { path: originalPath.value, backendFirstFrameUrl: initialBackendUrl });
   }
+
+  // 监听后端第一帧 URL 变化（响应式更新）
+  watch(backendFirstFrameUrlRef, (newUrl) => {
+    if (newUrl) {
+      firstFrameDataUrl.value = newUrl;
+      isAnimated.value = true;
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "更新后端第一帧", { path: originalPath.value, backendFirstFrameUrl: newUrl });
+    }
+  });
 
   // ============== 计算属性 ==============
 
@@ -170,8 +199,8 @@ export function useWebpAvatar(
     }
 
     isPlaying.value = true;
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放", { path: originalPath.value, playDuration });
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl: backendFirstFrameUrlRef.value, playDuration: playDurationRef.value });
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放", { path: originalPath.value, playDuration: playDurationRef.value });
 
     // 如果还没有第一帧，先提取
     if (!firstFrameDataUrl.value) {
@@ -179,14 +208,14 @@ export function useWebpAvatar(
     }
 
     // 设置定时器（如果是限时播放）
-    if (playDuration > 0) {
+    if (playDurationRef.value > 0) {
       clearAnimationTimer();
       animationTimer = setTimeout(() => {
-        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrlRef.value, playDuration: playDurationRef.value });
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
         pause();
         onAnimationEnd?.();
-      }, playDuration);
+      }, playDurationRef.value);
     }
   }
 
@@ -198,7 +227,7 @@ export function useWebpAvatar(
 
     isPlaying.value = false;
     stopTimer();
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl:backendFirstFrameUrl,playDuration:playDuration  });
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "第一帧png url", { path: originalPath.value, backendFirstFrameUrl: backendFirstFrameUrlRef.value, playDuration: playDurationRef.value });
     WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "暂停/定格", { path: originalPath.value });
   }
 
@@ -301,7 +330,7 @@ export function useWebpAvatar(
   // 监听路径变化：设置 originalPath，不发网络请求。
   // DOM img :src 自然加载，完成后 registerImgEl 提取第一帧并自动播放。
   watch(
-    () => unref(avatarPath),
+    () => avatarPathRef.value,
     (newPath) => {
       if (!newPath) return;
       WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "路径变化", { newPath, autoPlay });
@@ -311,15 +340,15 @@ export function useWebpAvatar(
       // DOM img 加载完成后 registerImgEl 会自动提取第一帧
       if (autoPlay) {
         isPlaying.value = true;
-        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration });
+        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration: playDurationRef.value });
         // 设置定时器（如果是限时播放）
-        if (playDuration > 0) {
+        if (playDurationRef.value > 0) {
           stopTimer();
           animationTimer = setTimeout(() => {
             WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
             pause();
             onAnimationEnd?.();
-          }, playDuration);
+          }, playDurationRef.value);
         }
       }
     },

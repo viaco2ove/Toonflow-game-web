@@ -7,6 +7,7 @@ import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
+import {WEBP_LOG_TAGS} from "../utils/logTagList";
 
 const store = useToonflowStore();
 const voiceFlow = useOrchestrationVoiceFlow();
@@ -912,10 +913,10 @@ function runtimeNpcSnapshot(baseRole: StoryRole): StoryRole | null {
     id: scalarText(raw.id) || baseRole.id,
     roleType: scalarText(raw.roleType) || baseRole.roleType || "npc",
     name: scalarText(raw.name) || baseRole.name,
-    avatarPath: scalarText(raw.avatarPath),
-    avatarBgPath: scalarText(raw.avatarBgPath),
+    avatarPath: scalarText(raw.avatarPath) || baseRole.avatarPath,
+    avatarBgPath: scalarText(raw.avatarBgPath) || baseRole.avatarBgPath,
     avatarFirstFramePath: scalarText(raw.avatarFirstFramePath) || baseRole.avatarFirstFramePath,
-    avatarDurationMs: raw.avatarDurationMs ?? baseRole.avatarDurationMs,
+    avatarDurationMs: Number(raw.avatarDurationMs ?? baseRole.avatarDurationMs ?? 0),
     description: scalarText(raw.description),
     voice: scalarText(raw.voice),
     voiceMode: scalarText(raw.voiceMode),
@@ -1025,6 +1026,22 @@ const roleCards = computed(() => {
     return mergeRoleSnapshot(role, runtimeNpcSnapshot(role));
   });
 });
+// 调试：追踪 roleCards 是否拿到 avatarFirstFramePath
+watch(
+  () => roleCards.value,
+  (cards) => {
+    cards.forEach((r) => {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.render, "roleCard", {
+        id: r.id,
+        name: r.name,
+        avatarPath: r.avatarPath || "",
+        avatarFirstFramePath: r.avatarFirstFramePath || "",
+        avatarDurationMs: r.avatarDurationMs ?? 0,
+      });
+    });
+  },
+  { immediate: true, deep: true }
+);
 const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnState));
 // 正式会话优先认 store 里的 awaitUser 本地兜底态，
 // 避免 orchestration 已经交还用户输入，但 storyInfo 旧 turnState 还没追上时短暂锁住输入框。
@@ -1721,7 +1738,10 @@ const currentLiveFigureRole = computed(() => {
   if (!message || isRuntimeRetryMessage(message)) return null;
   return messageAvatarRole(message);
 });
+WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "currentLiveFigureRole：", currentLiveFigureRole);
 const currentLiveFigureFgPath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
+const avatarFirstFramePath = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
+const avatarDurationMs = computed(() => roleAvatarForeground(currentLiveFigureRole.value));
 const messageViewport = ref<HTMLElement | null>(null);
 
 let speechRecognition: any = null;
@@ -1789,11 +1809,20 @@ const latestRevealedMessage = computed(() => {
   return list.length ? list[list.length - 1] : null;
 });
 
+// 大头像的后端数据（avatarFirstFramePath 和精确时长）
+const currentLiveFigureFirstFrame = computed(() => {
+  return roleAvatarFirstFrame(currentLiveFigureRole.value);
+});
+const currentLiveFigureDurationMs = computed(() => {
+  return roleAvatarDuration(currentLiveFigureRole.value);
+});
+
 // WebP 动画控制 - 用于大头像（动画播放 3 秒后定格）
 // 注意：必须放在所有相关 computed 定义之后，避免循环依赖
 const liveFigureAvatar = useWebpAvatar(currentLiveFigureFgPath, {
-  playDuration: 3000,
+  playDuration: () => currentLiveFigureDurationMs.value || 3000,
   autoPlay: true,
+  backendFirstFrameUrl: () => currentLiveFigureFirstFrame.value || undefined,
 });
 
 const playStageStyle = computed(() => {

@@ -67,6 +67,7 @@ export class WebDebugLogUtil {
     // stackLines[2] = 调用log的业务代码
     const callerInfo = stackLines.length >= 3 ? stackLines[2].trim() : 'unknown caller';
 
-    console.log(`[${tag}] ${callerInfo}`, ...args);
+    console.log(`[${tag}]`, ...args);
+    console.log(`${callerInfo}`);
   }
 }
