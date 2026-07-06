@@ -10,9 +10,6 @@
 import { WebDebugLogUtil } from "./WebDebugLogUtil";
 import { WEBP_LOG_TAGS } from "./logTagList";
 
-// TODO: 调试用，验证模块加载 + 工具调用是否执行
-console.warn("[webpFrameExtractor] 模块已加载");
-
 // ============== 类型定义 ==============
 
 export interface WebpFrameCacheEntry {
@@ -80,7 +77,6 @@ function getCacheEntry(url: string): WebpFrameCacheEntry | null {
 
   // 检查是否过期
   if (Date.now() - entry.extractedAt > MEMORY_CACHE_TTL) {
-    WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "缓存过期，删除", { url });
     memoryCache.delete(url);
     const index = cacheAccessOrder.indexOf(url);
     if (index > -1) cacheAccessOrder.splice(index, 1);
@@ -102,7 +98,6 @@ function setCacheEntry(url: string, entry: WebpFrameCacheEntry): void {
   if (memoryCache.size >= MEMORY_CACHE_LIMIT) {
     const lruUrl = cacheAccessOrder.shift();
     if (lruUrl) {
-      WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "LRU 淘汰", { evictedUrl: lruUrl, cacheSize: memoryCache.size });
       memoryCache.delete(lruUrl);
     }
   }
@@ -183,13 +178,16 @@ function checkWebpAnimated(data: Uint8Array): boolean {
 }
 
 /**
- * 使用 Canvas 提取 WebP 第一帧
+ * 使用 Canvas 提取 WebP 第一帧（通过网络加载）
+ *
+ * 注意：如果服务端无 CORS 头，此方法可能失败。
+ * 建议优先使用 extractFrameFromImgEl() 从已加载的 DOM img 元素提取。
  */
-async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResult> {
+async function extractFrameWithFetch(url: string): Promise<ExtractWebpFrameResult> {
   WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "canvas 提取开始", { url });
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    // 不设置 crossOrigin，避免服务端无 CORS 头时 canvas.toDataURL() 报 Tainted canvases 错误
 
     let timeoutId: ReturnType<typeof setTimeout>;
 
@@ -259,6 +257,48 @@ async function extractFrameWithCanvas(url: string): Promise<ExtractWebpFrameResu
 }
 
 /**
+ * 从已加载的 DOM img 元素提取第一帧（推荐，绕过 CORS）
+ *
+ * 当 LayeredAvatar 的 img 标签已加载 webp 图后，调用此函数从 DOM img 元素提取第一帧。
+ * 不发新请求，直接用浏览器的缓存图片数据，100% 绕过 CORS 问题。
+ *
+ * @param imgEl 已加载的 DOM img 元素（需是 webp 图片）
+ * @param url 图片 URL（用于日志记录）
+ */
+export async function extractFrameFromImgEl(imgEl: HTMLImageElement, url: string): Promise<ExtractWebpFrameResult> {
+  WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "DOM img 元素提取开始", { url });
+
+  const width = imgEl.naturalWidth || imgEl.width;
+  const height = imgEl.naturalHeight || imgEl.height;
+
+  if (width === 0 || height === 0) {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "DOM img 提取失败：尺寸为0", { url, naturalWidth: imgEl.naturalWidth, naturalHeight: imgEl.naturalHeight, width: imgEl.width, height: imgEl.height });
+    return { success: false, dataUrl: "", isAnimated: false, error: "DOM img 尺寸为 0" };
+  }
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "DOM img 提取失败：无法获取2D上下文", { url });
+      return { success: false, dataUrl: "", isAnimated: false, error: "无法获取 Canvas 2D 上下文" };
+    }
+
+    // 浏览器加载 webp 时自动停在第一帧，这里只绘制第一帧
+    ctx.drawImage(imgEl, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/png");
+
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "DOM img 提取成功", { url, width, height, dataUrlLength: dataUrl.length });
+    return { success: true, dataUrl, isAnimated: true };
+  } catch (error) {
+    WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "DOM img 提取异常", { url, error: error instanceof Error ? error.message : "未知错误" });
+    return { success: false, dataUrl: "", isAnimated: false, error: error instanceof Error ? error.message : "未知错误" };
+  }
+}
+
+/**
  * 提取 WebP 动画的第一帧
  *
  * @param url WebP 文件 URL
@@ -290,7 +330,7 @@ export async function extractWebpFirstFrame(
   WebDebugLogUtil.log(WEBP_LOG_TAGS.cache, "未命中，开始提取", { url, forceRefresh });
 
   // 提取第一帧
-  const result = await extractFrameWithCanvas(url);
+  const result = await extractFrameWithFetch(url);
 
   // 缓存结果
   if (result.success) {

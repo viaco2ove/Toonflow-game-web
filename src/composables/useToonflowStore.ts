@@ -1012,6 +1012,10 @@ function createToonflowStore() {
     userAvatarBgPath: "",
     userAvatarSourcePath: "",
     userAvatarVideoPath: "",
+    /** 动画第一帧静态图（由后端生成） */
+    userAvatarFirstFramePath: "",
+    /** 动画时长毫秒（由后端计算） */
+    userAvatarDurationMs: 0,
     projects: [] as ProjectItem[],
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
     selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
@@ -4369,15 +4373,17 @@ function createToonflowStore() {
     return { path, bgPath };
   }
 
-  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath" | "sourcePath" | "sourceFilePath" | "videoPath" | "videoFilePath">) {
+  function resolveSeparatedRolePaths(result: Pick<RoleAvatarTaskResult, "foregroundFilePath" | "foregroundPath" | "backgroundFilePath" | "backgroundPath" | "sourcePath" | "sourceFilePath" | "videoPath" | "videoFilePath" | "firstFrameFilePath" | "firstFramePath" | "durationMs">) {
     const path = String(result.foregroundFilePath || result.foregroundPath || "").trim();
     const bgPath = String(result.backgroundFilePath || result.backgroundPath || "").trim();
     const sourcePath = String(result.sourceFilePath || result.sourcePath || "").trim();
     const videoPath = String(result.videoFilePath || result.videoPath || "").trim();
+    const firstFramePath = String(result.firstFrameFilePath || result.firstFramePath || "").trim();
+    const durationMs = Number(result.durationMs || 0);
     if (!path || !bgPath) {
       throw new Error("图像模型分离失败，未返回主体或背景图片");
     }
-    return { path, bgPath, sourcePath, videoPath };
+    return { path, bgPath, sourcePath, videoPath, firstFramePath, durationMs };
   }
 
   async function waitForSeparateRoleAvatarTask(taskId: number) {
@@ -4418,9 +4424,15 @@ function createToonflowStore() {
         if (result.videoPath) {
           if (target === "user") {
             state.userAvatarVideoPath = result.videoPath;
+            // 保存第一帧和动画时长
+            state.userAvatarFirstFramePath = String(task.firstFrameFilePath || task.firstFramePath || "").trim();
+            state.userAvatarDurationMs = Number(task.durationMs || 0);
           } else if (target === "npc" && typeof npcIndex === "number") {
             if (!state.npcRoles[npcIndex]) return result;
             state.npcRoles[npcIndex].avatarVideoPath = result.videoPath;
+            // NPC 角色也保存第一帧和时长
+            state.npcRoles[npcIndex].avatarFirstFramePath = result.firstFramePath;
+            state.npcRoles[npcIndex].avatarDurationMs = result.durationMs;
           }
         }
         return result;
@@ -4943,6 +4955,14 @@ function createToonflowStore() {
         chapterExtras.push(draftExtra);
       }
     }
+    // DEBUG: 追踪 avatarFirstFramePath 和 avatarDurationMs 是否被正确保存
+    const dbgNpcRoles = (state.npcRoles || []).map((r, i) => ({
+      index: i,
+      name: r.name,
+      avatarFirstFramePath: r.avatarFirstFramePath,
+      avatarDurationMs: r.avatarDurationMs,
+    }));
+    console.log("[storySettingsObject] npcRoles avatar fields:", JSON.stringify(dbgNpcRoles));
     return {
       roles: state.npcRoles.map(stripRoleVoiceConfig),
       narratorVoice: state.narratorVoice,
@@ -4971,6 +4991,8 @@ function createToonflowStore() {
       avatarPath: state.userAvatarPath,
       avatarBgPath: state.userAvatarBgPath,
       avatarSourcePath: state.userAvatarSourcePath,
+      avatarFirstFramePath: state.userAvatarFirstFramePath,
+      avatarDurationMs: state.userAvatarDurationMs,
       avatarImagePrompt: state.playerImagePrompt,
       avatarReferringPath: state.accountAvatarSourcePath, // 用户的参考图
       description: state.playerDesc,

@@ -31,6 +31,8 @@ export interface UseWebpAvatarOptions {
   onAnimationEnd?: () => void;
   /** 后端预处理的第一帧 URL，优先级高于前端 canvas 提取。支持 getter 以便响应式更新 */
   backendFirstFrameUrl?: string | (() => string | undefined);
+  /** 循环间隔（毫秒）：onAnimationEnd 后等待多久再次播放，0 表示不循环。默认 5000 */
+  loopInterval?: number | (() => number);
 }
 
 export interface UseWebpAvatarReturn {
@@ -68,7 +70,7 @@ export function useWebpAvatar(
 ): UseWebpAvatarReturn {
   WebDebugLogUtil.log(WEBP_LOG_TAGS.extract, "UseWebpAvatarOptions", options);
 
-  const { playDuration: playDurationOpt = 3000, autoPlay = false, onLoaded, onAnimationEnd, backendFirstFrameUrl: backendFirstFrameUrlOpt } = options;
+  const { playDuration: playDurationOpt = 3000, autoPlay = false, onLoaded, onAnimationEnd, backendFirstFrameUrl: backendFirstFrameUrlOpt, loopInterval: loopIntervalOpt = 5000 } = options;
 
   // 把 avatarPath 解包成响应式 ref，支持 string / ComputedRef / Ref / Getter
   const avatarPathRef = computed(() => {
@@ -84,6 +86,9 @@ export function useWebpAvatar(
   });
   const backendFirstFrameUrlRef = computed(() => {
     return typeof backendFirstFrameUrlOpt === "function" ? backendFirstFrameUrlOpt() : backendFirstFrameUrlOpt;
+  });
+  const loopIntervalRef = computed(() => {
+    return typeof loopIntervalOpt === "function" ? loopIntervalOpt() : loopIntervalOpt;
   });
 
   // ============== 状态 ==============
@@ -215,6 +220,14 @@ export function useWebpAvatar(
         WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
         pause();
         onAnimationEnd?.();
+        // 循环播放：等待 loopInterval 后再次播放
+        if (loopIntervalRef.value > 0) {
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环等待", { path: originalPath.value, loopInterval: loopIntervalRef.value });
+          animationTimer = setTimeout(() => {
+            WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环触发再播", { path: originalPath.value });
+            play();
+          }, loopIntervalRef.value);
+        }
       }, playDurationRef.value);
     }
   }
@@ -348,6 +361,14 @@ export function useWebpAvatar(
             WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
             pause();
             onAnimationEnd?.();
+            // 循环播放
+            if (loopIntervalRef.value > 0) {
+              WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环等待", { path: originalPath.value, loopInterval: loopIntervalRef.value });
+              animationTimer = setTimeout(() => {
+                WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环触发再播", { path: originalPath.value });
+                play();
+              }, loopIntervalRef.value);
+            }
           }, playDurationRef.value);
         }
       }

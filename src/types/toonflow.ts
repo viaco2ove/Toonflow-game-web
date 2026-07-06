@@ -56,6 +56,8 @@ export interface StoryRole {
   avatarSourcePath?: string; // AI生成后分离前的原图
   avatarReferringPath?: string; // AI生图参考图
   avatarVideoPath?: string;
+  avatarFirstFramePath?: string; // 动画第一帧（后端预处理）
+  avatarDurationMs?: number;     // 动画时长毫秒（后端预处理）
   avatarImagePrompt?: string; // AI生图形象描述，独立于角色设定
   description?: string;
   voice?: string;
@@ -488,6 +490,11 @@ export interface RoleAvatarTaskResult {
   /** 原视频 OSS 地址（MP4 转 WebP 来源视频） */
   videoPath?: string;
   videoFilePath?: string;
+  /** 动画第一帧静态图（用于定格显示） */
+  firstFramePath?: string;
+  firstFrameFilePath?: string;
+  /** 动画时长（毫秒），用于前端控制播放时长 */
+  durationMs?: number;
 }
 
 export interface VoiceModelConfig {
