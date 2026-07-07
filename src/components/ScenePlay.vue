@@ -537,6 +537,9 @@ const chapterObjectiveText = computed(() => {
   return resolveVisibleChapterGoalText() || "自由剧情";
 });
 const chapterObjectivePreview = computed(() => {
+  // 章节作者标记"完成条件对用户不可见"时，底部目标 chip 改为星号占位
+  // 避免泄漏隐藏结束条件，也避免 chip 因为空文字消失
+  if (currentChapter.value?.showCompletionCondition === false) return "*****";
   const normalized = chapterObjectiveText.value.replace(/\s+/g, " ").trim();
   if (!normalized) return "";
   return normalized.length > 20 ? `${normalized.slice(0, 20)}...` : normalized;

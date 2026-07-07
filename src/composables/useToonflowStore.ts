@@ -1172,11 +1172,37 @@ function createToonflowStore() {
     const latestStatus = latest ? runtimeMessageStatus(latest) : null;
     const canPlayerSpeakNow = sessionCanPlayerSpeak();
     const pendingPrefetch = pendingSessionOrchestrationPrefetch;
+    const revealPending = state.runtimeRevealPending;
 
     const isUserTurn = canPlayerSpeakNow || latestStatus === "waiting_player";
     const isProcessing = state.runtimeProcessingPending;
-    // 停摆：不是用户回合，没有预编排在飞、也没有请求在进行
-    const isStalled = !isUserTurn && !pendingPrefetch && !isProcessing;
+
+    // ★ 判定编排流程是否"应该消费预编排但没消费"
+    // 应消费条件：
+    // 1. 不是用户回合（NPC 该说话）
+    // 2. 没在请求编排中
+    // 3. 预编排存在（promise 在飞或已就绪）
+    // 4. 预编排已解析出结果（lastPrefetchSnapshot 存在）
+    // 5. 预编排未被消费
+    // 6. 揭示流程未在进行（reveal 完成才消费）
+    // 7. 最新消息状态不是 streaming/generated（台词还没准备好，不能消费）
+    // 8. 静音模式提示：`runtimeMessageStatus='waiting_next'` 且非 reveal 中 = 静音模式等待结束，可以消费
+    const isMessageReadyForConsumption =
+      latestStatus !== "streaming"
+      && latestStatus !== "generated"
+      && latestStatus !== "revealing"
+      && !revealPending;
+    // 综合判定：是否"该消费但没消费"（无论预编排还在飞或已被清空都可识别）
+    const shouldHaveConsumedButNot =
+      !isUserTurn
+      && !isProcessing
+      && !!lastPrefetchSnapshot
+      && !lastPrefetchSnapshot.consumed
+      && isMessageReadyForConsumption;
+    // 旧逻辑：完全无预编排、无请求、非用户回合
+    const isStalledNoPrefetch =
+      !isUserTurn && !pendingPrefetch && !isProcessing;
+    const isStalled = shouldHaveConsumedButNot || isStalledNoPrefetch;
 
     // ★ 当预编排已被清空但快照还在，标记为已消费
     if (!pendingPrefetch && lastPrefetchSnapshot && !lastPrefetchSnapshot.consumed) {
