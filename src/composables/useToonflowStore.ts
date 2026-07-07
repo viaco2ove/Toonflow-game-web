@@ -128,7 +128,7 @@ function storageGet(key: string, fallback = ""): string {
  *
  * 用途：
  * - 之前这里静默吞掉异常，导致配额打满时调试面板和运行态 trace 停在旧值；
- * - 现在至少返回布尔值并打印告警，方便定位“接口成功但前端状态没更新”的问题。
+ * - 现在至少返回布尔值并打印告警，方便定位"接口成功但前端状态没更新"的问题。
  */
 function storageSet(key: string, value: string): boolean {
   try {
@@ -1108,7 +1108,7 @@ function createToonflowStore() {
   let runtimeRetrySeed = 0;
   let runtimeRetrying = false;
   let refreshSessionListPromise: Promise<SessionItem[]> | null = null;
-  // 正式游玩链的“继续编排”必须做单飞控制。
+  // 正式游玩链的"继续编排"必须做单飞控制。
   // 这里如果用 Promise.resolve() 反复链式 then，会把多次触发排成串行队列，
   // 结果就是同一轮恢复里连续打出两个 /game/orchestration。
   let continueSessionNarrativePromise: Promise<boolean> | null = null;
@@ -1158,7 +1158,7 @@ function createToonflowStore() {
    *
    * 用途：
    * - 当编排已经明确交还用户输入时，不能再因为 storyInfo 慢一拍或报错而继续锁住输入框；
-   * - 因此这里提供一个后台刷新兜底，让“交还用户输入”和“同步服务端权威状态”解耦。
+   * - 因此这里提供一个后台刷新兜底，让"交还用户输入"和"同步服务端权威状态"解耦。
    */
   function refreshSessionStoryInfoInBackground(reason: string) {
     void refreshSessionStoryInfo().catch((error) => {
@@ -1441,7 +1441,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 清理正式游玩链里“上一句台词播报期间预取的下一轮编排”。
+   * 清理正式游玩链里"上一句台词播报期间预取的下一轮编排"。
    *
    * 用途：
    * - 切换会话、用户发言、重开故事时，旧的预取结果已经不可信；
@@ -1456,7 +1456,7 @@ function createToonflowStore() {
    *
    * 用途：
    * - `/game/streamlines` 结束后，服务端 `storyInfo.turnState` 可能会慢一拍才切到用户回合；
-   * - 这时如果只看旧的 `turnState.canPlayerSpeak`，前端会把已经在等待用户回应的句子误判成“系统还要继续说”；
+   * - 这时如果只看旧的 `turnState.canPlayerSpeak`，前端会把已经在等待用户回应的句子误判成"系统还要继续说"；
    * - 这里同时结合本地 awaitUser 兜底和最后一条消息状态，避免把已进入用户回合的句子继续拿去预取下一轮 `/game/orchestration`。
    */
   function shouldPrefetchNextSessionOrchestration(latestMessage: MessageItem | null): boolean {
@@ -1478,7 +1478,7 @@ function createToonflowStore() {
    * 在当前台词已经生成完成后，后台预取下一轮 `/game/orchestration`。
    *
    * 用途：
-   * - 恢复“语音播放中就开始准备下一轮编排”的节奏；
+   * - 恢复"语音播放中就开始准备下一轮编排"的节奏；
    * - 但只做预取，不在这里直接改 UI 或改回合状态。
    */
   function prefetchNextSessionOrchestration(triggerMessageId: number) {
@@ -1490,7 +1490,7 @@ function createToonflowStore() {
     if (!sessionId || !Number.isFinite(Number(triggerMessageId)) || Number(triggerMessageId) <= 0) {
       return;
     }
-    // 正式首开阶段会按“开场白 -> 首章编排”顺序显式串起两步。
+    // 正式首开阶段会按"开场白 -> 首章编排"顺序显式串起两步。
     // 这段期间如果再后台预取一次编排，就会和 startFromWorld 的首章编排撞成双请求。
     if (state.sessionStartupPriming) {
       clearPendingSessionOrchestrationPrefetch();
@@ -1510,6 +1510,10 @@ function createToonflowStore() {
     }
     const promise = api.orchestrateSession(sessionId);
     WebDebugLogUtil.log("[orchestrateSession] promise", promise);
+    // 异步打印结果
+    promise.then(data => {
+      WebDebugLogUtil.log("[orchestrateSession] resolved result data", data);
+    });
     pendingSessionOrchestrationPrefetch = {
       sessionId,
       triggerMessageId: Number(triggerMessageId),
@@ -1522,7 +1526,7 @@ function createToonflowStore() {
    *
    * 用途：
    * - 二次进入或回溯后，如果当前仍不是用户回合，就继续 `/orchestration -> /streamlines`；
-   * - 不能只在“消息为空”时推进，因为已有旁白但等待下一句生成也是常态。
+   * - 不能只在"消息为空"时推进，因为已有旁白但等待下一句生成也是常态。
    */
   function scheduleSessionNarrativeIfSystemTurn() {
     if (!state.currentSessionId || state.sessionViewMode === "playback") return;
@@ -1535,7 +1539,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 把后端“最小编排返回”规范成统一的前端编排结果。
+   * 把后端"最小编排返回"规范成统一的前端编排结果。
    *
    * 用途：
    * - `/game/orchestration` 现在可能只返回顶层 `role/motive`；
@@ -1560,7 +1564,9 @@ function createToonflowStore() {
       const role = String(raw.role || "").trim();
       const roleType = String(raw.roleType || "").trim() || "narrator";
       const motive = String(raw.motive || "").trim();
-      const awaitUser = Boolean(raw.awaitUser);
+      // 当 roleType 为 player 时，必须设置 awaitUser: true，确保玩家回合正确生效
+      const normalizedRoleType = roleType.toLowerCase();
+      const awaitUser = Boolean(raw.awaitUser) || normalizedRoleType === "player";
 
       // 如果顶层字段都空，但 result.plan 不存在，看看能不能从 expectedRole 等推断
       if (!role && !motive && result.expectedRole) {
@@ -1614,11 +1620,13 @@ function createToonflowStore() {
     const sessionId = String(state.currentSessionId || "").trim();
     const pending = pendingSessionOrchestrationPrefetch;
     let result: SessionOrchestrationResult;
-    if (
-      pending
-      && pending.sessionId === sessionId
-      && pending.triggerMessageId === Number(triggerMessageId)
-    ) {
+    // 消费预取编排：只要是同一个会话的预取就消费，不要求精确的 triggerMessageId 匹配
+    // 因为在编排过程中新消息可能已经生成，导致 triggerMessageId 变化
+    if (pending && pending.sessionId === sessionId) {
+      WebDebugLogUtil.log("[orchestrateSession] 消费预取编排", {
+        prefetchTriggerId: pending.triggerMessageId,
+        currentTriggerId: Number(triggerMessageId),
+      });
       clearPendingSessionOrchestrationPrefetch();
       result = await pending.promise;
       WebDebugLogUtil.log("[orchestrateSession] pending.promise result", result);
@@ -1689,7 +1697,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断当前正式会话是否正处于“等待用户输入”的本地兜底态。
+   * 判断当前正式会话是否正处于"等待用户输入"的本地兜底态。
    *
    * 用途：
    * - 仅保留给旧会话缓存兼容使用；
@@ -1703,11 +1711,11 @@ function createToonflowStore() {
   }
 
   /**
-   * 清除当前正式会话“等待用户输入”的本地兜底标记。
+   * 清除当前正式会话"等待用户输入"的本地兜底标记。
    *
    * 用途：
    * - 用户一旦再次发言，或系统已经真正开始生成下一句台词，就不能继续保留 awaitUser 的前端强信号；
-   * - 否则后续系统回合会被错误渲染成“仍轮到用户”。
+   * - 否则后续系统回合会被错误渲染成"仍轮到用户"。
    */
   function clearPendingSessionAwaitUser(sessionId: string = String(state.currentSessionId || "").trim()) {
     const normalizedSessionId = String(sessionId || "").trim();
@@ -1940,7 +1948,7 @@ function createToonflowStore() {
     const currentStatus = runtimeMessageStatus(latestMessage);
     const canPlayerSpeakNow = turnState["canPlayerSpeak"] !== false || isRuntimeReplyPromptMessage(latestMessage);
     const latestRoleType = String(latestMessage.roleType || "").trim().toLowerCase();
-    // 用户刚发完言而系统仍在处理时，面板不应提前回退成“等待用户”。
+    // 用户刚发完言而系统仍在处理时，面板不应提前回退成"等待用户"。
     // 这时最新消息还是用户消息，但下一步其实是系统继续编排/生成台词。
     const waitingSystemContinuation = latestRoleType === "player" && state.runtimeProcessingPending;
     const latestRow: RuntimeChatTraceItem = {
@@ -1952,7 +1960,7 @@ function createToonflowStore() {
       currentStatus: waitingSystemContinuation
         ? "waiting_next"
         : (currentStatus || (canPlayerSpeakNow ? "waiting_player" : "waiting_next")),
-      // 编排结果只负责当前发言角色和动机，不在前端缓存里提前写“下一位是谁”。
+      // 编排结果只负责当前发言角色和动机，不在前端缓存里提前写"下一位是谁"。
       nextRole: "",
       nextRoleType: "",
       updateTime: Date.now(),
@@ -2012,8 +2020,8 @@ function createToonflowStore() {
     if (state.sessionDetail?.state && typeof state.sessionDetail.state === "object" && !Array.isArray(state.sessionDetail.state)) {
       const sessionState = state.sessionDetail.state as Record<string, unknown>;
       const nextTurnState = asMiniRecord(sessionState.turnState);
-      // 正式会话一旦已经轮到用户输入，就地把 turnState.expectedRole 改成“用户”。
-      // 否则旧角色名会继续污染调试面板和输入框提示，表现成“下一位 纳兰嫣然”等假状态。
+      // 正式会话一旦已经轮到用户输入，就地把 turnState.expectedRole 改成"用户"。
+      // 否则旧角色名会继续污染调试面板和输入框提示，表现成"下一位 纳兰嫣然"等假状态。
       if (canPlayerSpeakNow) {
         nextTurnState.canPlayerSpeak = true;
         nextTurnState.expectedRoleType = "player";
@@ -2330,7 +2338,7 @@ function createToonflowStore() {
    * 把 `/game/storyInfo` 返回的正式会话信息合并进当前会话详情。
    *
    * 用途：
-   * - 让“故事设定 / 当前章节事件”统一吃 storyInfo，而不是依赖 orchestration/streamlines 的附带返回；
+   * - 让"故事设定 / 当前章节事件"统一吃 storyInfo，而不是依赖 orchestration/streamlines 的附带返回；
    * - 保留当前已显示的消息列表，只覆盖服务端权威运行态和事件摘要。
    */
   function applySessionStoryInfoResult(result: StoryInfoResult) {
@@ -2401,8 +2409,8 @@ function createToonflowStore() {
       }
     }
     // storyInfo 已经是正式会话的权威 turnState。
-    // 这里需要立刻把最后一条已落地台词从“generated”规范成 waiting_player / waiting_next，
-    // 否则输入区会继续把已结束的本轮台词误显示为“正在生成下一句内容...”。
+    // 这里需要立刻把最后一条已落地台词从"generated"规范成 waiting_player / waiting_next，
+    // 否则输入区会继续把已结束的本轮台词误显示为"正在生成下一句内容..."。
     syncLatestRuntimeTurnStatusWithState();
     syncRuntimeChatTrace();
   }
@@ -2466,7 +2474,7 @@ function createToonflowStore() {
    * 等待 opening 至少完成一次可感知展示，再进入第一章正文编排。
    *
    * 用途：
-   * - 防止开场白刚落库就被首章正文立刻顶掉，形成“一闪而过”；
+   * - 防止开场白刚落库就被首章正文立刻顶掉，形成"一闪而过"；
    * - 静音模式至少停 2 秒；
    * - 自动语音开启时，按 opening 长度估算一段接近朗读时长的等待窗口。
    */
@@ -2509,17 +2517,26 @@ function createToonflowStore() {
   }
 
   /**
-   * 对“没有后续台词可播”的 await_user 结果做前端兜底。
+   * 对"没有后续台词可播"的 await_user 结果做前端兜底。
    *
    * 用途：
-   * - 正式游玩必须先走完“编排 -> 台词流”这一轮，不能在台词还没生成前就把下一位改成用户；
+   * - 正式游玩必须先走完"编排 -> 台词流"这一轮，不能在台词还没生成前就把下一位改成用户；
    * - 因此这里只在 plan 本身不会继续走 streamlines 时，才本地切成用户回合。
    */
   function applyAwaitUserTurnFromPlan(plan?: DebugNarrativePlan | null) {
     const currentPlan = plan || null;
-    // 正式链只接受“是否交还用户输入”的最小信号，不消费“下一位是谁”这种预编排字段。
-    const shouldYieldToUser = Boolean(currentPlan?.awaitUser);
+    // 正式链只接受"是否交还用户输入"的最小信号，不消费"下一位是谁"这种预编排字段。
+    // 但当 plan.roleType === 'player' 时，后端明确表示轮到用户，必须设置玩家回合标记。
+    const planRoleType = String(currentPlan?.roleType || "").trim().toLowerCase();
+    const shouldYieldToUser = Boolean(currentPlan?.awaitUser) || planRoleType === "player";
+    // 如果后端不需要交还用户输入（awaitUser=false）且不需要流式生成（roleType 非 player），则跳过
     if (!shouldYieldToUser || shouldStreamSessionPlanFromPlan(currentPlan)) return;
+    WebDebugLogUtil.log("[voice时序] applyAwaitUserTurnFromPlan 设置玩家回合", {
+      planRoleType,
+      awaitUser: currentPlan?.awaitUser,
+      role: currentPlan?.role,
+      motive: currentPlan?.motive,
+    });
     state.sessionAwaitUserPending = true;
     state.sessionAwaitUserSessionId = String(state.currentSessionId || "").trim();
     const detail = state.sessionDetail || null;
@@ -2565,7 +2582,7 @@ function createToonflowStore() {
    * - 部分会话里服务端 `turnState.canPlayerSpeak` 会慢一拍才追上最新台词；
    * - 如果这里不先本地让出用户回合，播放页 watcher 会把这句问句误判成 `waiting_next`，
    *   继而继续触发下一轮自动编排；
-   * - 这里仅对“已落地、非用户、明确问句”的正式台词生效，避免把普通系统续写错误打断。
+   * - 这里仅对"已落地、非用户、明确问句"的正式台词生效，避免把普通系统续写错误打断。
    */
   function applyAwaitUserTurnFromNarrativeMessage(message: MessageItem | null | undefined): boolean {
     if (!message || !isRuntimeReplyPromptMessage(message)) {
@@ -2692,7 +2709,7 @@ function createToonflowStore() {
    * 说明：
    * - `task` 只复用小游戏面板展示任务信息，普通输入仍应继续走主线事件进度检测与编排；
    * - 其他传统小游戏（战斗、钓鱼、修炼等）仍会真正接管输入，需要阻塞主线续写；
-   * - 这里集中维护“哪些小游戏会阻塞”的规则，避免发送消息和自动续编排各写一套判断。
+   * - 这里集中维护"哪些小游戏会阻塞"的规则，避免发送消息和自动续编排各写一套判断。
    */
   function isBlockingMiniGameType(gameType: string): boolean {
     // 任务（task）也是小游戏的一种，走 /game/orchestration/minigame 链路
@@ -2702,7 +2719,7 @@ function createToonflowStore() {
 
   /**
    * 判断某份正式会话运行态里的小游戏面板当前是否仍应显示。
-   * - 这里统一维护“仍可见小游戏”的判定，为状态合并与阻塞判断提供依据。
+   * - 这里统一维护"仍可见小游戏"的判定，为状态合并与阻塞判断提供依据。
    */
   function hasVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): boolean {
     const stateRoot = asMiniRecord(runtimeState);
@@ -2717,7 +2734,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断用户本轮输入是否为“强制退出小游戏”命令。
+   * 判断用户本轮输入是否为"强制退出小游戏"命令。
    *
    * 用途：
    * - 用户输入 `#退出` 时，无论后端当前是否仍持有小游戏状态，前端都应立即关闭面板；
@@ -2728,11 +2745,11 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断服务端返回的消息里，是否已经明确告知“当前没有进行中的小游戏”。
+   * 判断服务端返回的消息里，是否已经明确告知"当前没有进行中的小游戏"。
    *
    * 用途：
    * - 后端虽然会返回普通对话消息，但文字已经表达小游戏不存在；
-   * - 这时如果前端继续保留旧 `miniGame`，就会出现“旁白说没有小游戏，但面板还挂着”的错觉。
+   * - 这时如果前端继续保留旧 `miniGame`，就会出现"旁白说没有小游戏，但面板还挂着"的错觉。
    */
   function shouldForceClearMiniGameStateFromMessages(messages: MessageItem[] | null | undefined): boolean {
     if (!Array.isArray(messages) || messages.length <= 0) {
@@ -2745,7 +2762,7 @@ function createToonflowStore() {
    * 从运行态里移除小游戏面板状态。
    *
    * 用途：
-   * - `#退出` 或服务端明确提示“当前没有进行中的小游戏”时，需要强制清空旧面板；
+   * - `#退出` 或服务端明确提示"当前没有进行中的小游戏"时，需要强制清空旧面板；
    * - 这里返回新对象，避免直接修改原始运行态引用。
    */
   function clearVisibleMiniGameState(runtimeState: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -2765,7 +2782,7 @@ function createToonflowStore() {
    * 在正式会话的中间响应临时缺失 `miniGame` 时，保留上一拍仍可见的小游戏状态。
    *
    * 用途：
-   * - 只在“新状态没有小游戏，但旧状态里小游戏仍应显示”时兜底；
+   * - 只在"新状态没有小游戏，但旧状态里小游戏仍应显示"时兜底；
    * - 避免用户刚输入战斗/钓鱼/修炼指令后，面板被一次中间态响应瞬间清空。
    */
   function mergeVisibleMiniGameState(
@@ -2798,7 +2815,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断指定运行态是否仍被“阻塞型小游戏”接管。
+   * 判断指定运行态是否仍被"阻塞型小游戏"接管。
    *
    * 用途：
    * - 正式会话的小游戏同样会产出旁白/NPC 台词；
@@ -2829,7 +2846,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断本轮正式会话消息提交是否已经切入“会阻塞主线”的小游戏。
+   * 判断本轮正式会话消息提交是否已经切入"会阻塞主线"的小游戏。
    *
    * 用途：
    * - `#战斗`、`#钓鱼` 等指令会直接由小游戏控制器接管后续输入；
@@ -2857,7 +2874,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断当前会话是否仍被“阻塞型小游戏”接管。
+   * 判断当前会话是否仍被"阻塞型小游戏"接管。
    *
    * 作用：
    * - 语音播放结束、重试或其他自动推进入口可能绕过 `addMessage` 的即时返回判断；
@@ -2872,7 +2889,7 @@ function createToonflowStore() {
    * 读取当前正式会话里待继续消费的小游戏编排计划。
    *
    * 用途：
-   * - 战斗等小游戏会先提交“旁白播报”一句，再把敌方回合作为 next plan 提升到 state.pendingNarrativePlan；
+   * - 战斗等小游戏会先提交"旁白播报"一句，再把敌方回合作为 next plan 提升到 state.pendingNarrativePlan；
    * - web 端在 refreshSessionStoryInfo 之后需要显式把这条链接上，否则只会停在旁白播报，不会继续进入敌方回合；
    * - 这里只返回小游戏相关 plan，避免误把普通主线的 pendingNarrativePlan 当成小游戏链继续执行。
    */
@@ -3265,7 +3282,7 @@ function createToonflowStore() {
     return worldPublishStatus(world) === "published";
   }
 
-  // “我的作品”需要把发布过程中的故事放在已发布分区里，而大厅/推荐仍只认真正已发布。
+  // "我的作品"需要把发布过程中的故事放在已发布分区里，而大厅/推荐仍只认真正已发布。
   function isWorldInPublishedLane(world: WorldItem): boolean {
     return ["published", "publishing", "publish_failed"].includes(worldPublishStatus(world));
   }
@@ -3313,9 +3330,9 @@ function createToonflowStore() {
   }
 
   /**
-   * “我的”页只能展示当前账号真正拥有的故事。
+   * "我的"页只能展示当前账号真正拥有的故事。
    * 全局 worlds 里会混入大厅/推荐需要的公开已发布故事，所以这里必须再按可编辑权限过滤一层，
-   * 避免别人的公开作品误出现在“我的作品”里。
+   * 避免别人的公开作品误出现在"我的作品"里。
    */
   function ownedWorldsForSelectedProject(): WorldItem[] {
     return worldsForSelectedProject().filter((item) => canEditWorld(item));
@@ -3454,7 +3471,7 @@ function createToonflowStore() {
       bgmPath: normalizeScalarEditorText(state.chapterMusic).trim(),
       // 调试启动前会先把编辑器中的章节草稿重新塞回 state.chapters；
       // 这里必须带上 bgmAutoPlay，否则未勾选会被覆盖成 undefined，
-      // 播放页再按“未配置=默认开启”处理，导致章节调试里背景音乐被错误自动播放。
+      // 播放页再按"未配置=默认开启"处理，导致章节调试里背景音乐被错误自动播放。
       bgmAutoPlay: state.chapterMusicAutoPlay,
       showCompletionCondition: state.chapterConditionVisible,
     };
@@ -5048,7 +5065,7 @@ function createToonflowStore() {
    *
    * 用途：
    * - 点击底部主菜单时，主动拉取该页面依赖的数据，而不是只切换 activeTab；
-   * - “我的/主页/创建故事”共用账号、项目、故事数据，“聊过”额外刷新会话列表。
+   * - "我的/主页/创建故事"共用账号、项目、故事数据，"聊过"额外刷新会话列表。
    */
   async function refreshMainTabData(tab: AppTab) {
     if (!state.token.trim()) return;
@@ -5379,7 +5396,7 @@ function createToonflowStore() {
       if (Number(copiedWorld.projectId || 0) > 0 && Number(copiedWorld.projectId || 0) !== Number(state.selectedProjectId || 0)) {
         selectProject(Number(copiedWorld.projectId || 0));
       }
-      // 先刷新“我的作品”列表，让新副本立刻出现在草稿箱里。
+      // 先刷新"我的作品"列表，让新副本立刻出现在草稿箱里。
       await reloadAll();
       // 再打开副本详情，确保用户直接进入新草稿的编辑页，而不是停留在原故事卡片。
       await loadWorldForEdit(copiedWorld);
@@ -5604,7 +5621,7 @@ function createToonflowStore() {
     );
     const entryConditionText = normalizeConditionEditorText(state.chapterEntryCondition);
     const completionConditionText = normalizeConditionEditorText(state.chapterCondition);
-    // 勾选“自动”时由后端基于正文重建 Phase Graph；关闭时才使用手写 JSON。
+    // 勾选"自动"时由后端基于正文重建 Phase Graph；关闭时才使用手写 JSON。
     const runtimeOutline = state.chapterRuntimeOutlineAutoGenerate
       ? null
       : parseRuntimeOutlineEditorText(state.chapterRuntimeOutlineText);
@@ -5682,8 +5699,8 @@ function createToonflowStore() {
       content: state.chapterContent,
       entryCondition: state.chapterEntryCondition || undefined,
       completionCondition: state.chapterCondition || undefined,
-      // “生成草稿”必须从章节正文重新构建 Phase Graph。
-      // 如果把编辑框里的旧 JSON 传给后端，后端会按“作者显式配置”优先保留旧 phases，
+      // "生成草稿"必须从章节正文重新构建 Phase Graph。
+      // 如果把编辑框里的旧 JSON 传给后端，后端会按"作者显式配置"优先保留旧 phases，
       // 这样曾经误生成的非事件节点会一直残留。
       runtimeOutline: undefined,
     });
@@ -5776,7 +5793,7 @@ function createToonflowStore() {
         || null;
       if (existingSession?.sessionId) {
         state.notice = "正在继续上次故事...";
-        // 继续旧会话时不能占用“首开独占链”标记。
+        // 继续旧会话时不能占用"首开独占链"标记。
         // 否则 openSession() 内部的自动续编排会被 runtimeProcessingPending / sessionStartupPriming 直接短路。
         state.runtimeProcessingPending = false;
         state.sessionStartupPriming = false;
@@ -5787,11 +5804,11 @@ function createToonflowStore() {
         }
         return;
       }
-      // 正式游玩首启阶段要独占“开场白 -> 首轮编排”这段启动链。
+      // 正式游玩首启阶段要独占"开场白 -> 首轮编排"这段启动链。
       // 否则播放页 watcher 会在开场白播完后把最后一条旁白误判成 waiting_next，
       // 提前触发 continueSessionNarrative()，和这里手动发起的首轮 /game/orchestration 并发撞车。
       state.runtimeProcessingPending = true;
-      // 正式首开需要独占“开场白 -> 首章编排”这条启动链。
+      // 正式首开需要独占"开场白 -> 首章编排"这条启动链。
       // 否则开场白提交后触发的后台预取会和手动首章编排并发，形成双 /game/orchestration。
       state.sessionStartupPriming = true;
       state.sessionOpening = true;
@@ -5842,7 +5859,7 @@ function createToonflowStore() {
           }
         }
       }
-
+      WebDebugLogUtil.log("[resolveSessionOrchestration] firstChapterResult 实时请求编排结果", firstChapterResult);
       void refreshSessionListState();
       state.runtimeProcessingPending = false;
       state.sessionStartupPriming = false;
@@ -6308,12 +6325,12 @@ function createToonflowStore() {
   }
 
   /**
-   * 在调试编排结果已经明确“当前该由某个非用户角色发言”时，先把本地 turnState 锁到该角色。
+   * 在调试编排结果已经明确"当前该由某个非用户角色发言"时，先把本地 turnState 锁到该角色。
    *
    * 用途：
    * - `/game/storyInfo` 在 `streamlines` 真正落文本前，可能仍返回上一拍的 `canPlayerSpeak=true`；
-   * - 如果这里不先锁住，调试面板和输入框会短暂显示成“下一个 用户”，造成状态错觉；
-   * - 这里只锁“当前要发这句台词的人”，不消费任何“下一位是谁”的预编排字段。
+   * - 如果这里不先锁住，调试面板和输入框会短暂显示成"下一个 用户"，造成状态错觉；
+   * - 这里只锁"当前要发这句台词的人"，不消费任何"下一位是谁"的预编排字段。
    */
   function applyPendingDebugSpeakerTurnFromPlan(plan: DebugNarrativePlan | null | undefined) {
     if (!plan || !shouldStreamDebugPlan(plan)) return;
@@ -6330,7 +6347,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 读取调试运行态里登记的“待进入下一章”标记。
+   * 读取调试运行态里登记的"待进入下一章"标记。
    *
    * 用途：
    * - /game/orchestration 在章节成功时不会直接切章，只会先登记 pending chapter；
@@ -6347,7 +6364,7 @@ function createToonflowStore() {
    *
    * 用途：
    * - 第 1 章成功后，服务端只会把 pending next chapter 写进 state，不会直接切章；
-   * - 如果这里不自动续跑，界面会停在“当前句已播完，但仍是旧章节”的中间态，
+   * - 如果这里不自动续跑，界面会停在"当前句已播完，但仍是旧章节"的中间态，
    *   用户还能继续对旧章节输入，进而把剧情滚乱。
    */
   function shouldAutoAdvancePendingDebugChapter() {
@@ -6368,7 +6385,7 @@ function createToonflowStore() {
   }
 
   /**
-   * 判断调试计划是否属于“作者写死的 opening 文案”。
+   * 判断调试计划是否属于"作者写死的 opening 文案"。
    *
    * 用途：
    * - debug opening 不该再走普通 streamlines 的 speaker 改写链；
@@ -6542,7 +6559,7 @@ function createToonflowStore() {
     }
     state.debugMode = true;
     // 从正式游玩切回章节调试时，要立即清掉正式会话打开失败态；
-    // 否则上一轮 initStory/openSession 的错误遮罩会残留到调试界面上，造成“刷新后才恢复”的假象。
+    // 否则上一轮 initStory/openSession 的错误遮罩会残留到调试界面上，造成"刷新后才恢复"的假象。
     state.sessionOpening = false;
     state.sessionOpeningStage = "";
     state.sessionOpenError = "";
@@ -6567,7 +6584,7 @@ function createToonflowStore() {
     state.runtimeProcessingPending = true;
     let debugOverlayReleased = false;
     // 只在真正完成调试上下文初始化后再释放整屏蒙层，
-    // 否则 saveWorld/saveChapter/initDebug 仍在 pending 时，界面会像“没反应”。
+    // 否则 saveWorld/saveChapter/initDebug 仍在 pending 时，界面会像"没反应"。
     const releaseDebugLoading = () => {
       if (debugOverlayReleased) return;
       state.debugLoading = false;
@@ -7032,7 +7049,7 @@ function createToonflowStore() {
       });
       // commitNarrativeTurn 在部分链路下可能只回最新状态，不会回刚生成的 message。
       // 这里不能先把流式生成出来的最终台词清空，否则开场白这类第一句会直接从历史列表里消失。
-      // 因此先保留“本轮最终消息”，再在 commit 结果没有 message/generatedMessages 时回填它。
+      // 因此先保留"本轮最终消息"，再在 commit 结果没有 message/generatedMessages 时回填它。
       const fallbackCommittedMessage: MessageItem = {
         id: Number((finalMessage as Record<string, unknown> | null)?.["id"] || committedCreateTime),
         role: committedRole,
@@ -7303,7 +7320,17 @@ function createToonflowStore() {
         }
         const latest = conversationMessages().slice(-1)[0] || null;
         const latestStatus = runtimeMessageStatus(latest);
-        const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
+        // 使用 sessionCanPlayerSpeak() 而非直接读 runtimeTurnStateRecord，确保本地 awaitUser 兜底也生效
+        const canPlayerSpeakNow = sessionCanPlayerSpeak();
+        const hasPendingAwaitUser = hasPendingSessionAwaitUser();
+        WebDebugLogUtil.log("[voice时序] break 条件检查", {
+          step,
+          canPlayerSpeakNow,
+          hasPendingAwaitUser,
+          latestStatus,
+          hasPlan: !!orchestration.plan,
+          planRoleType: orchestration.plan?.roleType,
+        });
         if (canPlayerSpeakNow || latestStatus === "waiting_player" || !orchestration.plan) {
           advanced = true;
           break;
