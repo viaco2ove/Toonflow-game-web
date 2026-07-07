@@ -38,6 +38,7 @@ import type {
   VoicePresetItem,
   WorldItem,
 } from "../types/toonflow";
+import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
 type RequestConfig = {
   baseUrl: string;
@@ -295,6 +296,7 @@ export class ToonflowApi {
   }
 
   orchestrateSession(sessionId: string) {
+     WebDebugLogUtil.log("[prefetchOrchestration] orchestrateSession");
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
   }
 
@@ -303,6 +305,7 @@ export class ToonflowApi {
    * 流程：编排 → streamlines → 语音预热 → 语音播放，每条消息串行处理。
    */
   orchestrateMinigameSession(sessionId: string) {
+    WebDebugLogUtil.log("[prefetchOrchestration] orchestrateMinigameSession");
     return this.post<SessionOrchestrationResult>("/game/orchestration/minigame", { sessionId });
   }
 
@@ -365,6 +368,7 @@ export class ToonflowApi {
   }
 
   orchestrateDebug(payload: Record<string, unknown>) {
+    WebDebugLogUtil.log("[prefetchOrchestration] orchestrateDebug");
     return this.post<DebugOrchestrationResult>("/game/orchestration", payload);
   }
 

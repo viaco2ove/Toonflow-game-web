@@ -45,7 +45,8 @@ export const webDebugLogConfig = {
   debugLogBlacklist: [] as string[],
   /** 白名单前缀（whitelist 模式下，仅 tag 命中此处前缀才打印） */
   debugLogWhitelist: [
-    WEBP_LOG_TAG_PREFIX,"/\\[webp:.*\\]/", // [webp:play] / [webp:extract] / [webp:cache] / [webp:render] / [webp:detect]
+    /*exsample:WEBP_LOG_TAG_PREFIX,"/\\[webp:.*\\]/"*/
+    "[orchestrateSession]","[prefetchOrchestration]","[resolveSessionOrchestration]","[voice时序]"
   ] as string[],
 };
 
