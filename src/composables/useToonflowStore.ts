@@ -1,4 +1,4 @@
-import { computed, reactive, watch } from "vue";
+﻿import { computed, reactive, watch } from "vue";
 import { ToonflowApi } from "../api/toonflow";
 import {
   AiModelListMap,
@@ -1079,6 +1079,8 @@ function createToonflowStore() {
     sessionAwaitUserSessionId: "",
     sendPending: false,
     runtimeProcessingPending: false,
+    // 揭示流程进行中标志：waitForMessageReveal 期间为 true，防止 Watch 在 reveal 完成前提前触发
+    runtimeRevealPending: false,
     sessionDetail: null as Loadable<SessionDetail>,
     messages: [] as MessageItem[],
     quickInput: "",
@@ -1114,6 +1116,133 @@ function createToonflowStore() {
   let continueSessionNarrativePromise: Promise<boolean> | null = null;
   let continueDebugNarrativePromise: Promise<boolean> | null = null;
   let pendingSessionOrchestrationPrefetch: PendingSessionOrchestrationPrefetch | null = null;
+  /**
+   * 编排检测器：每 2 秒检查一次编排状态，发现停摆时自动恢复。
+   *
+   * 检测项：
+   * - 最新编排结果（pendingPlan / pendingNarrativePlan）
+   * - 编排是否被消费（pendingPlan 已应用）
+   * - 是否在请求编排中（runtimeProcessingPending）
+   * - 是否处于用户输入回合（canPlayerSpeak）
+   * - 是否处于停摆中（无请求、无编排、无用户回合）
+   *
+   * 停摆恢复：
+   * - 检测到停摆时，立即触发 scheduleContinueSessionNarrative()
+   */
+  let orchestrationCheckerTimer: ReturnType<typeof setInterval> | null = null;
+  let orchestrationCheckerLastState: {
+    isUserTurn: boolean;
+    isStalled: boolean;
+    prefetchResolvedRole: string | null;
+    prefetchConsumed: boolean;
+  } | null = null;
+  /**
+   * 跟踪预编排 promise 的解析结果，用于检测器打印"最新的编排结果"。
+   * - resolvedRole: 预编排返回的 role（如果是预编排且已解析）
+   * - consumed: 该预编排是否已被消费（await 过）
+   */
+  let lastPrefetchSnapshot: {
+    role: string | null;
+    roleType: string | null;
+    motive: string | null;
+    consumed: boolean;
+  } | null = null;
+
+  function startOrchestrationChecker() {
+    if (orchestrationCheckerTimer !== null) return;
+    orchestrationCheckerTimer = setInterval(() => {
+      runOrchestrationChecker();
+    }, 2000);
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 编排检测器已启动");
+  }
+
+  function stopOrchestrationChecker() {
+    if (orchestrationCheckerTimer !== null) {
+      clearInterval(orchestrationCheckerTimer);
+      orchestrationCheckerTimer = null;
+      WebDebugLogUtil.log("[orchestrateSession] [checker] 编排检测器已停止");
+    }
+  }
+
+  function runOrchestrationChecker() {
+    if (!state.currentSessionId) return;
+    if (state.runtimeProcessingPending) return; // 编排进行中，跳过
+
+    const latest = conversationMessages().slice(-1)[0] || null;
+    const latestStatus = latest ? runtimeMessageStatus(latest) : null;
+    const canPlayerSpeakNow = sessionCanPlayerSpeak();
+    const pendingPrefetch = pendingSessionOrchestrationPrefetch;
+
+    const isUserTurn = canPlayerSpeakNow || latestStatus === "waiting_player";
+    const isProcessing = state.runtimeProcessingPending;
+    // 停摆：不是用户回合，没有预编排在飞、也没有请求在进行
+    const isStalled = !isUserTurn && !pendingPrefetch && !isProcessing;
+
+    // ★ 当预编排已被清空但快照还在，标记为已消费
+    if (!pendingPrefetch && lastPrefetchSnapshot && !lastPrefetchSnapshot.consumed) {
+      lastPrefetchSnapshot = { ...lastPrefetchSnapshot, consumed: true };
+    }
+
+    // ★ 1) 最新的编排结果
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 最新的编排结果：", {
+      hasPrefetch: !!pendingPrefetch,
+      prefetchTriggerId: pendingPrefetch?.triggerMessageId,
+      prefetchRole: lastPrefetchSnapshot?.role,
+      prefetchRoleType: lastPrefetchSnapshot?.roleType,
+      prefetchMotive: lastPrefetchSnapshot?.motive,
+    });
+    // ★ 2) 这个编排是否被消费了
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 这个编排是否被消费了：", {
+      consumed: lastPrefetchSnapshot?.consumed || false,
+      pendingPrefetchExists: !!pendingPrefetch,
+    });
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 最新消息状态：", {
+      latestStatus,
+      latestRole: latest?.role,
+      latestId: latest?.id,
+    });
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否在请求编排中：", { isProcessing });
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否处于用户输入回合：", { isUserTurn, canPlayerSpeakNow });
+    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否处于停摆中，没有预编排、没有请求、也不是用户回合：", { isStalled });
+
+    // 状态发生变化时打印
+    const curPrefetchKey = lastPrefetchSnapshot
+      ? `${lastPrefetchSnapshot.role || "none"}#${lastPrefetchSnapshot.consumed}`
+      : "none";
+    const lastPrefetchKey = orchestrationCheckerLastState
+      ? `${orchestrationCheckerLastState.prefetchResolvedRole || "none"}#${orchestrationCheckerLastState.prefetchConsumed}`
+      : null;
+    if (
+      orchestrationCheckerLastState === null
+      || orchestrationCheckerLastState.isUserTurn !== isUserTurn
+      || orchestrationCheckerLastState.isStalled !== isStalled
+      || lastPrefetchKey !== curPrefetchKey
+    ) {
+      WebDebugLogUtil.log("[orchestrateSession] [checker] 状态变化：", {
+        from: orchestrationCheckerLastState,
+        to: {
+          isUserTurn,
+          isProcessing,
+          isStalled,
+          prefetchResolvedRole: lastPrefetchSnapshot?.role,
+          prefetchConsumed: lastPrefetchSnapshot?.consumed,
+        },
+      });
+    }
+    orchestrationCheckerLastState = {
+      isUserTurn,
+      isStalled,
+      prefetchResolvedRole: lastPrefetchSnapshot?.role || null,
+      prefetchConsumed: lastPrefetchSnapshot?.consumed || false,
+    };
+
+    // 停摆自动恢复
+    if (isStalled) {
+      WebDebugLogUtil.log("[orchestrateSession] [checker] ⚠️ 检测到停摆，立即恢复编排");
+      void scheduleContinueSessionNarrative();
+    }
+  }
+
   const latestSessionByWorldPromise = new Map<number, Promise<SessionItem | null>>();
 
   const api = new ToonflowApi(() => ({ baseUrl: state.baseUrl, token: state.token }));
@@ -1448,6 +1577,12 @@ function createToonflowStore() {
    * - 这里统一清空，避免把上一轮的 plan 错喂到当前会话。
    */
   function clearPendingSessionOrchestrationPrefetch() {
+    if (pendingSessionOrchestrationPrefetch) {
+      // 标记为已消费（让检测器知道编排结果已被消费/丢弃）
+      lastPrefetchSnapshot = lastPrefetchSnapshot
+        ? { ...lastPrefetchSnapshot, consumed: true }
+        : null;
+    }
     pendingSessionOrchestrationPrefetch = null;
   }
 
@@ -1510,9 +1645,27 @@ function createToonflowStore() {
     }
     const promise = api.orchestrateSession(sessionId);
     WebDebugLogUtil.log("[orchestrateSession] promise", promise);
-    // 异步打印结果
+    // 异步打印结果，同时记录到 lastPrefetchSnapshot 供检测器读取
     promise.then(data => {
       WebDebugLogUtil.log("[orchestrateSession] resolved result data", data);
+      const planRole = (data as any)?.role
+        || (data as any)?.plan?.role
+        || null;
+      const planRoleType = (data as any)?.roleType
+        || (data as any)?.plan?.roleType
+        || null;
+      const planMotive = (data as any)?.motive
+        || (data as any)?.plan?.motive
+        || null;
+      lastPrefetchSnapshot = {
+        role: planRole ? String(planRole) : null,
+        roleType: planRoleType ? String(planRoleType) : null,
+        motive: planMotive ? String(planMotive) : null,
+        consumed: false,
+      };
+    }).catch(() => {
+      // 预编排失败时清空快照，避免误判
+      lastPrefetchSnapshot = null;
     });
     pendingSessionOrchestrationPrefetch = {
       sessionId,
@@ -1620,8 +1773,7 @@ function createToonflowStore() {
     const sessionId = String(state.currentSessionId || "").trim();
     const pending = pendingSessionOrchestrationPrefetch;
     let result: SessionOrchestrationResult;
-    // 消费预取编排：只要是同一个会话的预取就消费，不要求精确的 triggerMessageId 匹配
-    // 因为在编排过程中新消息可能已经生成，导致 triggerMessageId 变化
+    // 优先消费预取编排：只要是同一个会话的预取就消费
     if (pending && pending.sessionId === sessionId) {
       WebDebugLogUtil.log("[orchestrateSession] 消费预取编排", {
         prefetchTriggerId: pending.triggerMessageId,
@@ -5972,6 +6124,8 @@ function createToonflowStore() {
       if (!options?.playback) {
         scheduleSessionNarrativeIfSystemTurn();
       }
+      // 会话打开成功，启动编排检测器
+      startOrchestrationChecker();
       void refreshSessionListState();
     } catch (error) {
       const message = asUiErrorMessage(error);
@@ -6006,6 +6160,7 @@ function createToonflowStore() {
     state.sessions = state.sessions.filter((item) => item.sessionId !== id);
     if (state.currentSessionId === id) {
       clearRuntimeRetryState();
+      stopOrchestrationChecker(); // 退出会话时停止检测器
       state.currentSessionId = "";
       state.sessionDetail = null;
       state.messages = [];
@@ -7094,10 +7249,10 @@ function createToonflowStore() {
         });
         return;
       }
+      // 在 streamSessionPlan 完成后预取下一轮编排
+      // 注意：预取创建时机在 streamSessionPlan 结束时，如果后端响应太慢可能无法在下一轮被消费
       const latestNarrativeMessage = conversationMessages().slice(-1)[0] || null;
       if (shouldPrefetchNextSessionOrchestration(latestNarrativeMessage)) {
-        // 当前句文本一旦已经提交成功，且最后一条台词仍然明确属于系统继续推进时，
-        // 才后台预取下一轮编排。否则已经轮到用户输入的句子会被误判成系统继续说话。
         WebDebugLogUtil.log("[orchestrateSession] prefetchNext", {
           messageId: Number(latestNarrativeMessage?.id || 0),
         });
@@ -7282,6 +7437,11 @@ function createToonflowStore() {
           throw new Error(`前端应用编排结果失败：${asUiErrorMessage(error)}`);
         }
         const shouldStreamPlan = shouldStreamSessionPlanFromPlan(orchestration.plan);
+        WebDebugLogUtil.log("[voice时序] 编排结果分析", {
+          shouldStreamPlan,
+          planRoleType: orchestration.plan?.roleType,
+          planRole: orchestration.plan?.role,
+        });
         await refreshSessionStoryInfo();
         // 如果 plan.roleType === "player" 且不需要走 streamSessionPlan，
         // 说明这一轮编排明确把发言权交还给用户。前端需要主动设 awaitUser 兜底，
@@ -7681,6 +7841,8 @@ function createToonflowStore() {
     quickStart,
     openSession,
     retryOpenCurrentSession,
+    startOrchestrationChecker,
+    stopOrchestrationChecker,
     syncRuntimeChatTraceNow: syncRuntimeChatTrace,
     deleteSession,
     refreshCurrentSession,

@@ -2382,10 +2382,22 @@ watch(
     runtimeVoicePhase.value,
   ],
   async () => {
+    WebDebugLogUtil.log("[voice时序] Watch auto_advancing 触发检查", {
+      playMode: playMode.value,
+      debugLoading: store.state.debugLoading,
+      runtimeProcessingPending: store.state.runtimeProcessingPending,
+      runtimeRevealPending: store.state.runtimeRevealPending,
+      debugEndDialog: store.state.debugEndDialog,
+      currentSessionId: store.state.currentSessionId,
+      latestId: latestRevealedMessage.value?.id,
+      latestStatus: latestRevealedMessage.value ? runtimeMessageStatus(latestRevealedMessage.value) : "",
+      isStreaming: latestRevealedMessage.value ? isStreamingRuntimeMessage(latestRevealedMessage.value) : false,
+    });
     if (
       playMode.value !== "live"
       || store.state.debugLoading
       || store.state.runtimeProcessingPending
+      || store.state.runtimeRevealPending  // 揭示进行中，等待 reveal 完成
       || store.state.debugEndDialog
     ) {
       return;
@@ -2427,9 +2439,11 @@ watch(
       store.setRuntimeMessageStatus(latest.id, status as any);
     }
     if (canPlayerSpeak.value && !miniGameShouldContinue) {
+      WebDebugLogUtil.log("[voice时序] Watch return: canPlayerSpeak && !miniGameShouldContinue", { canPlayerSpeak: canPlayerSpeak.value, miniGameShouldContinue });
       return;
     }
     if (status !== "waiting_next") {
+      WebDebugLogUtil.log("[voice时序] Watch return: status !== waiting_next", { status });
       return;
     }
     // 如果当前还有任何消息处于语音 loading/playing/streaming 阶段，

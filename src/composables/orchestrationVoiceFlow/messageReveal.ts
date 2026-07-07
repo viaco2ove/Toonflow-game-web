@@ -102,6 +102,9 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   const isAutoVoiceEnabled = () => resolveAutoVoice(context);
   const canSpeak = () => resolveCanPlayerSpeak(context);
 
+  // 设置揭示进行中标志，防止 Watch 在 reveal 完成前提前触发下一轮编排
+  const store = getStore();
+  store.state.runtimeRevealPending = true;
   WebDebugLogUtil.log("[messageReveal] waitForMessageReveal entry", {
     messageKey,
     autoVoice: isAutoVoiceEnabled(),
@@ -110,6 +113,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
 
   let currentMessage = getLatest(messageKey);
   if (!currentMessage) {
+    store.state.runtimeRevealPending = false;
     WebDebugLogUtil.log("[messageReveal] waitForMessageReveal early return: no message", { messageKey });
     return;
   }
@@ -122,6 +126,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     contentPreview: (currentMessage.content || "").slice(0, 60),
   });
   if (isRetryMsg(currentMessage)) {
+    store.state.runtimeRevealPending = false;
     await sleep(120);
     return;
   }
@@ -218,6 +223,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
       logMessageSnapshot("cancelled", currentMessage, getSentences(currentMessage), messageKey);
       clearRuntimeVoiceIndicator();
       endMessagePlayback(messageKey);
+      store.state.runtimeRevealPending = false;
       return;
     }
     currentMessage = getLatest(messageKey) || currentMessage;
@@ -250,6 +256,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     WebDebugLogUtil.log("[voice时序] waitForMessageReveal 找不到消息，直接退出", { messageKey });
     clearRuntimeVoiceIndicator();
     endMessagePlayback(messageKey);
+    store.state.runtimeRevealPending = false;
     return;
   }
   if (currentMessage.roleType === "player") {
@@ -259,6 +266,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     });
     getStore().setRuntimeMessageStatus(currentMessage.id, "waiting_player");
     await sleep(180);
+    store.state.runtimeRevealPending = false;
     return;
   }
   // 小游戏模式下，旁白/敌方回合应保持 waiting_next 以触发自动推进
@@ -283,6 +291,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     // 静音模式也要清理指示器，否则尾部圆点会一直闪
     clearRuntimeVoiceIndicator();
     endMessagePlayback(messageKey);
+    store.state.runtimeRevealPending = false;
     return;
   }
   if (streamedVoicePlayed || streamedSentenceCount > 0) {
@@ -296,6 +305,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     logMessageSnapshot("stream-done", currentMessage, getSentences(currentMessage), messageKey);
     clearRuntimeVoiceIndicator();
     endMessagePlayback(messageKey);
+    store.state.runtimeRevealPending = false;
     await sleep(260);
     return;
   }
@@ -304,6 +314,7 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
     getStore().setRuntimeMessageStatus(currentMessage.id, nextStatusAfterVoice);
     clearRuntimeVoiceIndicator();
     endMessagePlayback(messageKey);
+    store.state.runtimeRevealPending = false;
     return;
   }
   getStore().setRuntimeMessageStatus(currentMessage.id, "voicing");
@@ -338,4 +349,5 @@ export async function waitForMessageReveal(messageKey: string, isCancelled: () =
   logMessageSnapshot("non-stream-done", currentMessage, getSentences(currentMessage), messageKey);
   clearRuntimeVoiceIndicator();
   endMessagePlayback(messageKey);
+  store.state.runtimeRevealPending = false;
 }
