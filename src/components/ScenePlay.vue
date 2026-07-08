@@ -3107,6 +3107,14 @@ function closeDebugDialog() {
 function closeSessionEndDialog() {
   store.state.sessionEndDialog = null;
   store.state.sessionEndDialogDetail = "";
+  store.state.sessionFailedAcknowledged = true;
+}
+
+function enterFreeMode() {
+  store.state.sessionEndDialog = null;
+  store.state.sessionEndDialogDetail = "";
+  store.state.sessionFailedAcknowledged = true;
+  store.state.sessionFreeMode = true;
 }
 
 function exitDebugMode() {
@@ -3118,6 +3126,8 @@ function exitDebugMode() {
 }
 
 function toggleHistoryMode() {
+  // 切换历史模式时清除弹框，避免弹框不消失
+  closeSessionEndDialog();
   if (isSessionPlaybackMode.value && playMode.value === "history") {
     stopPlaybackSequence();
     stopRuntimeVoicePlayback();
@@ -4602,20 +4612,21 @@ onBeforeUnmount(() => {
       <div class="modal-panel play-debug-end-panel" style="width:min(100%,420px);">
         <div class="modal-header">
           <button class="button small" type="button" @click="closeSessionEndDialog">继续查看</button>
-          <div style="font-weight:900;">章节失败</div>
-          <span class="tiny">{{ store.state.sessionEndDialog }}</span>
+          <div style="font-weight:900;">{{ store.state.sessionEndDialog === '已完结' ? '故事完结' : '章节失败' }}</div>
+          <span class="tiny">{{ store.state.sessionEndDialog === '已完结' ? '故事已完结' : store.state.sessionEndDialog }}</span>
         </div>
         <div class="modal-body">
           <div class="surface section-block surface-soft">
-            <div style="font-weight:900; font-size:18px;">章节失败</div>
+            <div style="font-weight:900; font-size:18px;">{{ store.state.sessionEndDialog === '已完结' ? '故事已完结' : '章节失败' }}</div>
             <div class="subtle" style="margin-top:8px;">
-              {{ store.state.sessionEndDialogDetail || "当前章节结束条件失败。可继续查看当前记录，或返回历史重新开始。" }}
+              {{ store.state.sessionEndDialogDetail || (store.state.sessionEndDialog === '已完结' ? '故事已完结。可进入自由模式继续游玩，或返回历史重新开始。' : '当前章节结束条件失败。可继续查看当前记录，或返回历史重新开始。') }}
             </div>
           </div>
         </div>
         <div class="modal-actions">
           <button class="button" type="button" @click="closeSessionEndDialog">继续查看</button>
-          <button class="button primary" type="button" @click="toggleHistoryMode">返回历史</button>
+          <button v-if="store.state.sessionEndDialog === '已完结'" class="button primary" type="button" @click="enterFreeMode">进入自由模式</button>
+          <button v-else class="button primary" type="button" @click="toggleHistoryMode">返回历史</button>
         </div>
       </div>
     </div>
