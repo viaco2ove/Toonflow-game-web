@@ -1075,6 +1075,8 @@ function createToonflowStore() {
     sessionRuntimeStage: "",
     sessionEndDialog: null as string | null,
     sessionEndDialogDetail: "",
+    sessionFailedAcknowledged: false,
+    sessionFreeMode: false, // 最后一章完成后进入自由模式，继续编排
     sessionAwaitUserPending: false,
     sessionAwaitUserSessionId: "",
     sendPending: false,
@@ -1153,20 +1155,32 @@ function createToonflowStore() {
     orchestrationCheckerTimer = setInterval(() => {
       runOrchestrationChecker();
     }, 2000);
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 编排检测器已启动");
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 编排检测器已启动");
   }
 
   function stopOrchestrationChecker() {
     if (orchestrationCheckerTimer !== null) {
       clearInterval(orchestrationCheckerTimer);
       orchestrationCheckerTimer = null;
-      WebDebugLogUtil.log("[orchestrateSession] [checker] 编排检测器已停止");
+      WebDebugLogUtil.log("[orchestrateSessionChecker] 编排检测器已停止");
     }
   }
 
   function runOrchestrationChecker() {
     if (!state.currentSessionId) return;
     if (state.runtimeProcessingPending) return; // 编排进行中，跳过
+
+    // ★ 检测到会话已失败或章节已完结（除非已进入自由模式），决定是否继续编排
+    const sessionStatus = state.sessionDetail?.status || "";
+    const isFreeMode = state.sessionFreeMode;
+    if (sessionStatus === "failed") {
+      WebDebugLogUtil.log("[orchestrateSessionChecker] 会话已失败，停止轮询", { sessionStatus });
+      return;
+    }
+    if (sessionStatus === "chapter_completed" && !isFreeMode) {
+      WebDebugLogUtil.log("[orchestrateSessionChecker] 章节已完结但未进入自由模式，停止轮询", { sessionStatus, isFreeMode });
+      return;
+    }
 
     const latest = conversationMessages().slice(-1)[0] || null;
     const latestStatus = latest ? runtimeMessageStatus(latest) : null;
@@ -1210,7 +1224,7 @@ function createToonflowStore() {
     }
 
     // ★ 1) 最新的编排结果
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 最新的编排结果：", {
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 最新的编排结果：", {
       hasPrefetch: !!pendingPrefetch,
       prefetchTriggerId: pendingPrefetch?.triggerMessageId,
       prefetchRole: lastPrefetchSnapshot?.role,
@@ -1218,18 +1232,18 @@ function createToonflowStore() {
       prefetchMotive: lastPrefetchSnapshot?.motive,
     });
     // ★ 2) 这个编排是否被消费了
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 这个编排是否被消费了：", {
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 这个编排是否被消费了：", {
       consumed: lastPrefetchSnapshot?.consumed || false,
       pendingPrefetchExists: !!pendingPrefetch,
     });
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 最新消息状态：", {
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 最新消息状态：", {
       latestStatus,
       latestRole: latest?.role,
       latestId: latest?.id,
     });
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否在请求编排中：", { isProcessing });
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否处于用户输入回合：", { isUserTurn, canPlayerSpeakNow });
-    WebDebugLogUtil.log("[orchestrateSession] [checker] 是否处于停摆中，没有预编排、没有请求、也不是用户回合：", { isStalled });
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 是否在请求编排中：", { isProcessing });
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 是否处于用户输入回合：", { isUserTurn, canPlayerSpeakNow });
+    WebDebugLogUtil.log("[orchestrateSessionChecker] 是否处于停摆中，没有预编排、没有请求、也不是用户回合：", { isStalled });
 
     // 状态发生变化时打印
     const curPrefetchKey = lastPrefetchSnapshot
@@ -1244,7 +1258,7 @@ function createToonflowStore() {
       || orchestrationCheckerLastState.isStalled !== isStalled
       || lastPrefetchKey !== curPrefetchKey
     ) {
-      WebDebugLogUtil.log("[orchestrateSession] [checker] 状态变化：", {
+      WebDebugLogUtil.log("[orchestrateSessionChecker] 状态变化：", {
         from: orchestrationCheckerLastState,
         to: {
           isUserTurn,
@@ -1264,7 +1278,7 @@ function createToonflowStore() {
 
     // 停摆自动恢复
     if (isStalled) {
-      WebDebugLogUtil.log("[orchestrateSession] [checker] ⚠️ 检测到停摆，立即恢复编排");
+      WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，立即恢复编排");
       void scheduleContinueSessionNarrative();
     }
   }
@@ -1710,6 +1724,13 @@ function createToonflowStore() {
   function scheduleSessionNarrativeIfSystemTurn() {
     if (!state.currentSessionId || state.sessionViewMode === "playback") return;
     if (state.runtimeProcessingPending || state.sessionStartupPriming) return;
+    // ★ 会话已失败或章节已完结（除非已进入自由模式），不再主动请求编排
+    const sessionStatus = state.sessionDetail?.status || "";
+    const isFreeMode = state.sessionFreeMode;
+    if (sessionStatus === "failed" || (sessionStatus === "chapter_completed" && !isFreeMode)) {
+      WebDebugLogUtil.log("[orchestrateSession] scheduleSessionNarrativeIfSystemTurn 会话已失败/完结，不编排", { sessionStatus, isFreeMode });
+      return;
+    }
     const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
     const hasStreamingMessage = conversationMessages().some((item) => runtimeMessageStatus(item) === "streaming");
     if (!canPlayerSpeakNow && !hasStreamingMessage) {
@@ -2548,6 +2569,12 @@ function createToonflowStore() {
     const nextWorld = result.world || existingDetail?.world || null;
     const nextEndDialog = String(result.endDialog || "").trim() || null;
     const nextEndDialogDetail = String(result.endDialogDetail || "").trim();
+    WebDebugLogUtil.log("[sessionEndDialog] storyInfo返回", {
+      sessionStatus: String(result.status || "").trim(),
+      nextEndDialog,
+      nextEndDialogDetail,
+      acknowledged: state.sessionFailedAcknowledged,
+    });
     state.sessionDetail = {
       ...(existingDetail || {}),
       sessionId: existingDetail?.sessionId || state.currentSessionId,
@@ -2576,8 +2603,13 @@ function createToonflowStore() {
       state.miniGameAudioProxyMinSec = miniGameAudioProxyMinSec;
       WebDebugLogUtil.log("[aiGame][miniGame] 更新语音等待配置", { miniGameAudioProxyMinSec });
     }
-    state.sessionEndDialog = nextEndDialog;
-    state.sessionEndDialogDetail = nextEndDialogDetail;
+    state.sessionEndDialog = (!state.sessionFailedAcknowledged) ? nextEndDialog : state.sessionEndDialog;
+    state.sessionEndDialogDetail = (!state.sessionFailedAcknowledged) ? nextEndDialogDetail : state.sessionEndDialogDetail;
+    WebDebugLogUtil.log("[sessionEndDialog] state已更新", {
+      sessionEndDialog: state.sessionEndDialog,
+      sessionEndDialogDetail: state.sessionEndDialogDetail,
+      acknowledged: state.sessionFailedAcknowledged,
+    });
     if (nextChapter) {
       const chapterIndex = state.chapters.findIndex((item) => Number(item.id || 0) === Number(nextChapter.id || 0));
       if (chapterIndex >= 0) {
@@ -6123,6 +6155,8 @@ function createToonflowStore() {
     state.sessionOpenError = "";
     state.sessionEndDialog = null;
     state.sessionEndDialogDetail = "";
+    state.sessionFailedAcknowledged = false;
+    state.sessionFreeMode = false;
     state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆与角色参数...";
     state.sessionRuntimeStage = "";
     state.sessionDetail = null;

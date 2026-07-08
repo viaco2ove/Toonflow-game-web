@@ -223,6 +223,7 @@ export const LOG_TAG_GROUPS: LogTagGroup[] = [
       "[ScenePlay] waitForMessageReveal about to call",
     ],
   },
+  // 编排相关："[orchestrateSession]","[prefetchOrchestration]","[resolveSessionOrchestration]","[voice时序]","[orchestrateSessionChecker]"
   {
     prefix: "[orchestrateSession]",
     description: "会话编排：promise 复用、结果解析、预取。",
