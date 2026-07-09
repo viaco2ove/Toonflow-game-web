@@ -1108,7 +1108,7 @@ function createToonflowStore() {
     // 小游戏模式最小语音等待时间（秒），从后端 storyInfo 获取，默认3秒
     miniGameAudioProxyMinSec: 3 as number,
     // 正式会话"继续编排"按钮显示控制：
-    // - sessionLastOrchestrationExceptionlDetectedAt: 最后一次检测到停摆的时间戳
+    // - sessionLastOrchestrationExceptionlDetectedAt: 最后一次检测到编排异常的时间戳
     // - sessionContinueNarrativeClickedAt: 用户点击"继续编排"按钮的时间戳
     // - sessionOrchestrationException: 编排异常标志（检测到重试消息时设为 true）
     // 按钮显示条件：(isStalled && sessionContinueNarrativeClickedAt < sessionLastOrchestrationExceptionlDetectedAt) || sessionOrchestrationException
