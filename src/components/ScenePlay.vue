@@ -1049,6 +1049,11 @@ const runtimeTurnState = computed(() => asMiniRecord(runtimeState.value.turnStat
 // 正式会话优先认 store 里的 awaitUser 本地兜底态，
 // 避免 orchestration 已经交还用户输入，但 storyInfo 旧 turnState 还没追上时短暂锁住输入框。
 const canPlayerSpeak = computed(() => store.sessionCanPlayerSpeak());
+// "继续编排"按钮显示条件：检测到停摆 或 编排异常 且 用户尚未点击过（或点击时间早于停摆检测时间）
+const shouldShowContinueNarrative = computed(() => {
+  const { sessionLastStallDetectedAt, sessionContinueNarrativeClickedAt, sessionOrchestrationException } = store.state;
+  return (sessionLastStallDetectedAt > 0 && sessionContinueNarrativeClickedAt < sessionLastStallDetectedAt) || sessionOrchestrationException;
+});
 const playSessionStatus = computed(() => scalarText(session.value?.status));
 const expectedSpeaker = computed(() => scalarText(runtimeTurnState.value.expectedRole) || "当前角色");
 const activeMiniGame = computed(() => {
@@ -3201,6 +3206,9 @@ async function onPlayerSkip(): Promise<void> {
 async function onContinueNarrative(): Promise<void> {
   if (store.state.sendPending || store.state.runtimeProcessingPending) return;
   try {
+    // 点击时更新时间戳和清除异常标志，用于隐藏按钮
+    store.state.sessionContinueNarrativeClickedAt = Date.now();
+    store.state.sessionOrchestrationException = false;
     await store.continueSessionNarrative();
   } catch (err) {
     store.state.notice = `继续编排失败:${(err as Error)?.message || err}`;
@@ -4015,7 +4023,7 @@ onBeforeUnmount(() => {
                 跳过
               </button>
               <button
-                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+                v-if="shouldShowContinueNarrative"
                 type="button"
                 class="continue-narrative-btn"
                 :disabled="store.state.sendPending || store.state.runtimeProcessingPending"
