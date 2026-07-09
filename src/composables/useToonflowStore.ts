@@ -1110,9 +1110,11 @@ function createToonflowStore() {
     // 正式会话"继续编排"按钮显示控制：
     // - sessionLastStallDetectedAt: 最后一次检测到停摆的时间戳
     // - sessionContinueNarrativeClickedAt: 用户点击"继续编排"按钮的时间戳
-    // 按钮显示条件：isStalled && sessionContinueNarrativeClickedAt < sessionLastStallDetectedAt
+    // - sessionOrchestrationException: 编排异常标志（检测到重试消息时设为 true）
+    // 按钮显示条件：(isStalled && sessionContinueNarrativeClickedAt < sessionLastStallDetectedAt) || sessionOrchestrationException
     sessionLastStallDetectedAt: 0 as number,
     sessionContinueNarrativeClickedAt: 0 as number,
+    sessionOrchestrationException: false as boolean,
   });
   let runtimeRetryTask: RuntimeRetryTask | null = null;
   let runtimeRetrySeed = 0;
@@ -1213,8 +1215,17 @@ function createToonflowStore() {
       && latestStatus !== "revealing"
       && !revealPending;
     // ★ 只在"有未消费的预编排"时才自动恢复，其他情况让用户手动点击"继续编排"
-    // isStalled 只在"该消费但没消费"时为 true
-    const isStalled = shouldHaveConsumedButNot;
+    // isStalled = 有预编排 + 已解析 + 未消费 + 消息就绪 + 非用户回合
+    const isStalled =
+      !!pendingPrefetch
+      && !!lastPrefetchSnapshot
+      && !lastPrefetchSnapshot.consumed
+      && isMessageReadyForConsumption
+      && !isUserTurn;
+
+    const isOrchestrationException =
+      !!latest
+      && isRuntimeRetryMessage(latest);
 
     // ★ 当预编排已被清空但快照还在，标记为已消费
     if (!pendingPrefetch && lastPrefetchSnapshot && !lastPrefetchSnapshot.consumed) {
@@ -1274,12 +1285,16 @@ function createToonflowStore() {
       prefetchConsumed: lastPrefetchSnapshot?.consumed || false,
     };
 
-    // 停摆自动恢复
+    // 停摆.需要消费预编排,立即消费编排
     if (isStalled) {
-      // 检测到停摆时更新时间戳，用于控制"继续编排"按钮的显示
-      state.sessionLastStallDetectedAt = Date.now();
-      WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，立即恢复编排");
+      WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，需要消费预编排，立即消费编排");
       void scheduleContinueSessionNarrative();
+    }
+    // 编排异常（重试消息）时也显示"继续编排"按钮
+    if (isOrchestrationException) {
+      state.sessionLastStallDetectedAt = Date.now();
+      state.sessionOrchestrationException = true;
+      WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，检测到编排异常（重试消息），包括用户不可输入和且无编排，显示继续编排按钮");
     }
   }
 
