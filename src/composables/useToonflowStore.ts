@@ -1107,6 +1107,12 @@ function createToonflowStore() {
     miniGameVoiceWaitEnd: 0 as number,
     // 小游戏模式最小语音等待时间（秒），从后端 storyInfo 获取，默认3秒
     miniGameAudioProxyMinSec: 3 as number,
+    // 正式会话"继续编排"按钮显示控制：
+    // - sessionLastStallDetectedAt: 最后一次检测到停摆的时间戳
+    // - sessionContinueNarrativeClickedAt: 用户点击"继续编排"按钮的时间戳
+    // 按钮显示条件：isStalled && sessionContinueNarrativeClickedAt < sessionLastStallDetectedAt
+    sessionLastStallDetectedAt: 0 as number,
+    sessionContinueNarrativeClickedAt: 0 as number,
   });
   let runtimeRetryTask: RuntimeRetryTask | null = null;
   let runtimeRetrySeed = 0;
@@ -1270,6 +1276,8 @@ function createToonflowStore() {
 
     // 停摆自动恢复
     if (isStalled) {
+      // 检测到停摆时更新时间戳，用于控制"继续编排"按钮的显示
+      state.sessionLastStallDetectedAt = Date.now();
       WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，立即恢复编排");
       void scheduleContinueSessionNarrative();
     }
