@@ -3197,6 +3197,16 @@ async function onPlayerSkip(): Promise<void> {
   }
 }
 
+// 手动继续编排：当没有预编排时，用户可以手动点击"继续编排"按钮触发编排
+async function onContinueNarrative(): Promise<void> {
+  if (store.state.sendPending || store.state.runtimeProcessingPending) return;
+  try {
+    await store.continueSessionNarrative();
+  } catch (err) {
+    store.state.notice = `继续编排失败:${(err as Error)?.message || err}`;
+  }
+}
+
 function stopPlaybackSequence() {
   playbackPlaying.value = false;
   playbackRunId += 1;
@@ -4003,6 +4013,16 @@ onBeforeUnmount(() => {
                 title="跳过发言"
               >
                 跳过
+              </button>
+              <button
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+                type="button"
+                class="continue-narrative-btn"
+                :disabled="store.state.sendPending || store.state.runtimeProcessingPending"
+                @click="onContinueNarrative"
+                title="继续编排"
+              >
+                继续编排
               </button>
             </div>
           </div>
