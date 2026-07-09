@@ -1119,14 +1119,14 @@ function createToonflowStore() {
   let continueDebugNarrativePromise: Promise<boolean> | null = null;
   let pendingSessionOrchestrationPrefetch: PendingSessionOrchestrationPrefetch | null = null;
   /**
-   * 编排检测器：每 2 秒检查一次编排状态，发现停摆时自动恢复。
+   * 编排检测器：每 n 秒检查一次编排状态，发现停摆时自动恢复。
    *
    * 检测项：
    * - 最新编排结果（pendingPlan / pendingNarrativePlan）
    * - 编排是否被消费（pendingPlan 已应用）
    * - 是否在请求编排中（runtimeProcessingPending）
    * - 是否处于用户输入回合（canPlayerSpeak）
-   * - 是否处于停摆中（无请求、无编排、无用户回合）
+   * - 是否处于停摆中（无请求、无编排、无用户回合） 不包括接口报错且已经在界面提示了 重试。
    *
    * 停摆恢复：
    * - 检测到停摆时，立即触发 scheduleContinueSessionNarrative()
@@ -1154,7 +1154,7 @@ function createToonflowStore() {
     if (orchestrationCheckerTimer !== null) return;
     orchestrationCheckerTimer = setInterval(() => {
       runOrchestrationChecker();
-    }, 2000);
+    }, 5000);
     WebDebugLogUtil.log("[orchestrateSessionChecker] 编排检测器已启动");
   }
 
@@ -1206,17 +1206,9 @@ function createToonflowStore() {
       && latestStatus !== "generated"
       && latestStatus !== "revealing"
       && !revealPending;
-    // 综合判定：是否"该消费但没消费"（无论预编排还在飞或已被清空都可识别）
-    const shouldHaveConsumedButNot =
-      !isUserTurn
-      && !isProcessing
-      && !!lastPrefetchSnapshot
-      && !lastPrefetchSnapshot.consumed
-      && isMessageReadyForConsumption;
-    // 旧逻辑：完全无预编排、无请求、非用户回合
-    const isStalledNoPrefetch =
-      !isUserTurn && !pendingPrefetch && !isProcessing;
-    const isStalled = shouldHaveConsumedButNot || isStalledNoPrefetch;
+    // ★ 只在"有未消费的预编排"时才自动恢复，其他情况让用户手动点击"继续编排"
+    // isStalled 只在"该消费但没消费"时为 true
+    const isStalled = shouldHaveConsumedButNot;
 
     // ★ 当预编排已被清空但快照还在，标记为已消费
     if (!pendingPrefetch && lastPrefetchSnapshot && !lastPrefetchSnapshot.consumed) {

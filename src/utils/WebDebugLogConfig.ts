@@ -46,7 +46,7 @@ export const webDebugLogConfig = {
   /** 白名单前缀（whitelist 模式下，仅 tag 命中此处前缀才打印） */
   debugLogWhitelist: [
     /*exsample:WEBP_LOG_TAG_PREFIX,"/\\[webp:.*\\]/"*/
-    "[storyInfo]","[sessionEndDialog]"
+    "[storyInfo]","[sessionEndDialog]","[orchestrateSessionChecker]"
   ] as string[],
 };
 
