@@ -1170,15 +1170,17 @@ function createToonflowStore() {
     if (!state.currentSessionId) return;
     if (state.runtimeProcessingPending) return; // 编排进行中，跳过
 
-    // ★ 检测到会话已失败或章节已完结（除非已进入自由模式），决定是否继续编排
+    // ★ 检测到会话已失败，停止轮询
     const sessionStatus = state.sessionDetail?.status || "";
     const isFreeMode = state.sessionFreeMode;
     if (sessionStatus === "failed") {
       WebDebugLogUtil.log("[orchestrateSessionChecker] 会话已失败，停止轮询", { sessionStatus });
       return;
     }
+    // ★ 章节已完结但未进入自由模式：允许调用编排，让后端有机会返回 init_chapter 命令进行切章
     if (sessionStatus === "chapter_completed" && !isFreeMode) {
-      WebDebugLogUtil.log("[orchestrateSessionChecker] 章节已完结但未进入自由模式，停止轮询", { sessionStatus, isFreeMode });
+      WebDebugLogUtil.log("[orchestrateSessionChecker] 章节已完结但未进入自由模式，仍尝试编排以触发切章", { sessionStatus, isFreeMode });
+      void scheduleContinueSessionNarrative();
       return;
     }
 
@@ -1724,11 +1726,19 @@ function createToonflowStore() {
   function scheduleSessionNarrativeIfSystemTurn() {
     if (!state.currentSessionId || state.sessionViewMode === "playback") return;
     if (state.runtimeProcessingPending || state.sessionStartupPriming) return;
-    // ★ 会话已失败或章节已完结（除非已进入自由模式），不再主动请求编排
+    // ★ 会话已失败，不再主动请求编排
     const sessionStatus = state.sessionDetail?.status || "";
+    if (sessionStatus === "failed") {
+      WebDebugLogUtil.log("[orchestrateSession] scheduleSessionNarrativeIfSystemTurn 会话已失败，不编排", { sessionStatus });
+      return;
+    }
+    // ★ 章节已完结（除非已进入自由模式）：
+    // - 自由模式：继续编排
+    // - 非自由模式：仍需调用编排，让后端有机会返回 init_chapter 命令进行切章
     const isFreeMode = state.sessionFreeMode;
-    if (sessionStatus === "failed" || (sessionStatus === "chapter_completed" && !isFreeMode)) {
-      WebDebugLogUtil.log("[orchestrateSession] scheduleSessionNarrativeIfSystemTurn 会话已失败/完结，不编排", { sessionStatus, isFreeMode });
+    if (sessionStatus === "chapter_completed" && !isFreeMode) {
+      WebDebugLogUtil.log("[orchestrateSession] scheduleSessionNarrativeIfSystemTurn 章节已完结但未进入自由模式，仍调用编排尝试切章", { sessionStatus, isFreeMode });
+      void scheduleContinueSessionNarrative();
       return;
     }
     const canPlayerSpeakNow = runtimeTurnStateRecord()["canPlayerSpeak"] !== false;
