@@ -1108,10 +1108,11 @@ function createToonflowStore() {
     // 小游戏模式最小语音等待时间（秒），从后端 storyInfo 获取，默认3秒
     miniGameAudioProxyMinSec: 3 as number,
     // 正式会话"继续编排"按钮显示控制：
-    // - sessionLastStallDetectedAt: 最后一次检测到停摆的时间戳
+    // - sessionLastOrchestrationExceptionlDetectedAt: 最后一次检测到停摆的时间戳
     // - sessionContinueNarrativeClickedAt: 用户点击"继续编排"按钮的时间戳
     // - sessionOrchestrationException: 编排异常标志（检测到重试消息时设为 true）
-    // 按钮显示条件：(isStalled && sessionContinueNarrativeClickedAt < sessionLastStallDetectedAt) || sessionOrchestrationException
+    // 按钮显示条件：(isStalled && sessionContinueNarrativeClickedAt < sessionLastOrchestrationExceptionlDetectedAt) || sessionOrchestrationException
+    sessionLastOrchestrationExceptionlDetectedAt: 0 as number,
     sessionLastStallDetectedAt: 0 as number,
     sessionContinueNarrativeClickedAt: 0 as number,
     sessionOrchestrationException: false as boolean,
@@ -1287,12 +1288,13 @@ function createToonflowStore() {
 
     // 停摆.需要消费预编排,立即消费编排
     if (isStalled) {
+      state.sessionLastStallDetectedAt = Date.now();
       WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，需要消费预编排，立即消费编排");
       void scheduleContinueSessionNarrative();
     }
     // 编排异常（重试消息）时也显示"继续编排"按钮
     if (isOrchestrationException) {
-      state.sessionLastStallDetectedAt = Date.now();
+      state.sessionLastOrchestrationExceptionlDetectedAt = Date.now();
       state.sessionOrchestrationException = true;
       WebDebugLogUtil.log("[orchestrateSessionChecker] ⚠️ 检测到停摆，检测到编排异常（重试消息），包括用户不可输入和且无编排，显示继续编排按钮");
     }
