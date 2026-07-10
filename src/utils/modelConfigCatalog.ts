@@ -137,6 +137,7 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     label: "MiniMax",
     website: "https://platform.minimaxi.com",
     defaults: {
+      text: "https://api.minimaxi.com/v1",
       voice: "https://api.minimaxi.com",
       voice_design: "https://api.minimaxi.com",
       voice_clone: "https://api.minimaxi.com",

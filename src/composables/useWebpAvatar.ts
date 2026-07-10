@@ -281,12 +281,18 @@ export function useWebpAvatar(
   }
 
   /**
-   * 重置播放状态（停定时器、停播放，清 error，保留 firstFrameDataUrl 和 isAnimated）
+   * 重置播放状态（停定时器、停播放，清 error，同时清除 firstFrameDataUrl 和 isAnimated）
+   *
+   * 重要：切换角色时必须清除，否则 displayedPath 会返回旧角色的第一帧 DataURL，
+   * 导致新角色显示的是上一个角色的定格画面。
    */
   function reset(): void {
     stopTimer();
     isPlaying.value = false;
     error.value = null;
+    // 切换角色时必须清除，否则新角色会显示旧角色的定格帧
+    firstFrameDataUrl.value = "";
+    isAnimated.value = false;
     WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "reset", { path: originalPath.value, hasFirstFrame: !!firstFrameDataUrl.value, isAnimated: isAnimated.value });
   }
 
@@ -352,24 +358,30 @@ export function useWebpAvatar(
       // 不发网络请求：让 Vue 模板的 <img :src> 自然加载
       // DOM img 加载完成后 registerImgEl 会自动提取第一帧
       if (autoPlay) {
-        isPlaying.value = true;
-        WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration: playDurationRef.value });
-        // 设置定时器（如果是限时播放）
-        if (playDurationRef.value > 0) {
-          stopTimer();
-          animationTimer = setTimeout(() => {
-            WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
-            pause();
-            onAnimationEnd?.();
-            // 循环播放
-            if (loopIntervalRef.value > 0) {
-              WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环等待", { path: originalPath.value, loopInterval: loopIntervalRef.value });
-              animationTimer = setTimeout(() => {
-                WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环触发再播", { path: originalPath.value });
-                play();
-              }, loopIntervalRef.value);
-            }
-          }, playDurationRef.value);
+        // PNG 文件没有动画，不需要启动播放定时器
+        if (isWebpUrl(newPath)) {
+          isPlaying.value = true;
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "开始播放（等待 DOM img 加载后提取第一帧）", { path: originalPath.value, playDuration: playDurationRef.value });
+          // 设置定时器（如果是限时播放）
+          if (playDurationRef.value > 0) {
+            stopTimer();
+            animationTimer = setTimeout(() => {
+              WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "定时器到点，触发 onAnimationEnd", { path: originalPath.value });
+              pause();
+              onAnimationEnd?.();
+              // 循环播放
+              if (loopIntervalRef.value > 0) {
+                WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环等待", { path: originalPath.value, loopInterval: loopIntervalRef.value });
+                animationTimer = setTimeout(() => {
+                  WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "循环触发再播", { path: originalPath.value });
+                  play();
+                }, loopIntervalRef.value);
+              }
+            }, playDurationRef.value);
+          }
+        } else {
+          // PNG 文件：不需要动画处理
+          WebDebugLogUtil.log(WEBP_LOG_TAGS.play, "非 WebP 文件，跳过动画处理", { path: originalPath.value });
         }
       }
     },
