@@ -135,7 +135,7 @@ function defaultSlotModelType(): string {
 
 function defaultSlotModelName(manufacturer = defaultSlotManufacturer(), modelType = defaultSlotModelType()): string {
   if (props.configType === "text" && manufacturer === "deepseek") {
-    return "deepseek-chat";
+    return "deepseek-v4-flash";
   }
   if (props.configType === "text" && manufacturer === "autodl_chat") {
     return "DeepSeek-R1-0528";

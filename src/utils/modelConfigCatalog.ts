@@ -268,7 +268,7 @@ export function defaultModelNameFor(manufacturer: string, type: ModelConfigKind,
     return "DeepSeek-R1-0528";
   }
   if (type === "text" && manufacturer === "deepseek") {
-    return "deepseek-chat";
+    return "deepseek-v4-flash";
   }
   if (type === "text" && manufacturer === "lmstudio") {
     return "qwen3.5-9b";
