@@ -321,7 +321,7 @@ export interface OrchestratorRuntimeMeta {
   modelKey?: string;
   manufacturer?: string;
   model?: string;
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "";
   payloadMode?: "compact" | "advanced";
   payloadModeSource?: "explicit" | "inferred";
 }
@@ -538,7 +538,7 @@ export interface ModelConfigItem {
   outputPricePer1M?: number;
   cacheReadPricePer1M?: number;
   currency?: string;
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "";
   remark?: string;
   createTime?: number;
 }
@@ -555,7 +555,7 @@ export interface ModelConfigPayload {
   outputPricePer1M?: number;
   cacheReadPricePer1M?: number;
   currency?: string;
-  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
   remark?: string;
 }
 

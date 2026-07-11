@@ -267,7 +267,7 @@ function normalizeOrchestratorRuntime(input: unknown): OrchestratorRuntimeMeta |
     modelKey: scalarText(raw.modelKey),
     manufacturer: scalarText(raw.manufacturer),
     model: scalarText(raw.model),
-    reasoningEffort: reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
+    reasoningEffort: reasoningEffort === "none" || reasoningEffort === "minimal" || reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high"
       ? reasoningEffort
       : "",
     payloadMode: payloadMode === "advanced" ? "advanced" : "compact",

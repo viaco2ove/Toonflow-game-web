@@ -220,6 +220,7 @@ let qwen060PollTimer: ReturnType<typeof setInterval> | null = null;
 let mossTtsNanoPollTimer: ReturnType<typeof setInterval> | null = null;
 const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const reasoningEffortOptions = [
+  { value: "none", label: "none" },
   { value: "minimal", label: "minimal" },
   { value: "low", label: "low" },
   { value: "medium", label: "medium" },
@@ -235,7 +236,7 @@ const form = reactive({
   outputPricePer1M: 0,
   cacheReadPricePer1M: 0,
   currency: "CNY",
-  reasoningEffort: "minimal" as "minimal" | "low" | "medium" | "high",
+  reasoningEffort: "minimal" as "none" | "minimal" | "low" | "medium" | "high",
   remark: "",
 });
 
@@ -845,7 +846,7 @@ function openEdit(row: ModelConfigItem) {
   form.outputPricePer1M = normalizePriceInput(row.outputPricePer1M);
   form.cacheReadPricePer1M = normalizePriceInput(row.cacheReadPricePer1M);
   form.currency = String(row.currency || "CNY").trim().toUpperCase() || "CNY";
-  form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high";
+  form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "none" | "minimal" | "low" | "medium" | "high";
   form.remark = String(row.remark || "").trim();
   localAvatarMattingStatus.value = null;
   syncModelPreset(form.model);

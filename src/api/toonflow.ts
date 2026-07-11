@@ -733,7 +733,7 @@ export class ToonflowApi {
     return this.post<{ prompt: string; text: string }>("/assets/polishPrompt", { prompt });
   }
 
-  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string; reasoningEffort?: "minimal" | "low" | "medium" | "high" }) {
+  testTextModel(payload: { modelName: string; apiKey: string; baseURL?: string; manufacturer: string; reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" }) {
     return this.post<string>("/other/testAI", payload);
   }
 

@@ -5088,7 +5088,7 @@ function createToonflowStore() {
         apiKey: String(config.apiKey || "").trim(),
         baseURL: String(config.baseUrl || "").trim() || undefined,
         manufacturer: String(config.manufacturer || "").trim(),
-        reasoningEffort: (String(config.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "minimal" | "low" | "medium" | "high",
+        reasoningEffort: (String(config.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "none" | "minimal" | "low" | "medium" | "high",
       });
       return {
         kind: "text",
