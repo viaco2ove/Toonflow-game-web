@@ -700,6 +700,23 @@ async function downloadPreviewAudio() {
     return;
   }
   previewStatus.value = "正在准备下载...";
+
+  // 优先用原生下载（解决 Android WebView Blob 下载不生效的问题）
+  const android = (window as any).Android;
+  if (android && android.downloadFile) {
+    try {
+      const filename = downloadAudioName();
+      const mimeType = url.includes(".mp3") ? "audio/mpeg" : "audio/wav";
+      android.downloadFile(url, filename, mimeType);
+      previewStatus.value = "下载已开始";
+      return;
+    } catch (err) {
+      previewStatus.value = `原生下载失败: ${(err as Error).message}`;
+      return;
+    }
+  }
+
+  // 回退到 Blob 下载
   try {
     const response = await fetch(url);
     if (!response.ok) {

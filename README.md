@@ -46,3 +46,8 @@ yarn build
 - `/game/getSession`
 - `/game/getMessage`
 - `/game/addMessage`
+
+## warn 弹框
+body.android-device .floating-notice {                                                                                                                                  
+top: 10px;                                                                                                                                                     
+}     

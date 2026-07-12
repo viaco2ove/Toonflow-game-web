@@ -6104,6 +6104,10 @@ body.android-device {
   height: 100dvh;
 }
 
+body.android-device .floating-notice {
+  top: 10px;
+}
+
 body.android-device {
   padding-top: 0;
   overflow: hidden;
