@@ -171,7 +171,7 @@ a {
 
 .floating-notice {
   position: fixed;
-  top: 18px;
+  top: 33px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 160;
@@ -6105,7 +6105,7 @@ body.android-device {
 }
 
 body.android-device .floating-notice {
-  top: 10px;
+  top: 40px;
 }
 
 body.android-device {
