@@ -49,6 +49,7 @@ const voiceDialogNpcIndex = ref<number | null>(null);
 const showDeleteNpcConfirm = ref(false);
 const deletingChapter = ref<ChapterTabItem | null>(null);
 const publishPending = ref(false);
+const chapterPending = ref(false);
 const importRoleWorldName = ref("");
 const importRoleName = ref("");
 const importRolePage = ref(1);
@@ -797,8 +798,14 @@ function cycleOpeningRole() {
 }
 
 async function goNextStep() {
-  await store.saveStoryEditor(null, false, null);
-  store.state.createStep = 1;
+  if (chapterPending.value) return;
+  chapterPending.value = true;
+  try {
+    await store.saveStoryEditor(null, false, null);
+    store.state.createStep = 1;
+  } finally {
+    chapterPending.value = false;
+  }
 }
 
 async function backToStoryStep() {
@@ -869,7 +876,13 @@ async function startDebug() {
 }
 
 async function selectChapter(targetChapterId: number | null) {
-  await store.saveCurrentChapterAndSelect(targetChapterId);
+  if (chapterPending.value) return;
+  chapterPending.value = true;
+  try {
+    await store.saveCurrentChapterAndSelect(targetChapterId);
+  } finally {
+    chapterPending.value = false;
+  }
 }
 
 /**
@@ -1013,7 +1026,7 @@ function cancelRemoveCurrentNpc() {
     <div v-else class="create-step-page stack-gap">
       <div class="create-page-header">
         <h2 class="create-page-title">故事设定</h2>
-        <button class="create-link-btn" type="button" @click="goNextStep">下一步</button>
+        <button class="create-link-btn" type="button" :disabled="chapterPending" @click="goNextStep">{{ chapterPending ? "保存中..." : "下一步" }}</button>
       </div>
 
       <div v-if="canUndoPersist" class="create-undo-row">
@@ -1310,9 +1323,10 @@ function cancelRemoveCurrentNpc() {
           <button
             class="create-chapter-select-btn"
             type="button"
+            :disabled="chapterPending"
             @click="chapter.id !== null ? selectChapter(chapter.id) : undefined"
           >
-            {{ chapter.label }}
+            {{ chapterPending ? "切换中..." : chapter.label }}
           </button>
           <button
             v-if="chapter.id !== null"
@@ -1356,7 +1370,7 @@ function cancelRemoveCurrentNpc() {
         </div>
       </section>
 
-      <button class="create-primary-btn" type="button" @click="goNextStep">下一步</button>
+      <button class="create-primary-btn" type="button" :disabled="chapterPending" @click="goNextStep">{{ chapterPending ? "保存中..." : "下一步" }}</button>
     </div>
 
     <input ref="storyCoverInput" type="file" accept="image/*" class="file-input-hidden" @change="onCoverFile" />
