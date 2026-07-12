@@ -5437,6 +5437,8 @@ function createToonflowStore() {
       await reloadAll();
       await ensureSettingsPanelData(true);
       state.activeTab = "my";
+    } catch (err: any) {
+      state.notice = `注册失败: ${err?.message || err}`;
     } finally {
       state.loading = false;
     }
