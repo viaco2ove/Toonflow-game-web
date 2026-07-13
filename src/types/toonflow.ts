@@ -539,6 +539,8 @@ export interface ModelConfigItem {
   cacheReadPricePer1M?: number;
   currency?: string;
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "";
+  temperature?: number;
+  topP?: number;
   remark?: string;
   createTime?: number;
 }
@@ -556,6 +558,8 @@ export interface ModelConfigPayload {
   cacheReadPricePer1M?: number;
   currency?: string;
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  temperature?: number;
+  topP?: number;
   remark?: string;
 }
 

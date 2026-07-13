@@ -237,6 +237,8 @@ const form = reactive({
   cacheReadPricePer1M: 0,
   currency: "CNY",
   reasoningEffort: "minimal" as "none" | "minimal" | "low" | "medium" | "high",
+  temperature: 0.3,
+  topP: 0.5,
   remark: "",
 });
 
@@ -818,6 +820,8 @@ function openCreate() {
   form.cacheReadPricePer1M = 0;
   form.currency = "CNY";
   form.reasoningEffort = "minimal";
+  form.temperature = 0.3;
+  form.topP = 0.5;
   form.remark = "";
   localAvatarMattingStatus.value = null;
   syncModelPreset(form.model);
@@ -847,6 +851,8 @@ function openEdit(row: ModelConfigItem) {
   form.cacheReadPricePer1M = normalizePriceInput(row.cacheReadPricePer1M);
   form.currency = String(row.currency || "CNY").trim().toUpperCase() || "CNY";
   form.reasoningEffort = (String(row.reasoningEffort || "minimal").trim().toLowerCase() || "minimal") as "none" | "minimal" | "low" | "medium" | "high";
+  form.temperature = Number.isFinite(Number(row.temperature)) ? Number(row.temperature) : 0.3;
+  form.topP = Number.isFinite(Number(row.topP)) ? Number(row.topP) : 0.5;
   form.remark = String(row.remark || "").trim();
   localAvatarMattingStatus.value = null;
   syncModelPreset(form.model);
@@ -883,6 +889,8 @@ async function submitEditor() {
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
         reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
+        temperature: shouldShowTokenPricing.value ? form.temperature : undefined,
+        topP: shouldShowTokenPricing.value ? form.topP : undefined,
         remark: form.remark.trim() || undefined,
       });
     } else {
@@ -905,6 +913,8 @@ async function submitEditor() {
         cacheReadPricePer1M: shouldShowTokenPricing.value ? normalizePriceInput(form.cacheReadPricePer1M) : 0,
         currency: shouldShowTokenPricing.value ? (String(form.currency || "CNY").trim().toUpperCase() || "CNY") : "CNY",
         reasoningEffort: shouldShowTokenPricing.value ? form.reasoningEffort : undefined,
+        temperature: shouldShowTokenPricing.value ? form.temperature : undefined,
+        topP: shouldShowTokenPricing.value ? form.topP : undefined,
         remark: form.remark.trim() || undefined,
       });
     }
@@ -1339,6 +1349,16 @@ async function confirmBinding() {
               <option v-for="item in reasoningEffortOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
             </select>
             <div class="settings-field-hint">默认 minimal。仅文本模型生效，用于支持 reasoning_effort 的兼容接口。</div>
+          </div>
+          <div class="field">
+            <label>温度 (temperature)</label>
+            <input v-model.number="form.temperature" class="input" type="number" step="0.01" min="0" max="2" />
+            <div class="settings-field-hint">默认 0.3。控制输出随机性，越高越随机。</div>
+          </div>
+          <div class="field">
+            <label>采样率 (top_p)</label>
+            <input v-model.number="form.topP" class="input" type="number" step="0.01" min="0" max="1" />
+            <div class="settings-field-hint">默认 0.5。核采样概率阈值。</div>
           </div>
         </template>
         <div class="field">
