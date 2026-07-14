@@ -3717,6 +3717,7 @@ async function pickTip(option: string) {
     return;
   }
   store.state.sendText = option;
+  playMode.value = "live";
   await submit();
 }
 
