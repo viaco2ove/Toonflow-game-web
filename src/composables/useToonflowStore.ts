@@ -7685,6 +7685,28 @@ function createToonflowStore() {
   }
 
   /**
+   * 方向2：AI 智能对齐。调 /game/alignSession，返回对齐结果。
+   * 成功后刷新会话列表（storyUpdated 状态会更新）。
+   */
+  async function alignSessionWithAi(sessionId: string): Promise<{
+    ok: boolean;
+    source: "ai" | "deterministic" | "noop";
+    message: string;
+  } | null> {
+    const sid = String(sessionId || "").trim();
+    if (!sid) return null;
+    try {
+      const res = await api.alignSession(sid);
+      // 对齐后刷新列表，清除 storyUpdated 标记
+      await requestSessionList(undefined).catch(() => state.sessions);
+      return { ok: Boolean(res?.ok), source: res?.source || "noop", message: res?.message || "" };
+    } catch (err) {
+      state.notice = `智能对齐失败：${err instanceof Error ? err.message : String(err)}`;
+      return null;
+    }
+  }
+
+  /**
    * 获取剧情/任务编排选项（每次点击 orchestrate-tio-fab 触发）
    * 返回 [{ role, motive }]，最多 3 条
    */
@@ -7945,6 +7967,7 @@ function createToonflowStore() {
     syncDebugChapter,
     sendMessage,
     fetchPlayTips,
+    alignSessionWithAi,
     fetchOrchestrateOptions,
     applyOrchestrateOption,
     deleteMessage,

@@ -37,6 +37,7 @@ import type {
   VoiceModelConfig,
   VoicePresetItem,
   WorldItem,
+  ProgressAlignReport,
 } from "../types/toonflow";
 import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
@@ -332,6 +333,16 @@ export class ToonflowApi {
       "/game/getPlayTips",
       { sessionId },
     );
+  }
+
+  /** 方向2：AI 智能对齐（phase 语义匹配 + 重生成 eventSummary） */
+  alignSession(sessionId: string) {
+    return this.post<{
+      ok: boolean;
+      report: ProgressAlignReport | null;
+      source: "ai" | "deterministic" | "noop";
+      message: string;
+    }>("/game/alignSession", { sessionId });
   }
 
   /**

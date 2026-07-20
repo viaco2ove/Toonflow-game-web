@@ -227,6 +227,7 @@ export interface SessionItem {
   worldName?: string;
   worldGlobalBackground?: string;
   worldCoverPath?: string;
+  worldIntro?: string;
   chapterId?: number | null;
   chapterTitle?: string;
   projectId?: number | null;
@@ -238,6 +239,19 @@ export interface SessionItem {
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
+  // 方向2：版本感知--故事已更新则前端弹框提示
+  worldPublishId?: number | null;
+  worldVersion?: number | null;
+  storyUpdated?: boolean;
+  alignReport?: ProgressAlignReport | null;
+}
+
+/** 方向2：确定性进度对齐报告（后端 progressAlign.ts 产出） */
+export interface ProgressAlignReport {
+  mapped: Array<{ from: string; to: string; reason: "exact" | "name" | "nearby" }>;
+  fallback: Array<{ from: string; to: string }>;
+  dropped: string[];
+  hasUnmatchedRename?: boolean;
 }
 
 export interface SessionDetail {
