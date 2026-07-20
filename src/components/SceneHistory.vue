@@ -192,13 +192,15 @@ async function smartAlign() {
           <p v-if="updateDialogSession?.alignReport?.hasUnmatchedRename" class="story-update-hint">
             检测到阶段改名无法精确匹配，可使用 AI 智能对齐尝试语义匹配。
           </p>
+          <p v-if="!updateDialogSession?.alignReport?.hasUnmatchedRename" class="story-update-hint">
+            可使用 AI 智能对齐尝试语义匹配。
+          </p>
         </div>
         <div class="story-update-actions">
           <button class="story-update-btn primary" type="button" :disabled="updateDialogBusy" @click="continueWithAlign">
-            {{ updateDialogBusy ? "处理中..." : "继续游玩" }}
+            {{ updateDialogBusy ? "处理中..." : "继续游玩（）" }}
           </button>
           <button
-            v-if="updateDialogSession?.alignReport?.hasUnmatchedRename"
             class="story-update-btn"
             type="button"
             :disabled="updateDialogBusy"
