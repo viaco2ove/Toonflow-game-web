@@ -198,7 +198,7 @@ async function smartAlign() {
         </div>
         <div class="story-update-actions">
           <button class="story-update-btn primary" type="button" :disabled="updateDialogBusy" @click="continueWithAlign">
-            {{ updateDialogBusy ? "处理中..." : "继续游玩（）" }}
+            {{ updateDialogBusy ? "处理中..." : "继续游玩（发言后自动更新）" }}
           </button>
           <button
             class="story-update-btn"
