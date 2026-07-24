@@ -4095,6 +4095,43 @@ textarea::-webkit-scrollbar-thumb {
   font-size: 12px;
 }
 
+.play-head__env {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.play-head__env-time,
+.play-head__env-weather {
+  padding: 2px 8px;
+  background: rgba(12, 21, 35, 0.4);
+  border: 1px solid rgba(214, 225, 240, 0.38);
+  border-radius: 10px;
+  color: rgba(247, 251, 255, 0.92);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.play-head__env-mode {
+  padding: 2px 8px;
+  background: rgba(12, 21, 35, 0.55);
+  color: #f8fbff;
+  border: 1px solid rgba(214, 225, 240, 0.38);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+}
+
+.play-head__env-mode:focus {
+  border-color: rgba(132, 175, 255, 0.85);
+}
+
 .play-head__actions {
   display: flex;
   gap: 8px;

@@ -259,6 +259,33 @@ export class ToonflowApi {
     });
   }
 
+  /** 轻量读 worldClock + 模式 */
+  getWorldClock(sessionId: string) {
+    return this.post<{
+      timeMode: "tick" | "narrative" | "realtime";
+      weatherMode: "slot" | "narrative" | "manual";
+      worldClock: { tick: number; timeOfDay: string; weather: string };
+      serverTime: number;
+      isFreeMode: boolean;
+    }>("/game/getWorldClock", { sessionId });
+  }
+
+  /** 更新模式 */
+  updateWorldClockMode(payload: {
+    sessionId: string;
+    timeMode?: "tick" | "narrative" | "realtime" | "manual";
+    weatherMode?: "slot" | "narrative" | "manual";
+    /** manual 模式下前端直接写 worldClock */
+    worldClock?: { tick: number; timeOfDay: string; weather: string };
+  }) {
+    return this.post<{
+      timeMode: "tick" | "narrative" | "realtime" | "manual";
+      weatherMode: "slot" | "narrative" | "manual";
+      worldClock: { tick: number; timeOfDay: string; weather: string };
+      serverTime: number;
+    }>("/game/updateWorldClockMode", payload);
+  }
+
   deleteSession(sessionId: string) {
     return this.post<boolean>("/game/deleteSession", {
       sessionId,

@@ -1003,6 +1003,9 @@ function createToonflowStore() {
     notice: "",
     activeTab: "home" as AppTab,
     loading: false,
+    timeWeatherMode: (storageGet("toonflow.timeWeatherMode", "tick") as "tick" | "narrative" | "realtime"),
+    timeOfDayLabel: "清晨",
+    weatherLabel: "晴",
     userName: storageGet("toonflow.userName", ""),
     userId: Number(storageGet("toonflow.userId", "0")) || 0,
     accountAvatarPath: storageGet("toonflow.accountAvatarPath", ""),
@@ -2210,6 +2213,18 @@ function createToonflowStore() {
     if (typeof patch.streaming === "boolean") next.streaming = patch.streaming;
     if (patch.status) next.status = patch.status;
     return next;
+  }
+
+  function setTimeWeatherMode(mode: "tick" | "narrative" | "realtime") {
+    state.timeWeatherMode = mode;
+    storageSet("toonflow.timeWeatherMode", mode);
+    WebDebugLogUtil.log("play-head:timeWeatherMode", mode);
+  }
+
+  /** 从后端 worldClock 同步到 store 显示字段（realtime 模式前端本地算） */
+  function syncWorldClockDisplay(payload: { timeOfDay: string; weather: string }) {
+    state.timeOfDayLabel = payload.timeOfDay;
+    state.weatherLabel = payload.weather;
   }
 
   function setRuntimeMessageStatus(messageId: number, status: RuntimeLineStatus) {
@@ -8040,6 +8055,8 @@ function createToonflowStore() {
     GAME_MODEL_SLOTS,
     STORY_ORCHESTRATOR_PAYLOAD_OPTIONS,
     STORY_PROMPT_CODES,
+    setTimeWeatherMode,
+    syncWorldClockDisplay,
   };
 
   return apiFacade;

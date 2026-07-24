@@ -1470,6 +1470,7 @@ function checkAndroidDevice() {
 }
 onMounted(() => {
   checkAndroidDevice();
+  startWorldClockPolling();
   // 监听原生语音识别事件
   if (isAndroidDevice.value) {
     window.addEventListener("speechstart", onNativeSpeechStart);
@@ -1492,6 +1493,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("permission-granted", onPermissionGranted);
     window.removeEventListener("permission-denied", onPermissionDenied);
   }
+  stopWorldClockPolling();
 });
 
 let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
@@ -3350,6 +3352,93 @@ function handleTopBackAction() {
   openHall();
 }
 
+/** play-head 时间/天气模式切换 */
+async function onTimeModeChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value as "tick" | "narrative" | "realtime" | "manual";
+  if (!value) return;
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  if (!sessionId) return;
+  // 先写本地 store 立即响应 UI
+  store.setTimeWeatherMode(value);
+  // 再同步后端
+  try {
+    const api = store.api as any;
+    if (api && typeof api.updateWorldClockMode === "function") {
+      const res = await api.updateWorldClockMode({ sessionId, timeMode: value });
+      const data = (res as any)?.data || res;
+      if (data?.worldClock) {
+        store.syncWorldClockDisplay({ timeOfDay: data.worldClock.timeOfDay, weather: data.worldClock.weather });
+      }
+    }
+  } catch (err) {
+    WebDebugLogUtil.log("play-head:timeWeatherMode:error", String(err));
+  }
+}
+
+/** manual 模式下用户手动选择 timeOfDay/weather 后落库 */
+async function onManualClockChange() {
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  if (!sessionId) return;
+  const timeOfDay = String(store.state.timeOfDayLabel || "").trim();
+  const weather = String(store.state.weatherLabel || "").trim();
+  if (!timeOfDay) return;
+  // 从当前 timeOfDay 反推 tick（取最接近的 slot）
+  const slots = ["清晨", "上午", "正午", "下午", "黄昏", "夜晚", "深夜", "午夜"];
+  const tick = slots.indexOf(timeOfDay);
+  try {
+    const api = store.api as any;
+    if (api?.updateWorldClockMode) {
+      await api.updateWorldClockMode({ sessionId, timeMode: "manual", worldClock: { tick, timeOfDay, weather: weather || "晴" } });
+    }
+  } catch (err) {
+    WebDebugLogUtil.log("play-head:manualClock:error", String(err));
+  }
+}
+
+/** 轮询 worldClock 同步时间/天气显示 */
+let worldClockTimer: number | null = null;
+function startWorldClockPolling() {
+  stopWorldClockPolling();
+  const tick = async () => {
+    const sessionId = String(store.state.currentSessionId || "").trim();
+    if (!sessionId) return;
+    const mode = store.state.timeWeatherMode;
+    if (mode === "realtime") {
+      // 现实同步：前端本地算，不调后端
+      const hour = new Date().getHours();
+      const slotMap: Array<[number, string]> = [[5, "凌晨"], [7, "清晨"], [11, "上午"], [14, "正午"], [17, "下午"], [19, "黄昏"], [22, "夜晚"], [24, "深夜"]];
+      const slot = slotMap.find(([h]) => hour < h)?.[1] || "凌晨";
+      const weatherBySlot: Record<string, string> = { 清晨: "晴", 上午: "晴", 正午: "晴", 下午: "多云", 黄昏: "多云", 夜晚: "晴", 深夜: "阴", 凌晨: "阴" };
+      store.syncWorldClockDisplay({ timeOfDay: slot, weather: weatherBySlot[slot] || "晴" });
+      return;
+    }
+    const api = store.api as any;
+    if (!api || typeof api.getWorldClock !== "function") return;
+    try {
+      const res = await api.getWorldClock(sessionId);
+      const data = (res as any)?.data || res;
+      if (data?.worldClock) {
+        store.syncWorldClockDisplay({ timeOfDay: data.worldClock.timeOfDay, weather: data.worldClock.weather });
+        // 同步后端 mode（可能被服务端改了）
+        if (data.timeMode && data.timeMode !== store.state.timeWeatherMode) {
+          store.setTimeWeatherMode(data.timeMode);
+        }
+      }
+    } catch {
+      // 静默失败，下一轮重试
+    }
+  };
+  // 立即跑一次,然后每 10s 一次
+  tick();
+  worldClockTimer = window.setInterval(tick, 10000);
+}
+function stopWorldClockPolling() {
+  if (worldClockTimer != null) {
+    clearInterval(worldClockTimer);
+    worldClockTimer = null;
+  }
+}
+
 function stopVoiceRecognition() {
   voiceHoldActive.value = false;
   voiceHoldCancelPending.value = false;
@@ -3759,6 +3848,26 @@ onBeforeUnmount(() => {
           <div class="play-head__meta">
             <div class="play-head__eyebrow">{{ playTitle }}</div>
             <div class="play-head__sub">{{ playSubtitle }}</div>
+            <div class="play-head__env">
+              <span class="play-head__env-time">{{ store.state.timeOfDayLabel }}</span>
+              <span class="play-head__env-weather">{{ store.state.weatherLabel }}</span>
+              <select class="play-head__env-mode" :value="store.state.timeWeatherMode" @change="onTimeModeChange">
+                <option value="tick">轮转 tick</option>
+                <option value="narrative">剧情推动</option>
+                <option value="realtime">现实同步</option>
+                <option value="manual">手动</option>
+              </select>
+              <!-- manual 模式下手动选时间/天气 -->
+              <select v-if="store.state.timeWeatherMode === 'manual'" class="play-head__env-time" @change="onManualClockChange" v-model="store.state.timeOfDayLabel">
+                <option value="清晨">清晨</option><option value="上午">上午</option><option value="正午">正午</option>
+                <option value="下午">下午</option><option value="黄昏">黄昏</option><option value="夜晚">夜晚</option>
+                <option value="深夜">深夜</option><option value="午夜">午夜</option>
+              </select>
+              <select v-if="store.state.timeWeatherMode === 'manual'" class="play-head__env-weather" @change="onManualClockChange" v-model="store.state.weatherLabel">
+                <option value="晴">晴</option><option value="多云">多云</option><option value="阴">阴</option>
+                <option value="雨">雨</option><option value="雾">雾</option>
+              </select>
+            </div>
           </div>
         </div>
         <div class="play-head__actions">
