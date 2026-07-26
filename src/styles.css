@@ -1037,6 +1037,155 @@ a {
   min-width: 88px;
 }
 
+/* ===== 世界书弹窗 ===== */
+.world-book-backdrop {
+  align-items: center;
+}
+.world-book-panel {
+  width: min(820px, calc(100vw - 28px));
+  max-height: min(90vh, 960px);
+  display: flex;
+  flex-direction: column;
+}
+.world-book-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+.world-book-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.world-book-toolbar-left,
+.world-book-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.world-book-count {
+  font-size: 13px;
+  color: rgba(216, 230, 249, 0.72);
+}
+.world-book-import-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(216, 230, 249, 0.72);
+}
+.world-book-select {
+  padding: 4px 8px;
+  background: rgba(12, 21, 35, 0.55);
+  color: #f8fbff;
+  border: 1px solid rgba(214, 225, 240, 0.38);
+  border-radius: 8px;
+  font: inherit;
+}
+.world-book-empty {
+  padding: 40px 0;
+  text-align: center;
+  color: rgba(216, 230, 249, 0.6);
+}
+.world-book-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.world-book-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(12, 21, 35, 0.4);
+  border: 1px solid rgba(214, 225, 240, 0.22);
+  border-radius: 10px;
+}
+.world-book-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.world-book-item-title {
+  font-weight: 700;
+  color: #f8fbff;
+}
+.world-book-item-keys {
+  font-size: 12px;
+  color: rgba(216, 230, 249, 0.6);
+}
+.world-book-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 8px;
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+}
+.world-book-tag[data-category="constants"],
+.world-book-tag[data-category="world"] {
+  background: rgba(168, 85, 247, 0.18);
+  color: #e9d5ff;
+  border-color: rgba(168, 85, 247, 0.35);
+}
+.world-book-tag[data-category="random"] {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.world-book-tag--const {
+  background: rgba(34, 197, 94, 0.18);
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.world-book-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.world-book-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.world-book-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.world-book-textarea {
+  width: 100%;
+  font-family: inherit;
+  resize: vertical;
+}
+.world-book-content {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+.world-book-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.create-world-book-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.create-world-book-hint {
+  font-size: 12px;
+  color: rgba(216, 230, 249, 0.55);
+}
+
 .create-role-import-summary {
   display: flex;
   align-items: center;
@@ -5127,6 +5276,113 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(220, 238, 255, 0.92);
   font-size: 12px;
   line-height: 1.55;
+}
+
+/* ===== 激活的世界书列表（ScenePlay debug） ===== */
+.play-world-book-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.play-world-book-item {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(12, 21, 35, 0.4);
+  border: 1px solid rgba(188, 204, 226, 0.16);
+}
+.play-world-book-item__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.play-world-book-item__title {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.play-world-book-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: 7px;
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+}
+.play-world-book-tag[data-category="constants"],
+.play-world-book-tag[data-category="world"] {
+  background: rgba(168, 85, 247, 0.18);
+  color: #e9d5ff;
+  border-color: rgba(168, 85, 247, 0.35);
+}
+.play-world-book-tag[data-category="random"] {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.play-world-book-tag--const {
+  background: rgba(34, 197, 94, 0.18);
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.play-world-book-item__content {
+  color: rgba(220, 238, 255, 0.82);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.play-world-book-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(220, 238, 255, 0.75);
+}
+
+/* ===== 世界书只读查看器（历史卡片入口） ===== */
+.world-book-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.world-book-group-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(191, 219, 254, 0.9);
+  letter-spacing: 0.5px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(188, 204, 226, 0.14);
+}
+.world-book-item--readonly {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.world-book-item--readonly:hover {
+  background: rgba(12, 21, 35, 0.6);
+}
+.world-book-item-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: rgba(147, 197, 253, 0.8);
+  flex-shrink: 0;
+}
+.world-book-item-content {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(8, 14, 24, 0.5);
+  border: 1px solid rgba(188, 204, 226, 0.1);
+  color: rgba(220, 238, 255, 0.85);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .play-link-row {

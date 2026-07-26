@@ -4,6 +4,7 @@ import ImageGenerateDialog from "./ImageGenerateDialog.vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import StoryCover from "./StoryCover.vue";
 import VoiceBindingDialog from "./VoiceBindingDialog.vue";
+import WorldBookDialog from "./WorldBookDialog.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { ImportableRoleListItem, StoryRole, VoiceBindingDraft } from "../types/toonflow";
 import { imageStyleForKey } from "../utils/imageStyles";
@@ -23,6 +24,7 @@ const showAdvanced = ref(false);
 const showPhaseGraph = ref(false);
 const showChapterWritingHelp = ref(false);
 const showRoleImportDialog = ref(false);
+const showWorldBookDialog = ref(false);
 const showUserEditor = ref(false);
 const showNpcEditor = ref(false);
 const editingNpcIndex = ref<number | null>(null);
@@ -1108,6 +1110,10 @@ function cancelRemoveCurrentNpc() {
           <div class="create-mention-row">
             <button v-for="role in mentionRoles" :key="`global-${role}`" class="chip" type="button" @click="insertMentionAtCursor('global', role)">{{ role }}</button>
           </div>
+          <div class="create-world-book-row">
+            <button class="button small" type="button" :disabled="!store.state.worldId" @click="showWorldBookDialog = true">📖 世界书</button>
+            <span v-if="!store.state.worldId" class="create-world-book-hint">先保存故事后即可编辑世界书</span>
+          </div>
         </div>
       </section>
 
@@ -1866,5 +1872,10 @@ function cancelRemoveCurrentNpc() {
         </div>
       </div>
     </div>
+    <WorldBookDialog
+      :open="showWorldBookDialog"
+      :world-id="store.state.worldId || null"
+      @close="showWorldBookDialog = false"
+    />
   </section>
 </template>

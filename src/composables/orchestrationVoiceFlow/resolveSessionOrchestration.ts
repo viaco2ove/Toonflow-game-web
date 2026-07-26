@@ -31,6 +31,19 @@ import {
 } from "./prefetchOrchestration";
 import type { SessionOrchestrationResult } from "../../types/toonflow";
 
+/**
+ * 编排错误：后端 plan 实质为空（AI 报错/空响应/兜底失败）时抛出。
+ * 上层捕获后显示"编排错误，点击重新编排"按钮，点击重试只重新调编排接口。
+ */
+export class OrchestrationError extends Error {
+  readonly errorType: string;
+  constructor(errorType: string) {
+    super(`编排失败: ${errorType}`);
+    this.name = "OrchestrationError";
+    this.errorType = errorType;
+  }
+}
+
 // ============== Store 延迟获取 ==============
 function getStore() {
   return useToonflowStore();
@@ -46,6 +59,13 @@ function getStore() {
  */
 export function normalizeSessionOrchestrationResult(result: SessionOrchestrationResult): SessionOrchestrationResult {
   const raw = result as unknown as Record<string, unknown>;
+
+  // ★ 编排失败：后端显式标记 orchestrationError 时，抛错让上层显示"编排错误+重新编排"按钮。
+  //   不再把空 role/motive 包装成假 plan 往下走，避免后续台词生成拿到空角色。
+  const orchestrationError = String(raw.orchestrationError || "").trim();
+  if (orchestrationError) {
+    throw new OrchestrationError(orchestrationError);
+  }
 
   // 如果有 plan，直接返回
   if (result.plan) {

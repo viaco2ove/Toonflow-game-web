@@ -37,6 +37,8 @@ import type {
   VoiceModelConfig,
   VoicePresetItem,
   WorldItem,
+  WorldBookEntry,
+  WorldBookImportPayload,
   ProgressAlignReport,
 } from "../types/toonflow";
 import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
@@ -184,6 +186,26 @@ export class ToonflowApi {
 
   saveWorld(payload: Record<string, unknown>) {
     return this.post<WorldItem>("/game/saveWorld", payload);
+  }
+
+  /** 列出某世界的全部世界书条目 */
+  listWorldBook(worldId: number) {
+    return this.post<{ entries: WorldBookEntry[] }>("/game/listWorldBook", { worldId });
+  }
+
+  /** 新建或更新世界书条目（entry.id 有值则更新，无值则新建） */
+  saveWorldBookEntry(worldId: number, entry: Partial<WorldBookEntry>) {
+    return this.post<{ entry: WorldBookEntry }>("/game/saveWorldBookEntry", { worldId, entry });
+  }
+
+  /** 删除世界书条目 */
+  deleteWorldBookEntry(id: number) {
+    return this.post<{ id: number }>("/game/deleteWorldBookEntry", { id });
+  }
+
+  /** 批量导入世界书条目（默认 replace 模式覆盖旧条目） */
+  importWorldBook(payload: WorldBookImportPayload) {
+    return this.post<{ imported: number; deleted: number; mode: string }>("/game/importWorldBook", payload);
   }
 
   /**

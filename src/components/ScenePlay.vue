@@ -1717,6 +1717,30 @@ const voiceHoldPointerId = ref<number | null>(null);
 const settingRoleId = ref("");
 const settingModePickerOpen = ref(false);
 const eventProgressOpen = ref(true);
+// ★ 激活的世界书（阶段2 debug）：实时观察本轮注入了哪些世界书条目
+//   数据来自 /game/storyInfo 返回（后端编排时写入 state.vars，storyInfo 读出），不走 /game/orchestration
+const worldBookOpen = ref(false);
+const worldBookPage = ref(1);
+const WORLD_BOOK_PAGE_SIZE = 5;
+const activatedWorldBookList = computed(() => store.state.activatedWorldBook || []);
+const worldBookTotalPages = computed(() => Math.max(1, Math.ceil(activatedWorldBookList.value.length / WORLD_BOOK_PAGE_SIZE)));
+const visibleWorldBookItems = computed(() => {
+  const start = (worldBookPage.value - 1) * WORLD_BOOK_PAGE_SIZE;
+  return activatedWorldBookList.value.slice(start, start + WORLD_BOOK_PAGE_SIZE);
+});
+function toggleWorldBook() {
+  worldBookOpen.value = !worldBookOpen.value;
+  // 每次展开重置到第一页
+  if (worldBookOpen.value) worldBookPage.value = 1;
+}
+function worldBookPrev() {
+  if (worldBookPage.value > 1) worldBookPage.value -= 1;
+}
+function worldBookNext() {
+  if (worldBookPage.value < worldBookTotalPages.value) worldBookPage.value += 1;
+}
+// 新一轮编排结果到来时，重置分页到第一页
+watch(() => store.state.activatedWorldBook, () => { worldBookPage.value = 1; });
 const helpOpen = ref(false);
 const roleDetailKey = ref("");
 const roleDetail = computed<StoryRole | null>(() => {
@@ -4325,6 +4349,38 @@ onBeforeUnmount(() => {
           class="play-inline-card"
           :source="helpMdContent"
         />
+
+                <button type="button" class="play-link-row" @click="toggleWorldBook">
+          <span>激活的世界书{{ activatedWorldBookList.length ? `（${activatedWorldBookList.length}）` : "" }}</span>
+          <span>{{ worldBookOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="worldBookOpen" class="play-inline-card">
+          <div class="play-inline-card__title">激活的世界书条目</div>
+          <div v-if="!visibleWorldBookItems.length" class="play-inline-card__text">
+            暂无激活条目（章节模式或本轮无匹配）。
+          </div>
+          <template v-else>
+            <div class="play-world-book-list">
+              <div
+                v-for="(item, idx) in visibleWorldBookItems"
+                :key="`${worldBookPage}_${idx}`"
+                class="play-world-book-item"
+              >
+                <div class="play-world-book-item__head">
+                  <span class="play-world-book-item__title">{{ item.title || "(无标题)" }}</span>
+                  <span class="play-world-book-tag" :data-category="item.category">{{ item.category }}</span>
+                  <span v-if="item.constant" class="play-world-book-tag play-world-book-tag--const">常驻</span>
+                </div>
+                <div class="play-world-book-item__content">{{ item.content }}</div>
+              </div>
+            </div>
+            <div v-if="worldBookTotalPages > 1" class="play-world-book-pagination">
+              <button type="button" class="button small" :disabled="worldBookPage <= 1" @click="worldBookPrev">上一页</button>
+              <span>第 {{ worldBookPage }} / {{ worldBookTotalPages }} 页</span>
+              <button type="button" class="button small" :disabled="worldBookPage >= worldBookTotalPages" @click="worldBookNext">下一页</button>
+            </div>
+          </template>
+        </div>
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
           <span>当前章节事件</span>

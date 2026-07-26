@@ -3,10 +3,21 @@ import { computed, ref } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { ProgressAlignReport, SessionItem } from "../types/toonflow";
 import StoryCover from "./StoryCover.vue";
+import WorldBookViewerDialog from "./WorldBookViewerDialog.vue";
 
 const store = useToonflowStore();
 const sessions = computed(() => store.state.sessions);
 const sessionListError = computed(() => store.state.sessionListError || "");
+
+// ★ 世界书只读查看弹窗
+const worldBookViewerOpen = ref(false);
+const worldBookViewerWorldId = ref<number | null>(null);
+const worldBookViewerWorldName = ref<string>("");
+function openWorldBookViewer(item: SessionItem) {
+  worldBookViewerWorldId.value = item.worldId || null;
+  worldBookViewerWorldName.value = item.worldName || item.title || "";
+  worldBookViewerOpen.value = true;
+}
 
 function historyCoverPath(sessionId: string) {
   const item = sessions.value.find((row) => row.sessionId === sessionId);
@@ -167,6 +178,7 @@ async function smartAlign() {
             >故事已更新</button>
             <button class="history-card-btn" type="button" @click.stop="store.continueSessionForWorld(item.worldId, item.sessionId)">继续</button>
             <button class="history-card-btn" type="button" @click.stop="store.continueSessionForWorld(item.worldId, item.sessionId, { playback: true, playbackIndex: 0 })">观看</button>
+            <button class="history-card-btn" type="button" @click.stop="openWorldBookViewer(item)">世界书</button>
             <button class="history-card-icon-btn danger" type="button" aria-label="删除会话" @click.stop="removeSession(item.sessionId, item.title || item.worldName || '未命名会话')">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M9 4h6l1 2h4v2H4V6h4l1-2z"></path>
@@ -210,6 +222,12 @@ async function smartAlign() {
         </div>
       </div>
     </div>
+    <WorldBookViewerDialog
+      :open="worldBookViewerOpen"
+      :world-id="worldBookViewerWorldId"
+      :world-name="worldBookViewerWorldName"
+      @close="worldBookViewerOpen = false"
+    />
   </section>
 </template>
 

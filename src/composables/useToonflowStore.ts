@@ -44,6 +44,7 @@ import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
 import { manufacturerLabel } from "../utils/modelConfigCatalog";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import { startTypewriter, stopTypewriter, clearAllTypewriterState } from "./orchestrationVoiceFlow/state";
+import { OrchestrationError } from "./orchestrationVoiceFlow/resolveSessionOrchestration";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -1098,6 +1099,8 @@ function createToonflowStore() {
     debugChapterTitle: "",
     debugRuntimeState: {} as Record<string, unknown>,
     debugLatestPlan: null as DebugNarrativePlan | null,
+    // ★ 阶段2 debug:本轮编排激活的世界书条目，由 /game/storyInfo 返回，面板展示用
+    activatedWorldBook: [] as { title: string; category: string; constant: boolean; content: string }[],
     debugStatePreview: "{}",
     debugEndDialog: null as string | null,
     debugEndDialogDetail: "",
@@ -2628,6 +2631,8 @@ function createToonflowStore() {
       // 从 storyInfo 同步 stage 进度数据
       allEventStageProgress: result.allEventStageProgress || existingDetail?.allEventStageProgress || null,
     };
+    // ★ 阶段2 debug:从 storyInfo 同步本轮激活的世界书条目（后端编排时写入 state.vars，storyInfo 读出返回）
+    state.activatedWorldBook = Array.isArray(result.activatedWorldBook) ? result.activatedWorldBook : [];
     // 从 storyInfo 提取小游戏配置（语音等待时间等）
     // 后端返回 audioProxyMinSec，默认3秒
     const miniGameAudioProxyMinSec = Number(result.miniGameConfig?.audioProxyMinSec || 3);
@@ -7671,6 +7676,18 @@ function createToonflowStore() {
       WebDebugLogUtil.log("[aiGame][runtimeStatus] 继续剧情失败", {
         error: error,
       });
+      // ★ 编排失败（plan 实质为空）：显示明确的"编排错误"提示，重试按钮只重试编排
+      if (error instanceof OrchestrationError) {
+        showRuntimeRetryMessage(
+          "编排失败，AI 未返回有效结果。点击重新编排。",
+          createRuntimeRetryRunner(performContinueSessionNarrative, {
+            retryLabel: "重新编排",
+            formatErrorMessage: () => "编排失败，AI 未返回有效结果。点击重新编排。",
+          }),
+          "重新编排",
+        );
+        return false;
+      }
       showRuntimeRetryMessage(
         `继续剧情失败：${asUiErrorMessage(error)}`,
         createRuntimeRetryRunner(performContinueSessionNarrative, {

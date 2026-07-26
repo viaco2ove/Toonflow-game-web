@@ -153,6 +153,33 @@ export interface WorldItem {
   narratorRole?: StoryRole | null;
 }
 
+/** 世界书条目（方案1全集字段，对应后端 WorldBookEntry） */
+export interface WorldBookEntry {
+  id?: number;
+  worldId?: number;
+  entryId: string;
+  title: string;
+  category: string;
+  keys: string[];
+  constant: boolean;
+  probability: number;
+  order: number;
+  group: string;
+  selectiveLogic: string;
+  selectiveKeys: string[];
+  content: string;
+  sort: number;
+  createTime?: number;
+  updateTime?: number;
+}
+
+/** 导入世界书的批量条目结构（兼容 worldbook.json 顶层带元信息） */
+export interface WorldBookImportPayload {
+  worldId: number;
+  entries: WorldBookEntry[] | { entries: WorldBookEntry[] };
+  mode?: "replace" | "merge";
+}
+
 export interface ChapterItem {
   id: number;
   worldId?: number;
@@ -304,6 +331,8 @@ export interface SessionOrchestrationResult {
   currentEventDigest?: RuntimeEventDigestItem | null;
   eventDigestWindow?: RuntimeEventDigestItem[];
   eventDigestWindowText?: string;
+  /** 编排失败标识：后端 plan 实质为空时置 "orchestration_failed"，前端提示重新编排 */
+  orchestrationError?: string | null;
 }
 
 export interface InitChapterResult {
@@ -353,6 +382,8 @@ export interface DebugNarrativePlan {
   eventType?: string;
   presetContent?: string | null;
   orchestratorRuntime?: OrchestratorRuntimeMeta | null;
+  /** 阶段2 debug:本轮激活注入的世界书条目 */
+  activatedWorldBook?: { title: string; category: string; constant: boolean; content: string }[];
 }
 
 export interface DebugOrchestrationResult {
@@ -427,6 +458,8 @@ export interface StoryInfoResult {
     audioProxyMinSec?: number;
   };
   allEventStageProgress?: StageProgress[];
+  /** 阶段2 debug:本轮编排激活的世界书条目（后端编排时写入 state.vars，storyInfo 读出返回） */
+  activatedWorldBook?: { title: string; category: string; constant: boolean; content: string }[];
 }
 
 export interface AiTokenUsageLogItem {
