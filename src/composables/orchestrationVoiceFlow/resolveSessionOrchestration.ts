@@ -85,6 +85,14 @@ export function normalizeSessionOrchestrationResult(result: SessionOrchestration
     const motive = String(raw.motive || "").trim();
     const awaitUser = Boolean(raw.awaitUser);
 
+    // ★ 防御：后端"最小编排返回"如果 role/motive/roleType 全空（且非 awaitUser 等待用户），
+    //   说明这一轮编排没有产出任何有效内容。即使后端没带 orchestrationError 字段，
+    //   也按编排失败处理，避免把空 plan 往下传导致台词生成拿到空角色、界面静默卡死。
+    //   合法的"等待用户"会带 awaitUser=true 或 expectedRole，不会落到这里。
+    if (!role && !motive && !awaitUser && !result.expectedRole) {
+      throw new OrchestrationError("orchestration_failed");
+    }
+
     // 如果顶层字段都空，但 result.plan 不存在，看看能不能从 expectedRole 等推断
     if (!role && !motive && result.expectedRole) {
       return {
