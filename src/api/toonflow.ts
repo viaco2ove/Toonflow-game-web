@@ -43,6 +43,20 @@ import type {
 } from "../types/toonflow";
 import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
+/**
+ * 编排层专用错误：当 /game/orchestration 返回 HTTP 500 时，
+ * 后端会把 orchestrationError 信息放在响应体里，前端据此抛出带类型的编排错误。
+ */
+export class OrchestrationApiError extends Error {
+  constructor(
+    message: string,
+    public readonly orchestrationError: string,
+  ) {
+    super(message);
+    this.name = "OrchestrationApiError";
+  }
+}
+
 type RequestConfig = {
   baseUrl: string;
   token: string;
@@ -92,6 +106,17 @@ export class ToonflowApi {
       }
       return envelope.data;
     } catch (err) {
+      const axiosErr = err as { response?: { status?: number; data?: unknown } };
+      // ★ 编排失败：后端返回 HTTP 500 时，错误信息在响应体 envelope.message 里，
+      //   前端需要识别它并抛 OrchestrationApiError，让上层走编排错误专用重试分支。
+      if (axiosErr.response?.status === 500) {
+        const data = axiosErr.response.data as ApiEnvelope<unknown> | undefined;
+        const errMsg = data?.message || "编排失败";
+        const orchErr = String(errMsg).includes("orchestration_failed")
+          ? "orchestration_failed"
+          : String(errMsg);
+        throw new OrchestrationApiError(errMsg, orchErr);
+      }
       throw new Error(this.requestErrorMessage(err));
     }
   }

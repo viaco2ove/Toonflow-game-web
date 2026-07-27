@@ -45,6 +45,7 @@ import { manufacturerLabel } from "../utils/modelConfigCatalog";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import { startTypewriter, stopTypewriter, clearAllTypewriterState } from "./orchestrationVoiceFlow/state";
 import { OrchestrationError } from "./orchestrationVoiceFlow/resolveSessionOrchestration";
+import { OrchestrationApiError } from "../api/toonflow";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -1850,11 +1851,26 @@ function createToonflowStore() {
         currentTriggerId: Number(triggerMessageId),
       });
       clearPendingSessionOrchestrationPrefetch();
-      result = await pending.promise;
+      try {
+        result = await pending.promise;
+      } catch (err) {
+        // 预取返回 HTTP 500 → 转成 OrchestrationError，走编排失败重试分支
+        if (err instanceof OrchestrationApiError) {
+          throw new OrchestrationError(err.orchestrationError);
+        }
+        throw err;
+      }
       WebDebugLogUtil.log("[orchestrateSession] pending.promise result", result);
     } else {
       clearPendingSessionOrchestrationPrefetch();
-      result = await api.orchestrateSession(sessionId);
+      try {
+        result = await api.orchestrateSession(sessionId);
+      } catch (err) {
+        if (err instanceof OrchestrationApiError) {
+          throw new OrchestrationError(err.orchestrationError);
+        }
+        throw err;
+      }
       WebDebugLogUtil.log("[orchestrateSession] result", result);
     }
     WebDebugLogUtil.log("[orchestrateSession] resolveSessionOrchestration result", result);
@@ -1870,7 +1886,15 @@ function createToonflowStore() {
     if (!sessionId) {
       throw new Error("当前没有活跃会话");
     }
-    const result = await api.orchestrateMinigameSession(sessionId);
+    let result: SessionOrchestrationResult;
+    try {
+      result = await api.orchestrateMinigameSession(sessionId);
+    } catch (err) {
+      if (err instanceof OrchestrationApiError) {
+        throw new OrchestrationError(err.orchestrationError);
+      }
+      throw err;
+    }
     WebDebugLogUtil.log("[orchestrateMinigame] resolveMinigameOrchestration result", result);
     return normalizeSessionOrchestrationResult(result);
   }
