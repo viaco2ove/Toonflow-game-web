@@ -171,6 +171,8 @@ export interface WorldBookEntry {
   sort: number;
   createTime?: number;
   updateTime?: number;
+  /** 允许注入的 Agent Key 列表；空或含 "all" 表示全部 Agent */
+  agentList?: string[];
 }
 
 /** 导入世界书的批量条目结构（兼容 worldbook.json 顶层带元信息） */

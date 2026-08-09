@@ -3124,6 +3124,7 @@ const helpMdContent = ref(`
   - @记忆管理 下个章节
   - @记忆管理 标记{角色名}的关键信息：是我的舍友
   - @记忆管理 更新记忆/更新物品/领取任务奖励
+  - @记忆管理 更新所有人的当前行为
 - @事件进度检测 下个事件
 理论上可行
 
@@ -4268,6 +4269,14 @@ onBeforeUnmount(() => {
         </div>
         <div v-else-if="settingSelectedRole" class="play-inline-card">
           <div class="play-inline-card__title">{{ settingSelectedRole.name }}</div>
+          <!-- 当前行为：跑马灯滚动显示 -->
+          <div class="play-inline-card__text">关键信息：</div>
+          <div v-if="settingSelectedRole.parameterCardJson?.role_key_information" class="play-inline-card__marquee">
+            <span class="marquee-container role_key_information" style="display:inline-block;width:100%;overflow:hidden;">
+              <span class="marquee-content">{{ settingSelectedRole.parameterCardJson?.role_key_information }}</span>
+            </span>
+          </div>
+          <div v-else class="play-inline-card__text" style="color:rgba(216,230,249,0.45);font-style:italic;">暂无当前行为</div>
           <div class="play-inline-card__text">角色类型：{{ roleTypeLabel(settingSelectedRole) }}</div>
           <div class="play-inline-card__text">角色设定：{{ settingSelectedRole.description || "暂无角色设定" }}</div>
           <div class="play-inline-card__text">角色音色：{{ settingSelectedRole.voice || "未绑定音色" }}</div>

@@ -22,6 +22,9 @@
 .marquee-container:hover .marquee-content {
   animation-play-state: paused;
 }
+.role_key_information .marquee-content {
+ color:#c78131;
+}
 
 :root {
   color-scheme: light;
@@ -1781,7 +1784,7 @@ a {
 
 .create-page .field label {
   font-size: 12px;
-  color: #7b8ea8;
+  color: #333457;
 }
 
 .create-editor-body .input,
@@ -5276,6 +5279,13 @@ textarea::-webkit-scrollbar-thumb {
   color: rgba(220, 238, 255, 0.92);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.play-inline-card__marquee {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 2px 0;
 }
 
 /* ===== 激活的世界书列表（ScenePlay debug） ===== */

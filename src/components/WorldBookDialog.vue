@@ -47,6 +47,29 @@ const LOGIC_LABELS: Record<string, string> = {
   "NOT ALL": "全部不命中（NOT ALL）",
 };
 
+/** Agent Key 多选选项（对应 agent.aigame.list.csv 的 AgentKey 列） */
+const AGENT_OPTIONS = [
+  { value: "all", label: "全部 Agent" },
+  { value: "narrative_orchestrator", label: "剧情编排师" },
+  { value: "story_speaker", label: "角色发言器" },
+  { value: "story_memory_manager", label: "记忆管理器" },
+  { value: "intent_classifier", label: "意图分类器" },
+  { value: "chapter_outcome_judge", label: "章节结局判定" },
+  { value: "event_progress_judge", label: "事件进度判定" },
+  { value: "story_update_align", label: "存档智能对齐" },
+  { value: "task_progress", label: "任务进度评估" },
+  { value: "task_director", label: "任务剧情编排" },
+  { value: "task_speaker", label: "任务角色发言" },
+  { value: "task_completion", label: "任务完成评估" },
+  { value: "mini_game_intent", label: "小游戏动作解析" },
+  { value: "mini_game_mentor_speech", label: "小游戏角色台词" },
+  { value: "mini_game_sell_intent", label: "小游戏卖出意图" },
+  { value: "free_task_resolution", label: "自由任务裁决" },
+  { value: "free_task_blueprint", label: "自由任务蓝图生成" },
+  { value: "orchestrate_options", label: "编排选项生成" },
+  { value: "play_tip", label: "玩家提示器" },
+];
+
 function emptyEntry(): WorldBookEntry {
   return {
     entryId: "",
@@ -61,6 +84,7 @@ function emptyEntry(): WorldBookEntry {
     selectiveKeys: [],
     content: "",
     sort: 0,
+    agentList: [],
   };
 }
 
@@ -229,6 +253,36 @@ function setEditingSelectiveKeysText(value: string) {
   if (editing.value) (editing.value as any).selectiveKeysText = value;
 }
 
+function isAgentChecked(agentValue: string): boolean {
+  const list = (editing.value as any)?.agentList;
+  if (!Array.isArray(list)) return false;
+  if (agentValue === "all") return list.includes("all") || list.length === 0;
+  return list.includes(agentValue);
+}
+
+function toggleAgent(agentValue: string) {
+  if (!editing.value) return;
+  const e = editing.value as any;
+  if (!e.agentList || !Array.isArray(e.agentList)) {
+    e.agentList = [];
+  }
+  const list = e.agentList as string[];
+  const idx = list.indexOf(agentValue);
+  if (agentValue === "all") {
+    // 选"全部"→清空列表（表示全部可见）
+    list.length = 0;
+  } else {
+    if (idx >= 0) {
+      list.splice(idx, 1);
+    } else {
+      list.push(agentValue);
+    }
+    // 取消勾选全部
+    const allIdx = list.indexOf("all");
+    if (allIdx >= 0) list.splice(allIdx, 1);
+  }
+}
+
 function close() {
   emit("close");
 }
@@ -350,6 +404,24 @@ function close() {
               placeholder="留空表示无"
             ></textarea>
           </div>
+          <!-- ★ agentList：允许注入的 Agent 多选；不选=全部 Agent 可见 -->
+          <div class="field">
+            <label>注入 Agent（agentList）— 不选则全部 Agent 可见</label>
+            <div class="world-book-agent-checkboxes">
+              <label
+                v-for="opt in AGENT_OPTIONS"
+                :key="opt.value"
+                class="world-book-agent-checkbox"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isAgentChecked(opt.value)"
+                  @change="toggleAgent(opt.value)"
+                />
+                {{ opt.label }}
+              </label>
+            </div>
+          </div>
           <div class="field">
             <label>正文 content（注入到 AI 上下文，须自描述）</label>
             <textarea v-model="editing.content" class="input world-book-textarea world-book-content" rows="8" placeholder="[条目名] 正文内容..."></textarea>
@@ -365,3 +437,36 @@ function close() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.world-book-agent-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(214, 225, 240, 0.2);
+  border-radius: 8px;
+}
+.world-book-agent-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: rgba(216, 230, 249, 0.82);
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(91, 117, 117, 0.2);
+  border: 1px solid rgba(214, 225, 240, 0.18);
+  transition: background 0.15s;
+}
+.world-book-agent-checkbox:hover {
+  background: rgba(12, 21, 35, 0.7);
+}
+.world-book-agent-checkbox input[type="checkbox"] {
+  accent-color: #5ba3ff;
+  cursor: pointer;
+}
+</style>
