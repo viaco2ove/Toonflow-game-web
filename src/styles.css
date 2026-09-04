@@ -4303,6 +4303,8 @@ textarea::-webkit-scrollbar-thumb {
 
 .play-circle-btn--back {
   flex-shrink: 0;
+  width: 32px;
+  height: 40px;
 }
 
 .play-circle-btn svg {
