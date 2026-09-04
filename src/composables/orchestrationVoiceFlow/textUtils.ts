@@ -6,6 +6,14 @@
 import type { MessageItem } from "../../types/toonflow";
 
 const RUNTIME_VOICE_CACHE_LIMIT = 60;
+/**
+ * 流式 可以按符号分割，长句40 字分割
+ * 非流式 不按符号分割，长句100 字分割
+ * 未来：由后台通过数据库来配置是否按符号分割，以及长句分割的字数
+ *
+ */
+const is_need_symbol_segm =false;
+const MAX_SEGMENT_CHARS = 100;
 
 // ============== Store 延迟获取 ==============
 // 避免循环依赖：useToonflowStore 在函数内部延迟获取
@@ -161,11 +169,11 @@ export function splitSpeechSegments(input: string): string[] {
   for (const char of text) {
     buffer += char;
     const length = buffer.replace(/\s/g, "").length;
-    if (/[。！？!?；;\n]/.test(char)) {
+    if ( is_need_symbol_segm && /[。！？!?；;\n]/.test(char)) {
       push();
       continue;
     }
-    if (length >= 40) {
+    if (length >= MAX_SEGMENT_CHARS) {
       push();
     }
   }
