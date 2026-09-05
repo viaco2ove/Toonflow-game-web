@@ -302,7 +302,7 @@ export class ToonflowApi {
   getSession(sessionId: string) {
     return this.post<SessionDetail>("/game/getSession", {
       sessionId,
-      messageLimit: 120,
+      messageLimit: 20,
     });
   }
 
