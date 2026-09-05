@@ -2558,6 +2558,41 @@ function createToonflowStore() {
     syncRuntimeChatTrace();
   }
 
+  /**
+   * 流式打开会话：先填 meta（含 state/world/chapter），让前端立即渲染骨架，
+   * messages 仍在传输中，留空数组；后续逐条通过 appendStreamedMessage 追加。
+   */
+  function applyLoadedSessionMeta(meta: SessionDetail) {
+    clearPendingSessionOrchestrationPrefetch();
+    state.sessionRuntimeStage = "";
+    state.sessionOpenError = "";
+    state.sessionDetail = {
+      ...meta,
+      messages: [],
+    };
+    state.messages = [];
+    syncRuntimeChatTrace();
+  }
+
+  /**
+   * 流式打开会话：每收到一条 message 就调用一次，append 到 messages。
+   * 同时触发 syncRuntimeChatTrace，让 UI 增量刷新。
+   */
+  function appendStreamedMessage(msg: MessageItem) {
+    const turnState = sessionTurnState(state.sessionDetail || null);
+    const normalized = Object.keys(turnState).length
+      ? normalizeSessionRuntimeMessage(msg, state.messages.length + 1, turnState)
+      : msg;
+    state.messages = [...state.messages, normalized];
+    if (state.sessionDetail) {
+      state.sessionDetail = {
+        ...state.sessionDetail,
+        messages: state.messages,
+      };
+    }
+    syncRuntimeChatTrace();
+  }
+
   function applyInitializedSessionDetail(world: WorldItem, result: StoryInitResult) {
     clearPendingSessionOrchestrationPrefetch();
     const initialState = ((result.state || {}) as Record<string, unknown>) || {};
@@ -6225,22 +6260,45 @@ function createToonflowStore() {
     state.sessionDetail = null;
     state.messages = [];
     try {
-      const detail = await api.getSession(sessionId);
-      const loadedMessageCount = Array.isArray(detail?.messages) ? detail.messages.length : 0;
-      const lastLoadedMessage = Array.isArray(detail?.messages) && detail.messages.length > 0
-        ? detail.messages[detail.messages.length - 1]
-        : null;
-      WebDebugLogUtil.log("[aiGame] openSession session loaded", {
+      const streamStartAt = Date.now();
+      let metaAt = 0;
+      let firstMessageAt = 0;
+      await api.openSessionStream(
         sessionId,
-        isResume: Boolean(options?.resumeLatest),
-        messageCount: loadedMessageCount,
-        lastMessageRole: lastLoadedMessage?.role,
-        lastMessageRoleType: lastLoadedMessage?.roleType,
-        lastMessageContent: lastLoadedMessage?.content?.slice(0, 60),
-      });
-      state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
-      state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
-      applyLoadedSessionDetail(detail);
+        {
+          onMeta: async (meta) => {
+            applyLoadedSessionMeta(meta);
+            if (metaAt === 0) metaAt = Date.now();
+            // meta 到达即可渲染骨架，不必等 messages
+            state.sessionOpeningStage = options?.playback ? "同步回放进度" : "同步游戏进度";
+            state.notice = options?.playback ? "正在同步回放进度..." : "正在同步游戏进度...";
+          },
+          onMessage: async (msg) => {
+            if (firstMessageAt === 0) firstMessageAt = Date.now();
+            appendStreamedMessage(msg);
+            const lastMsg = msg;
+            WebDebugLogUtil.log("[aiGame] openSession streamed message", {
+              sessionId,
+              id: Number(lastMsg.id || 0),
+              role: lastMsg.role,
+              roleType: lastMsg.roleType,
+              contentPreview: String(lastMsg.content || "").slice(0, 60),
+            });
+          },
+          onDone: async (summary) => {
+            WebDebugLogUtil.log("[aiGame] openSession stream done", {
+              sessionId,
+              isResume: Boolean(options?.resumeLatest),
+              total: summary.total,
+              minId: summary.minId,
+              hasMore: summary.hasMore,
+              metaToFirstMessageMs: metaAt > 0 ? metaAt - streamStartAt : -1,
+              streamTotalMs: Date.now() - streamStartAt,
+            });
+          },
+        },
+        { messageLimit: 30 },
+      );
       if (!options?.playback) {
         await refreshSessionStoryInfo();
       }
@@ -6300,8 +6358,9 @@ function createToonflowStore() {
     });
     state.sessionRuntimeStage = "加载session...";
     try {
-      const detail = await api.getSession(state.currentSessionId);
-      applyLoadedSessionDetail(detail);
+      // 刷新只取 meta（state/world/chapter），不重新拉历史消息
+      const meta = await api.getSessionMeta(state.currentSessionId);
+      applyLoadedSessionDetail(meta);
       void refreshSessionListState();
     } finally {
       if (state.sessionRuntimeStage === "加载session...") {

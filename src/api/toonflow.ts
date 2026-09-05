@@ -306,6 +306,117 @@ export class ToonflowApi {
     });
   }
 
+  /**
+   * 仅获取会话元数据（state + world minimal + chapter），不拉 messages。
+   * 用于 refreshCurrentSession 等不需要历史消息的场景。
+   */
+  getSessionMeta(sessionId: string) {
+    return this.post<SessionDetail>("/game/getSessionMeta", {
+      sessionId,
+    });
+  }
+
+  /**
+   * 流式打开会话：先收 meta（前端立即渲染骨架），再逐条收 message 追加到列表。
+   * 比 getSession 一次性返回快很多——meta 通常 <1s 到达，messages 边收边显示。
+   */
+  async openSessionStream(
+    sessionId: string,
+    handlers: {
+      onMeta?: (meta: SessionDetail) => void | Promise<void>;
+      onMessage?: (msg: MessageItem) => void | Promise<void>;
+      onDone?: (summary: { total: number; minId: number; hasMore: boolean }) => void | Promise<void>;
+    },
+    options?: { messageLimit?: number },
+  ): Promise<void> {
+    const controller = new AbortController();
+    let idleTimer = 0;
+    let timedOut = false;
+    const resetIdleTimer = () => {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+      idleTimer = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 30000);
+    };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/x-ndjson",
+    };
+    const authHeaders = this.headers();
+    if (authHeaders.Authorization) {
+      headers.Authorization = authHeaders.Authorization;
+    }
+    try {
+      const response = await fetch(this.url("/game/getSession"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          sessionId,
+          messageLimit: options?.messageLimit ?? 30,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) {
+        let message = `HTTP ${response.status}`;
+        try {
+          message = (await response.text()) || message;
+        } catch {
+          // noop
+        }
+        throw new Error(message);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      resetIdleTimer();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        resetIdleTimer();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const text = line.trim();
+          if (!text) continue;
+          const event = JSON.parse(text) as { type: string; data: any };
+          if (event.type === "meta" && handlers.onMeta) {
+            await handlers.onMeta(event.data as SessionDetail);
+          } else if (event.type === "message" && handlers.onMessage) {
+            await handlers.onMessage(event.data as MessageItem);
+          } else if (event.type === "done" && handlers.onDone) {
+            await handlers.onDone(event.data as { total: number; minId: number; hasMore: boolean });
+          } else if (event.type === "error") {
+            throw new Error(String(event.data?.message || "流式加载失败"));
+          }
+        }
+      }
+      const tail = buffer.trim();
+      if (tail) {
+        const event = JSON.parse(tail) as { type: string; data: any };
+        if (event.type === "meta" && handlers.onMeta) {
+          await handlers.onMeta(event.data as SessionDetail);
+        } else if (event.type === "message" && handlers.onMessage) {
+          await handlers.onMessage(event.data as MessageItem);
+        } else if (event.type === "done" && handlers.onDone) {
+          await handlers.onDone(event.data as { total: number; minId: number; hasMore: boolean });
+        }
+      }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error("打开会话流空闲超时");
+      }
+      throw error;
+    } finally {
+      if (idleTimer) {
+        window.clearTimeout(idleTimer);
+      }
+    }
+  }
+
   /** 轻量读 worldClock + 模式 */
   getWorldClock(sessionId: string) {
     return this.post<{
