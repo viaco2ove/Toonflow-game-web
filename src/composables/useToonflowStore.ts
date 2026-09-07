@@ -2939,10 +2939,16 @@ function createToonflowStore() {
     },
   ) {
     const existingDetail = state.sessionDetail || null;
-    let nextState = mergeVisibleMiniGameState(
-      (result.state || null) as Record<string, unknown> | null,
-      (existingDetail?.state || null) as Record<string, unknown> | null,
-    );
+    // ★ addMessage 现在不再返回完整 state（响应体积优化）。如果 result.state 不存在，
+    //   保持现有 state 不动（让后端 storyInfo 接力刷新），不要走 mergeVisibleMiniGameState
+    //   否则 fallbackRoot 没有 miniGame 状态时会把 state 清空。
+    const hasIncomingState = result.state && typeof result.state === "object" && !Array.isArray(result.state);
+    let nextState: Record<string, unknown> = hasIncomingState
+      ? mergeVisibleMiniGameState(
+          result.state as Record<string, unknown>,
+          (existingDetail?.state || null) as Record<string, unknown> | null,
+        )
+      : ((existingDetail?.state || {}) as Record<string, unknown>);
     const incoming = [
       result.message || null,
       ...(Array.isArray(result.generatedMessages) ? result.generatedMessages : []),
