@@ -1,5 +1,5 @@
-﻿import { computed, reactive, watch } from "vue";
-import { ToonflowApi } from "../api/toonflow";
+﻿import {reactive, watch} from "vue";
+import {OrchestrationApiError, ToonflowApi} from "../api/toonflow";
 import {
   AiModelListMap,
   AiModelMapItem,
@@ -8,8 +8,11 @@ import {
   AppTab,
   ChapterExtra,
   ChapterItem,
-  DebugOrchestrationResult,
+  createDefaultNarratorRole,
+  createDefaultPlayerRole,
+  createEmptyChapter,
   DebugNarrativePlan,
+  DebugOrchestrationResult,
   DebugStepResult,
   ImportableRoleListResult,
   ImportWorldRoleResult,
@@ -27,25 +30,21 @@ import {
   SessionItem,
   SessionNarrativeResult,
   SessionOrchestrationResult,
-  StoryInitResult,
   StoryInfoResult,
-  StoryRuntimeConfig,
+  StoryInitResult,
   StoryRole,
+  StoryRuntimeConfig,
   VoiceBindingDraft,
   VoiceMixItem,
   VoiceModelConfig,
   VoicePresetItem,
   WorldItem,
-  createDefaultNarratorRole,
-  createDefaultPlayerRole,
-  createEmptyChapter,
 } from "../types/toonflow";
-import { fileToBase64Payload, fileToDataUrl } from "../utils/file";
-import { manufacturerLabel } from "../utils/modelConfigCatalog";
-import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
-import { startTypewriter, stopTypewriter, clearAllTypewriterState } from "./orchestrationVoiceFlow/state";
-import { OrchestrationError } from "./orchestrationVoiceFlow/resolveSessionOrchestration";
-import { OrchestrationApiError } from "../api/toonflow";
+import {fileToBase64Payload, fileToDataUrl} from "../utils/file";
+import {manufacturerLabel} from "../utils/modelConfigCatalog";
+import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
+import {startTypewriter} from "./orchestrationVoiceFlow/state";
+import {OrchestrationError} from "./orchestrationVoiceFlow/resolveSessionOrchestration";
 
 type Loadable<T> = T | null;
 const RUNTIME_RETRY_EVENT = "on_runtime_retry_error";
@@ -3384,6 +3383,7 @@ function createToonflowStore() {
 
   function captureStoryEditorSnapshot(): StoryEditorSnapshot {
     return {
+      narratorVoiceGeneratedDownloadUrl: "", playerVoiceGeneratedDownloadUrl: "",
       createStep: state.createStep,
       worldId: state.worldId,
       worldName: state.worldName,
@@ -3429,7 +3429,7 @@ function createToonflowStore() {
       chapterMusicAutoPlay: state.chapterMusicAutoPlay,
       chapterConditionVisible: state.chapterConditionVisible,
       chapterRuntimeOutlineAutoGenerate: state.chapterRuntimeOutlineAutoGenerate,
-      chapterRuntimeOutlineText: state.chapterRuntimeOutlineText,
+      chapterRuntimeOutlineText: state.chapterRuntimeOutlineText
     };
   }
 
@@ -4675,8 +4675,7 @@ function createToonflowStore() {
 
   async function uploadStandardizedImageAsset(target: EditorImageTarget, source: File | string, baseName: string): Promise<{ path: string; bgPath: string; sourcePath?: string }> {
     if (target === "account" || target === "user" || target === "npc") {
-      const result = await separateRoleImageAsset(target, source, baseName);
-      return result; // separateRoleImageAsset already returns {path, bgPath, sourcePath, videoPath}
+      return await separateRoleImageAsset(target, source, baseName); // separateRoleImageAsset already returns {path, bgPath, sourcePath, videoPath}
     }
     const safeBaseName = buildSafeUploadBaseName(baseName, target);
     const asset = await loadImageSourceAsset(state.baseUrl, source, safeBaseName);

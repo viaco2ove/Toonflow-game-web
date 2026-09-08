@@ -140,6 +140,7 @@ export interface WorldSettings {
 }
 
 export interface WorldItem {
+  worldGlobalBackground: string;
   id: number;
   projectId: number;
   name: string;
@@ -321,6 +322,7 @@ export interface SessionNarrativeResult {
 }
 
 export interface SessionOrchestrationResult {
+  state: boolean;
   role?: string;
   roleType?: string;
   motive?: string;
@@ -508,6 +510,8 @@ export interface StreamLinesEvent {
 }
 
 export interface GeneratedImageResult {
+  sourcePath: any;
+  originalPath: any;
   path?: string;
   filePath?: string;
 }
@@ -644,7 +648,7 @@ export interface AiModelOptionItem {
 export type AiModelListMap = Record<string, AiModelOptionItem[]>;
 
 export interface StoryRuntimeConfig {
-  storyOrchestratorPayloadMode: "compact" | "advanced";
+  storyOrchestratorPayloadMode?: "compact" | "advanced";
   storyMemoryPayloadMode?: "compact" | "advanced";
 }
 
