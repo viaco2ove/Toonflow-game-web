@@ -1560,7 +1560,12 @@ function createToonflowStore() {
       throw new Error("当前没有可回溯的会话");
     }
     const result = await api.revisitMessage(state.currentSessionId, messageId);
-    await refreshCurrentSession();
+    // ★ 复用 openSession 的流式路径：先拉 meta 渲染骨架，再流式拉 messages。
+    //   之前用 refreshCurrentSession 只取 meta，导致 messages 为空 → ScenePlay
+    //   永远显示"正在等待首句内容..."。
+    // openSession 内部已经会调 scheduleSessionNarrativeIfSystemTurn，
+    // 这里不需要重复触发。
+    await openSession(state.currentSessionId);
     // ★ 回溯到用户消息时，把原内容回填到输入框，方便用户直接修改/重发
     const revisitedRoleType = String((result as any)?.revisitedRoleType || "").trim();
     const revisitedContent = String((result as any)?.revisitedContent || "");
@@ -1568,7 +1573,6 @@ function createToonflowStore() {
       state.sendText = revisitedContent;
       state.notice = "已回溯到这句话之前，原内容已填入输入框";
     } else {
-      scheduleSessionNarrativeIfSystemTurn();
       state.notice = "已回溯到这句台词，可继续编排";
     }
   }
