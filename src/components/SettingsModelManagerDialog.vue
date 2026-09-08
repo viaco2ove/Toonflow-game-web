@@ -107,6 +107,10 @@ function isQwen060Manufacturer(manufacturer?: string | null): boolean {
   return String(manufacturer || "").trim().toLowerCase() === "qwen060";
 }
 
+function isMokaM3eManufacturer(manufacturer?: string | null): boolean {
+  return String(manufacturer || "").trim().toLowerCase() === "moka_m3e_small";
+}
+
 function defaultSlotManufacturer(): string {
   if (isVoiceDesignSlot()) {
     return "aliyun_direct";
@@ -217,6 +221,9 @@ const mossTtsNanoInstallState = ref<"idle" | "installing" | "polling">("idle");
 const qwen060Status = ref<{ status: string; canInstall: boolean; message: string } | null>(null);
 const qwen060InstallState = ref<"idle" | "installing" | "polling">("idle");
 let qwen060PollTimer: ReturnType<typeof setInterval> | null = null;
+const mokaM3eStatus = ref<{ status: string; installed: boolean; canInstall: boolean; message: string } | null>(null);
+const mokaM3eInstallState = ref<"idle" | "installing" | "polling">("idle");
+let mokaM3ePollTimer: ReturnType<typeof setInterval> | null = null;
 let mossTtsNanoPollTimer: ReturnType<typeof setInterval> | null = null;
 const toonflowApi = new ToonflowApi(() => ({ baseUrl: store.state.baseUrl, token: store.state.token }));
 const reasoningEffortOptions = [
@@ -264,9 +271,10 @@ const manufacturerOptions = computed(() =>
         || item.value === "local_birefnet"
         || item.value === "local_modnet";
     }
-    // 意图分析师槽位：只允许 local文本模型(qwen060) / 火山引擎 / DeepSeek / OpenAI / Gemini / t8star
+    // 意图分析师槽位：只允许 moka-m3e-small(向量模型) / qwen060 / 火山引擎 / DeepSeek / OpenAI / Gemini / t8star
     if (props.slotKey === "intentClassifierModel") {
-      return item.value === "qwen060"
+      return item.value === "moka_m3e_small"
+        || item.value === "qwen060"
         || item.value === "doubao"
         || item.value === "volcengine"
         || item.value === "deepseek"
@@ -310,7 +318,8 @@ const shouldShowTokenPricing = computed(() => props.configType === "text");
 const usesLocalAvatarMatting = computed(() => props.slotKey === "storyAvatarMattingModel" && isLocalAvatarMattingManufacturer(form.manufacturer));
 const usesMossTtsNano = computed(() => isMossTtsNanoManufacturer(form.manufacturer));
 const usesQwen060 = computed(() => isQwen060Manufacturer(form.manufacturer));
-const shouldShowBaseUrl = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value);
+const usesMokaM3e = computed(() => isMokaM3eManufacturer(form.manufacturer));
+const shouldShowBaseUrl = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value && !usesMokaM3e.value);
 const shouldShowApiKey = computed(() => !usesLocalAvatarMatting.value && !usesMossTtsNano.value && !usesQwen060.value);
 const isAutoDlTextConfig = computed(() => props.configType === "text" && isAutoDlTextManufacturer(form.manufacturer));
 const autodlTextModelOptions = computed(() => store.state.settingsTextModelList.autodl_chat || []);
@@ -469,11 +478,15 @@ watch(
   async (value) => {
     stopMossTtsNanoPoll();
     stopQwen060Poll();
-    if (!isMossTtsNanoManufacturer(value) && !isQwen060Manufacturer(value)) {
+    stopMokaM3ePoll();
+    const needsMokaM3e = isMokaM3eManufacturer(value);
+    if (!isMossTtsNanoManufacturer(value) && !isQwen060Manufacturer(value) && !needsMokaM3e) {
       mossTtsNanoStatus.value = null;
       mossTtsNanoInstallState.value = "idle";
       qwen060Status.value = null;
       qwen060InstallState.value = "idle";
+      mokaM3eStatus.value = null;
+      mokaM3eInstallState.value = "idle";
       return;
     }
     if (!showEditor.value) return;
@@ -512,6 +525,7 @@ watch(showEditor, async (visible) => {
   if (!visible) {
     stopMossTtsNanoPoll();
     stopQwen060Poll();
+    stopMokaM3ePoll();
     return;
   }
   // 打开编辑器时立即获取一次状态
@@ -531,6 +545,16 @@ watch(showEditor, async (visible) => {
       qwen060Status.value = s;
       if (s?.status === "installing") {
         startQwen060Poll();
+      }
+    } catch { /* noop */ }
+  }
+  // moka-m3e-small 安装状态
+  if (isMokaM3eManufacturer(form.manufacturer)) {
+    try {
+      const s = await toonflowApi.postPublic<any>("/ai/embedInstall/status", {});
+      mokaM3eStatus.value = s;
+      if (s?.status === "installing") {
+        startMokaM3ePoll();
       }
     } catch { /* noop */ }
   }
@@ -770,6 +794,80 @@ async function startQwen060Poll() {
     } catch {
       stopQwen060Poll();
       qwen060InstallState.value = "idle";
+    }
+  }, 3000);
+}
+
+// moka-m3e-small 本地向量模型安装
+async function installMokaM3e(reinstall = false) {
+  mokaM3eInstallState.value = "installing";
+  try {
+    await toonflowApi.postPublic("/ai/embedInstall/install", { reinstall });
+    startMokaM3ePoll();
+  } catch (err) {
+    store.state.notice = `moka-m3e-small 安装失败: ${(err as Error).message}`;
+    mokaM3eInstallState.value = "idle";
+  }
+}
+
+function stopMokaM3ePoll() {
+  if (mokaM3ePollTimer) {
+    clearInterval(mokaM3ePollTimer);
+    mokaM3ePollTimer = null;
+  }
+}
+
+async function stopMokaM3e() {
+  stopMokaM3ePoll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/embedInstall/stop", {});
+    mokaM3eStatus.value = s;
+  } catch { /* ignore */ }
+  mokaM3eInstallState.value = "idle";
+}
+
+async function resetMokaM3e() {
+  stopMokaM3ePoll();
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/embedInstall/reset", {});
+    mokaM3eStatus.value = s;
+  } catch { /* ignore */ }
+  mokaM3eInstallState.value = "idle";
+}
+
+async function startMokaM3ePoll() {
+  if (mokaM3ePollTimer) return;
+  mokaM3eInstallState.value = "polling";
+  try {
+    const s = await toonflowApi.postPublic<any>("/ai/embedInstall/status", {});
+    mokaM3eStatus.value = s;
+    if (s?.status !== "installing") {
+      mokaM3eInstallState.value = "idle";
+      return;
+    }
+  } catch {
+    mokaM3eInstallState.value = "idle";
+    return;
+  }
+  mokaM3ePollTimer = setInterval(async () => {
+    try {
+      const s = await toonflowApi.postPublic<any>("/ai/embedInstall/status", {});
+      mokaM3eStatus.value = s;
+      if (s?.status === "installed") {
+        store.state.notice = "moka-m3e-small 安装完成！";
+        stopMokaM3ePoll();
+        mokaM3eInstallState.value = "idle";
+      } else if (s?.status === "failed") {
+        store.state.notice = `安装失败: ${s.message || "未知错误"}`;
+        stopMokaM3ePoll();
+        mokaM3eInstallState.value = "idle";
+      } else if (s?.status === "not_installed") {
+        stopMokaM3ePoll();
+        mokaM3eInstallState.value = "idle";
+      }
+    } catch {
+      stopMokaM3ePoll();
+      mokaM3eInstallState.value = "idle";
     }
   }, 3000);
 }
@@ -1305,6 +1403,73 @@ async function confirmBinding() {
                 class="button settings-outline-btn settings-outline-btn--warn"
                 type="button"
                 @click="resetQwen060"
+              >
+                清除状态
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- moka-m3e-small 本地向量模型安装 -->
+        <div v-if="usesMokaM3e" class="field">
+          <label>本地安装</label>
+          <div class="settings-local-model-card">
+            <div class="settings-local-model-copy">
+              <div class="settings-local-model-title">moka-m3e-small 本地向量模型</div>
+              <div class="settings-local-model-text">
+                {{ mokaM3eStatus?.message || '首次使用需要安装模型文件。' }}
+              </div>
+            </div>
+            <!-- 未安装：显示立即安装按钮 -->
+            <button
+              v-if="mokaM3eStatus?.status === 'not_installed' || mokaM3eStatus === null"
+              class="button settings-outline-btn"
+              type="button"
+              :disabled="mokaM3eInstallState !== 'idle' || mokaM3eStatus?.canInstall === false"
+              @click="installMokaM3e(true)"
+            >
+              立即安装
+            </button>
+            <!-- 安装中/轮询中：显示停止 + 监听进度 -->
+            <button
+              v-else-if="mokaM3eStatus?.status === 'installing'"
+              class="button settings-outline-btn"
+              type="button"
+              @click="stopMokaM3e"
+            >
+              停止安装
+            </button>
+            <!-- 已安装：显示已安装状态 + 重新安装 -->
+            <div v-else-if="mokaM3eStatus?.status === 'installed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn settings-outline-btn--success"
+                type="button"
+                disabled
+              >
+                已安装
+              </button>
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="mokaM3eInstallState !== 'idle'"
+                @click="installMokaM3e(true)"
+              >
+                重新安装
+              </button>
+            </div>
+            <!-- 安装失败：显示重新安装 + 清除状态 -->
+            <div v-else-if="mokaM3eStatus?.status === 'failed'" class="settings-local-model-actions">
+              <button
+                class="button settings-outline-btn"
+                type="button"
+                :disabled="mokaM3eInstallState !== 'idle'"
+                @click="installMokaM3e(true)"
+              >
+                重新安装
+              </button>
+              <button
+                class="button settings-outline-btn settings-outline-btn--warn"
+                type="button"
+                @click="resetMokaM3e"
               >
                 清除状态
               </button>

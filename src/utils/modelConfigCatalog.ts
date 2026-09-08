@@ -181,6 +181,12 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "moka_m3e_small",
+    label: "moka-m3e-small 本地向量模型",
+    website: "https://huggingface.co/moka-ai/m3e-small",
+    defaults: {},
+  },
+  {
     value: "other",
     label: "其他",
     defaults: {},
@@ -477,6 +483,8 @@ export function isApiKeyRequiredFor(manufacturer: string, type: ModelConfigKind)
   // 本地文本模型不需要 API Key
   if (type === "text" && manufacturer === "qwen060") return false;
   if (type === "text" && manufacturer === "lmstudio") return false;
+  // 本地向量模型不需要 API Key
+  if (type === "text" && manufacturer === "moka_m3e_small") return false;
   return true;
 }
 
