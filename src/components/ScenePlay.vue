@@ -4056,7 +4056,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${liveFigureAvatar.displayedPath.value})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${liveFigureAvatar.displayedPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
