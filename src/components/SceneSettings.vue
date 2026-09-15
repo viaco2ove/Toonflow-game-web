@@ -4,13 +4,13 @@ import { useToonflowStore } from "../composables/useToonflowStore";
 import SettingsModelManagerDialog from "./SettingsModelManagerDialog.vue";
 import { storyPromptMeta } from "../utils/storyPromptCatalog";
 
-// 版本号：web 版本构建时内联，app 版本运行时从后端获取
-const webPkg = import.meta.glob("/package.json", { query: "?raw", import: "default", eager: true });
-const webVersion = ((webPkg["/package.json"] as any)?.version) || "";
+// 版本号：web 版本从 .env 内联，app 版本运行时从后端获取
+const webVersion = import.meta.env.VITE_APP_VERSION || "";
 const appVersion = ref("");
 onMounted(async () => {
   try {
-    const res = await fetch("/other/version");
+    const base = store.state.baseUrl.replace(/\/$/, "");
+    const res = await fetch(`${base}/other/version`);
     if (res.ok) {
       const data = await res.json() as { version?: string };
       appVersion.value = data.version || "";
