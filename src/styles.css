@@ -2031,6 +2031,14 @@ a {
   flex-wrap: wrap;
 }
 
+.settings-version-row {
+  color: #8a9ab5;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 4px;
+  align-self: center;
+}
+
 .settings-status-row {
   color: #435674;
   font-size: 14px;

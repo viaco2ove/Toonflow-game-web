@@ -4,6 +4,20 @@ import { useToonflowStore } from "../composables/useToonflowStore";
 import SettingsModelManagerDialog from "./SettingsModelManagerDialog.vue";
 import { storyPromptMeta } from "../utils/storyPromptCatalog";
 
+// 版本号：web 版本构建时内联，app 版本运行时从后端获取
+const webPkg = import.meta.glob("/package.json", { query: "?raw", import: "default", eager: true });
+const webVersion = ((webPkg["/package.json"] as any)?.version) || "";
+const appVersion = ref("");
+onMounted(async () => {
+  try {
+    const res = await fetch("/other/version");
+    if (res.ok) {
+      const data = await res.json() as { version?: string };
+      appVersion.value = data.version || "";
+    }
+  } catch { /* 忽略，后端不在线时 appVersion 为空 */ }
+});
+
 const store = useToonflowStore();
 
 type AccountDialogMode = "login" | "register" | "changePassword";
@@ -488,6 +502,8 @@ watch(
     <section class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">其他</div>
       <div class="settings-action-row">
+        <span v-if="appVersion" class="settings-version-row">App: v{{ appVersion }}</span>
+        <span v-if="webVersion" class="settings-version-row">Web: v{{ webVersion }}</span>
         <button v-if="store.state.token" class="button settings-outline-btn" type="button" @click="openTokenUsageDialog">token消耗</button>
         <button class="button settings-outline-btn" type="button" @click="checkUpdate">检查更新</button>
       </div>
