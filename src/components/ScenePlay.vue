@@ -1444,7 +1444,115 @@ let playbackRunId = 0;
 const isSessionPlaybackMode = computed(() => !store.state.debugMode && store.state.sessionViewMode === "playback");
 const inputMode = ref<"voice" | "text">("text");
 
-// 安卓设备模式检测
+// ========== @ 角色提及功能 ==========
+const mentionActive = ref(false);
+const mentionSearch = ref("");
+const mentionPosition = ref({ bottom: 0, left: 0 });
+const mentionSelectedIndex = ref(0);
+const mentionTriggerPos = ref(0);
+
+// 可被 @ 的角色列表（排除玩家自身）
+const mentionableRoles = computed(() => {
+  return roleCards.value.filter((r) => r.roleType !== "player" && r.name);
+});
+
+// 根据搜索词过滤角色
+const filteredMentionRoles = computed(() => {
+  const search = mentionSearch.value.trim().toLowerCase();
+  if (!search) return mentionableRoles.value;
+  return mentionableRoles.value.filter((r) => r.name.toLowerCase().includes(search));
+});
+
+// 处理输入框的 @ 触发
+function handleMentionInput(e: Event) {
+  const textarea = e.target as HTMLTextAreaElement;
+  const text = textarea.value;
+  const cursorPos = textarea.selectionStart;
+
+  // 在光标位置前查找最后一个 @
+  const textBeforeCursor = text.substring(0, cursorPos);
+  const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+  if (lastAtIndex === -1) {
+    // 没有 @，隐藏面板
+    mentionActive.value = false;
+    return;
+  }
+
+  // 检查 @ 后面是否有空格或其他字符
+  const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+  if (/\s/.test(textAfterAt)) {
+    // @ 后有空格，说明 @ 已使用，隐藏面板
+    mentionActive.value = false;
+    return;
+  }
+
+  // 检查 @ 是否在行首或是第一个字符后（简单判断）
+  // 只要 @ 后面没有空格，就激活提及面板
+  if (lastAtIndex >= 0) {
+    mentionActive.value = true;
+    mentionSearch.value = textAfterAt;
+    mentionTriggerPos.value = lastAtIndex;
+    mentionSelectedIndex.value = 0;
+
+    // 计算弹窗位置（输入框上方）
+    nextTick(() => {
+      const rect = textarea.getBoundingClientRect();
+      mentionPosition.value = {
+        bottom: window.innerHeight - rect.top + 8, // 输入框上方 8px
+        left: rect.left,
+      };
+    });
+  }
+}
+
+// 处理键盘事件 - 简化：仅支持 Esc 关闭
+function handleMentionKeydown(e: KeyboardEvent) {
+  if (!mentionActive.value) return;
+
+  if (e.key === "Escape") {
+    mentionActive.value = false;
+  }
+}
+
+// 选择角色
+function selectMentionRole(role: StoryRole) {
+  const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea.mention-active");
+  if (!textarea) return;
+
+  const text = store.state.sendText;
+  const cursorPos = textarea.selectionStart;
+
+  // 找到触发 @ 的位置
+  const textBeforeCursor = text.substring(0, cursorPos);
+  const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+  // 替换 @ 及后面的搜索文字为 @角色名
+  const textBeforeAt = text.substring(0, lastAtIndex);
+  const textAfterCursor = text.substring(cursorPos);
+  const selectedName = role.name;
+
+  store.state.sendText = textBeforeAt + "@" + selectedName + " " + textAfterCursor;
+
+  // 关闭面板并聚焦
+  mentionActive.value = false;
+
+  nextTick(() => {
+    const newPos = lastAtIndex + selectedName.length + 2; // +2 是因为 @ 和后面的空格
+    textarea.focus();
+    textarea.setSelectionRange(newPos, newPos);
+  });
+}
+
+// 点击其他地方关闭面板
+function handleMentionBlur() {
+  // 延迟关闭，避免点击选项时先触发 blur
+  setTimeout(() => {
+    mentionActive.value = false;
+  }, 150);
+}
+
+// ========== 安卓设备模式检测 ==========
 const isAndroidDevice = ref(false);
 function checkAndroidDevice() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -4654,9 +4762,13 @@ onBeforeUnmount(() => {
                 v-if="canPlayerInput && !androidSubmitting"
                 v-model="store.state.sendText"
                 class="play-textarea"
+                :class="{ 'mention-active': mentionActive }"
                 rows="1"
                 placeholder="输入一句话继续故事"
                 @keydown.enter.prevent="submit"
+                @input="handleMentionInput"
+                @keydown="handleMentionKeydown"
+                @blur="handleMentionBlur"
               ></textarea>
               <div v-else class="play-textarea play-textarea--processing">
                 {{ androidInputHint }}
@@ -4704,7 +4816,17 @@ onBeforeUnmount(() => {
         <!-- 网页端原有UI -->
         <template v-else-if="inputMode === 'text'">
           <div class="play-text-bar">
-            <textarea v-model="store.state.sendText" class="play-textarea" rows="1" :placeholder="playInputPlaceholder" :disabled="!canPlayerInput"></textarea>
+            <textarea
+              v-model="store.state.sendText"
+              class="play-textarea"
+              :class="{ 'mention-active': mentionActive }"
+              rows="1"
+              :placeholder="playInputPlaceholder"
+              :disabled="!canPlayerInput"
+              @input="handleMentionInput"
+              @keydown="handleMentionKeydown"
+              @blur="handleMentionBlur"
+            ></textarea>
             <button
               type="button"
               class="play-mini-round play-mini-round--voice"
@@ -4771,6 +4893,38 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </div>
+
+    <!-- @ 角色提及下拉列表 -->
+    <Teleport to="body">
+      <div
+        v-if="mentionActive && filteredMentionRoles.length > 0"
+        class="mention-dropdown"
+        :style="{
+          position: 'fixed',
+          bottom: mentionPosition.bottom + 'px',
+          left: mentionPosition.left + 'px',
+          zIndex: 9999
+        }"
+      >
+        <div class="mention-dropdown__header">
+          <span class="mention-dropdown__title">选择角色</span>
+          <button type="button" class="mention-dropdown__close" @mousedown.prevent="mentionActive = false">×</button>
+        </div>
+        <div class="mention-dropdown__list">
+          <div
+            v-for="(role, index) in filteredMentionRoles"
+            :key="role.id || role.name"
+            class="mention-dropdown__item"
+            :class="{ 'is-selected': index === mentionSelectedIndex }"
+            @mousedown.prevent="selectMentionRole(role)"
+            @mouseenter="mentionSelectedIndex = index"
+          >
+            <span class="mention-dropdown__name">@{{ role.name }}</span>
+            <span v-if="role.roleType === 'narrator'" class="mention-dropdown__tag">旁白</span>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <div v-if="menuOpen" class="message-menu-backdrop" @click.self="closeMenu">
       <div class="message-menu play-message-menu" :style="{ left: `${menuX}px`, top: `${menuY}px` }">
@@ -5106,5 +5260,102 @@ onBeforeUnmount(() => {
 .play-event-item__stage-arrow {
   color: rgba(223, 233, 255, 0.4);
   font-size: 10px;
+}
+
+/* ========== @ 角色提及下拉列表样式 ========== */
+.mention-dropdown {
+  max-width: 280px;
+  min-width: 160px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.mention-dropdown__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.mention-dropdown__title {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+.mention-dropdown__close {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #f3f4f6;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  color: #666;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.mention-dropdown__close:hover {
+  background: #e5e7eb;
+}
+
+.mention-dropdown__list {
+  height: 220px; /* 固定5行高度 */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db transparent;
+}
+
+.mention-dropdown__list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.mention-dropdown__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mention-dropdown__list::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 2px;
+}
+
+.mention-dropdown__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.mention-dropdown__item:last-child {
+  border-bottom: none;
+}
+
+.mention-dropdown__item:hover,
+.mention-dropdown__item.is-selected {
+  background: #f0f7ff;
+}
+
+.mention-dropdown__name {
+  font-size: 14px;
+  color: #111827;
+  font-weight: 500;
+}
+
+.mention-dropdown__tag {
+  font-size: 11px;
+  color: #666;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 </style>
