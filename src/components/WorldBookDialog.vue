@@ -22,6 +22,16 @@ const loading = ref(false);
 const editing = ref<Partial<WorldBookEntry> | null>(null);
 const editingIndex = ref(-1); // -1 表示新建
 const saving = ref(false);
+const isDragSelecting = ref(false);
+// keys/selectiveKeys 编辑时用独立 ref 暂存（与 editing.value 解耦，避免 Vue re-render 覆盖用户输入）
+const editingKeysText = ref('');
+const editingSelectiveKeysText = ref('');
+function setEditingKeysText(value: string) {
+  editingKeysText.value = value;
+}
+function setEditingSelectiveKeysText(value: string) {
+  editingSelectiveKeysText.value = value;
+}
 const importMode = ref<"replace" | "merge">("replace");
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -115,11 +125,18 @@ watch(
 function startCreate() {
   editing.value = emptyEntry();
   editingIndex.value = -1;
+  const keys = (editing.value as any)?.keys;
+  editingKeysText.value = keysToText(Array.isArray(keys) ? keys : []);
+  editingSelectiveKeysText.value = "";
 }
 
 function startEdit(entry: WorldBookEntry, index: number) {
   editing.value = JSON.parse(JSON.stringify(entry)) as WorldBookEntry;
   editingIndex.value = index;
+  const keys = (editing.value as any)?.keys;
+  const selKeys = (editing.value as any)?.selectiveKeys;
+  editingKeysText.value = keysToText(Array.isArray(keys) ? keys : []);
+  editingSelectiveKeysText.value = keysToText(Array.isArray(selKeys) ? selKeys : []);
 }
 
 function cancelEdit() {
@@ -138,8 +155,8 @@ async function saveEntry() {
     // keys/selectiveKeys 在表单里是换行分隔文本，转成数组
     const payload: Partial<WorldBookEntry> = {
       ...editing.value,
-      keys: parseKeyList((editing.value as any).keysText ?? editing.value.keys),
-      selectiveKeys: parseKeyList((editing.value as any).selectiveKeysText ?? editing.value.selectiveKeys),
+      keys: parseKeyList(editingKeysText.value),
+      selectiveKeys: parseKeyList(editingSelectiveKeysText.value),
     };
     const res = await api.value.saveWorldBookEntry(props.worldId, payload);
     if (editingIndex.value >= 0) {
@@ -236,23 +253,6 @@ function keysToText(keys: string[] | undefined): string {
   return Array.isArray(keys) ? keys.join("\n") : "";
 }
 
-// 编辑表单里 keys/selectiveKeys 用文本暂存（computed 保证响应式，输入时实时刷新）
-const editingKeysText = computed(() => {
-  const e = editing.value as any;
-  return e ? keysToText(e.keysText != null ? e.keysText : e.keys) : "";
-});
-const editingSelectiveKeysText = computed(() => {
-  const e = editing.value as any;
-  return e ? keysToText(e.selectiveKeysText != null ? e.selectiveKeysText : e.selectiveKeys) : "";
-});
-// 输入时写回暂存字段（editing.value 是 ref 解包后的对象，直接赋属性即可触发响应式）
-function setEditingKeysText(value: string) {
-  if (editing.value) (editing.value as any).keysText = value;
-}
-function setEditingSelectiveKeysText(value: string) {
-  if (editing.value) (editing.value as any).selectiveKeysText = value;
-}
-
 function isAgentChecked(agentValue: string): boolean {
   const list = (editing.value as any)?.agentList;
   if (!Array.isArray(list)) return false;
@@ -283,13 +283,23 @@ function toggleAgent(agentValue: string) {
   }
 }
 
+function handleBackdropMouseUp() {
+  // 如果是拖选文字后松开（selection 不为空），不关闭弹窗
+  if (window.getSelection()?.toString().trim()) {
+    isDragSelecting.value = true;
+    setTimeout(() => { isDragSelecting.value = false; }, 50);
+    return;
+  }
+  isDragSelecting.value = false;
+}
+
 function close() {
   emit("close");
 }
 </script>
 
 <template>
-  <div v-if="open" class="modal-backdrop world-book-backdrop" @click.self="close">
+  <div v-if="open" class="modal-backdrop world-book-backdrop" @click.self="isDragSelecting ? undefined : close()" @mouseup="handleBackdropMouseUp">
     <div class="modal-panel world-book-panel">
       <div class="modal-header">
         <div style="font-weight: 900;">世界书条目</div>

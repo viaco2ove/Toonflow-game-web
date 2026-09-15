@@ -6565,3 +6565,9 @@ body.android-device .nav {
   from { opacity: 1; }
   to { opacity: 0; }
 }
+
+/* 禁用浏览器滑动手势（触摸板左滑/触屏左滑）触发的历史后退导航 */
+/*html, body, #app {*/
+/*  overscroll-behavior: none;*/
+/*  overscroll-behavior-x: none;*/
+/*}*/
