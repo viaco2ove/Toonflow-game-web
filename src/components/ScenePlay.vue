@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {computed, ComputedRef, nextTick, onBeforeUnmount, onMounted, ref, unref, watch} from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import {estimateRevealDelayMs, useOrchestrationVoiceFlow} from "../composables/orchestrationVoiceFlow";
@@ -1987,6 +1987,9 @@ const liveFigureAvatar = useWebpAvatar(currentLiveFigureFgPath, {
   autoPlay: true,
   backendFirstFrameUrl: () => currentLiveFigureFirstFrame.value || undefined,
 });
+
+
+const liveFigureDisplayedPath = computed(() => unref(liveFigureAvatar.displayedPath));
 
 const playStageStyle = computed(() => {
   // 轻微的暗角效果（四个角有淡淡的阴影）
@@ -4056,7 +4059,7 @@ onBeforeUnmount(() => {
         class="play-figure-stage"
       >
         <div class="play-figure-stage__glow"></div>
-        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${liveFigureAvatar.displayedPath})`, backgroundSize:`auto 100%`}"></div>
+        <div v-if="currentLiveFigureFgPath" class="play-figure play-figure--fg" :key="currentLiveFigureFgPath" :style="{ backgroundImage: `url(${liveFigureDisplayedPath})`, backgroundSize:`auto 100%`}"></div>
         <div class="play-figure-stage__fade"></div>
       </div>
       <div
