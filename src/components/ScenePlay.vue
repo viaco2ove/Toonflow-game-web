@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
-import { useOrchestrationVoiceFlow } from "../composables/orchestrationVoiceFlow";
+import {estimateRevealDelayMs, useOrchestrationVoiceFlow} from "../composables/orchestrationVoiceFlow";
 import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
@@ -81,9 +81,9 @@ const currentChapter = computed(() => {
       ? {
         ...matchedChapter,
         ...sessionChapter,
-        completionCondition: sessionChapter.completionCondition ?? matchedChapter.completionCondition,
-        showCompletionCondition: sessionChapter.showCompletionCondition ?? matchedChapter.showCompletionCondition,
-        runtimeOutline: sessionChapter.runtimeOutline ?? matchedChapter.runtimeOutline,
+        completionCondition: sessionChapter?.completionCondition ?? matchedChapter.completionCondition,
+        showCompletionCondition: sessionChapter?.showCompletionCondition ?? matchedChapter.showCompletionCondition,
+        runtimeOutline: sessionChapter?.runtimeOutline ?? matchedChapter.runtimeOutline,
       }
       : sessionChapter;
   }
@@ -675,6 +675,11 @@ const debugOrchestratorRuntimeText = computed(() => {
     modelLabel,
   ].filter(Boolean).join(" · ");
 });
+// 定义类型（根据你实际字段调整）
+interface StageItem {
+  label?: string
+  // 其他字段...
+}
 const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
   const outline = asMiniRecord(currentChapter.value?.runtimeOutline);
   const phases = asMiniArray<Record<string, unknown>>(outline.phases);
@@ -707,7 +712,7 @@ const chapterOutlineEventItems = computed<RuntimeEventDigestItem[]>(() => {
     const eventIndex = items.length + 1;
 
     // 生成带状态的 summary
-    const stages = asMiniArray(phase.stages);
+    const stages : StageItem[] =asMiniArray(phase.stages);
     const currentStageIndex = Number(progress.stageIndex) || 0;
     let eventSummary: string;
 
@@ -1237,7 +1242,8 @@ const playTurnHint = computed(() => {
     return `正在处理${processingDots.value}`;
   }
   if (runtimeStatus === "error") {
-    return "编排失败，可点击重试";
+    // 触发【重新编排】的按钮的显示
+    return "编排失败，可点击【重试】";
   }
   if (sessionRuntimeStageText.value) return `${sessionRuntimeStageText.value}${processingDots.value}`;
   if (finishedSessionStatuses.has(status)) {
@@ -1425,7 +1431,22 @@ watch(
   { deep: true, immediate: true },
 );
 
-const battleEnemies = computed(() => {
+interface BattleEnemy {
+  enemyId: string
+  name?: string
+  isRoleEnemy: boolean
+  description?: string
+  level?: number
+  hp?: number | undefined
+  maxHp?: number
+  mp?: number
+  maxMp?: number
+  avatarPath?: string
+  avatarBgPath?: string
+  avatarDurationMs?: number
+  avatarFirstFramePath?: string
+}
+const battleEnemies = computed<BattleEnemy[]>(() => {
   const game = activeMiniGame.value;
   if (!game || game.gameType !== "battle") return [];
   return battleEnemiesFromMiniGame(game.publicState);
@@ -3794,20 +3815,20 @@ async function onMobileVoiceSend(text: string, mode: "dialogue" | "action") {
   await submit();
 }
 
-function onMobileVoiceStart() {
-  // 如果不是原生语音，使用 Web 录音
-  if (!hasNativeVoice.value && browserSpeechSupported.value) {
-    startVoiceRecognition();
-  }
-}
-
-function onMobileVoiceCancel() {
-  stopVoiceRecognition();
-}
-
-function onMobileVoiceModeChange(mode: "dialogue" | "action") {
-  mobileVoiceMode.value = mode;
-}
+// function onMobileVoiceStart() {
+//   // 如果不是原生语音，使用 Web 录音
+//   if (!hasNativeVoice.value && browserSpeechSupported.value) {
+//     startVoiceRecognition();
+//   }
+// }
+//
+// function onMobileVoiceCancel() {
+//   stopVoiceRecognition();
+// }
+//
+// function onMobileVoiceModeChange(mode: "dialogue" | "action") {
+//   mobileVoiceMode.value = mode;
+// }
 
 function beginVoiceHoldInteraction(target: EventTarget | null, startY: number, pointerId: number | null) {
   if (!canPlayerInput.value) {
@@ -4415,7 +4436,7 @@ onBeforeUnmount(() => {
                       :animation-duration="enemy.avatarDurationMs || 0"
                       :first-frame-path="enemy.avatarFirstFramePath || null"
                     >
-                      <span>{{ enemy.name.slice(0, 1) || "敌" }}</span>
+                      <span>{{ (enemy.name ?? "敌").slice(0, 1) }}</span>
                     </LayeredAvatar>
                   </div>
                   <div class="play-enemy-card__body">
@@ -4428,10 +4449,9 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="play-enemy-card__bar">
-                  <div class="play-enemy-card__bar-fill" :style="{ width: `${battleGaugePercent(enemy.hp, enemy.maxHp)}%` }"></div>
-                </div>
+                 </div>
                 <div class="play-enemy-card__bar play-enemy-card__bar--mana">
-                  <div class="play-enemy-card__bar-fill play-enemy-card__bar-fill--mana" :style="{ width: `${battleGaugePercent(enemy.mp, enemy.maxMp)}%` }"></div>
+                  <div class="play-enemy-card__bar-fill play-enemy-card__bar-fill--mana" :style="{ width: `${battleGaugePercent(enemy.mp ?? 0, enemy.maxMp ?? 0)}%` }"></div>
                 </div>
               </div>
             </div>
@@ -4773,6 +4793,7 @@ onBeforeUnmount(() => {
               <div v-else class="play-textarea play-textarea--processing">
                 {{ androidInputHint }}
               </div>
+              <button v-if="playTurnRetryable" type="button" class="play-mini-round play-mini-round--retry" @click="retryRuntimeMessage">重试</button>
               <button type="button" class="play-mini-round play-mini-round--voice" :disabled="!canPlayerInput" @click="inputMode = 'voice'">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 5a2.8 2.8 0 0 1 2.8 2.8v4.4a2.8 2.8 0 1 1-5.6 0V7.8A2.8 2.8 0 0 1 12 5z"></path>
@@ -4827,6 +4848,14 @@ onBeforeUnmount(() => {
               @keydown="handleMentionKeydown"
               @blur="handleMentionBlur"
             ></textarea>
+            <button
+              v-if="playTurnRetryable"
+              type="button"
+              class="play-mini-round play-mini-round--retry"
+              @click="retryRuntimeMessage"
+            >
+              重试
+            </button>
             <button
               type="button"
               class="play-mini-round play-mini-round--voice"

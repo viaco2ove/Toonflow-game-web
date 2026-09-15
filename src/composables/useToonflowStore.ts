@@ -1002,9 +1002,10 @@ function createToonflowStore() {
     loginUsername: storageGet("toonflow.loginUsername", "admin"),
     loginPassword: storageGet("toonflow.loginPassword", "admin123"),
     notice: "",
+    worldIntro: "",
     activeTab: "home" as AppTab,
     loading: false,
-    timeWeatherMode: (storageGet("toonflow.timeWeatherMode", "tick") as "tick" | "narrative" | "realtime"),
+    timeWeatherMode: (storageGet("toonflow.timeWeatherMode", "tick") as "tick" | "narrative" | "realtime" | "manual"),
     timeOfDayLabel: "清晨",
     weatherLabel: "晴",
     userName: storageGet("toonflow.userName", ""),
@@ -2245,7 +2246,7 @@ function createToonflowStore() {
     return next;
   }
 
-  function setTimeWeatherMode(mode: "tick" | "narrative" | "realtime") {
+  function setTimeWeatherMode(mode: "tick" | "narrative" | "realtime"| 'manual') {
     state.timeWeatherMode = mode;
     storageSet("toonflow.timeWeatherMode", mode);
     WebDebugLogUtil.log("play-head:timeWeatherMode", mode);
@@ -7771,10 +7772,10 @@ function createToonflowStore() {
       // ★ 编排失败（plan 实质为空）：显示明确的"编排错误"提示，重试按钮只重试编排
       if (error instanceof OrchestrationError) {
         showRuntimeRetryMessage(
-          "编排失败，AI 未返回有效结果。点击重新编排。",
+          "编排失败，AI 未返回有效结果。点击【重新编排】。",
           createRuntimeRetryRunner(performContinueSessionNarrative, {
             retryLabel: "重新编排",
-            formatErrorMessage: () => "编排失败，AI 未返回有效结果。点击重新编排。",
+            formatErrorMessage: () => "编排失败，AI 未返回有效结果。点击【重新编排】。",
           }),
           "重新编排",
         );

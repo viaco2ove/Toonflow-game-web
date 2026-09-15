@@ -6043,6 +6043,19 @@ textarea::-webkit-scrollbar-thumb {
   stroke-linejoin: round;
 }
 
+.play-mini-round--retry {
+  background: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 40px;
+}
+
+.play-mini-round--retry:hover {
+  background: #ff5252;
+}
+
 .play-voice-status {
   margin-top: 8px;
   padding: 8px 12px;
