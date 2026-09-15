@@ -277,6 +277,8 @@ watch(
       <button class="settings-back-btn" type="button" @click="store.setTab('my')">返回</button>
     </section>
 
+
+
     <section class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">请求地址配置</div>
       <div class="field">
@@ -285,6 +287,10 @@ watch(
       </div>
       <div class="settings-action-row">
         <button class="button primary settings-solid-btn" type="button" @click="store.saveConnection">保存连接</button>
+      </div>
+      <div class="settings-action-row">
+        <span>App:<span v-if="appVersion" class="settings-version-row"> v{{ appVersion }}</span></span>
+         <span>Web:<span v-if="webVersion" class="settings-version-row"> v{{ webVersion }}</span></span>
       </div>
     </section>
 
@@ -502,8 +508,8 @@ watch(
     <section class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">其他</div>
       <div class="settings-action-row">
-        <span v-if="appVersion" class="settings-version-row">App: v{{ appVersion }}</span>
-        <span v-if="webVersion" class="settings-version-row">Web: v{{ webVersion }}</span>
+        <span>App:<span v-if="appVersion" class="settings-version-row"> v{{ appVersion }}</span></span>
+         <span>Web:<span v-if="webVersion" class="settings-version-row"> v{{ webVersion }}</span></span>
         <button v-if="store.state.token" class="button settings-outline-btn" type="button" @click="openTokenUsageDialog">token消耗</button>
         <button class="button settings-outline-btn" type="button" @click="checkUpdate">检查更新</button>
       </div>
