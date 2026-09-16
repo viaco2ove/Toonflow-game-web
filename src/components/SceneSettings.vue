@@ -5,6 +5,12 @@ import SettingsModelManagerDialog from "./SettingsModelManagerDialog.vue";
 import { storyPromptMeta } from "../utils/storyPromptCatalog";
 
 // 版本号：web 版本从 .env 内联，app 版本运行时从后端获取
+let env_version = import.meta.env.VITE_APP_VERSION ;
+if(!env_version){
+  console.error("webVersion 版本错误:", env_version);
+}else {
+ console.log("webVersion 版本错误:", env_version);
+}
 const webVersion = import.meta.env.VITE_APP_VERSION || "1.0.1";
 const appVersion = ref("");
 onMounted(async () => {
