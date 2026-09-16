@@ -1073,6 +1073,8 @@ function createToonflowStore() {
     sessionViewMode: "live" as "live" | "playback",
     sessionPlaybackStartIndex: 0,
     sessionResumeLatestOnOpen: false,
+    sessionHasMoreHistory: false as boolean, // 回放/历史模式下是否还有更早的消息可加载
+    sessionHistoryLoading: false as boolean, // 加载更多历史中
     sessionStartupPriming: false,
     sessionOpening: false,
     sessionOpeningStage: "",
@@ -6305,6 +6307,7 @@ function createToonflowStore() {
               metaToFirstMessageMs: metaAt > 0 ? metaAt - streamStartAt : -1,
               streamTotalMs: Date.now() - streamStartAt,
             });
+            state.sessionHasMoreHistory = Boolean(summary.hasMore);
           },
         },
         { messageLimit: 30 },
@@ -6326,6 +6329,36 @@ function createToonflowStore() {
     } finally {
       state.sessionOpening = false;
       state.sessionOpeningStage = "";
+    }
+  }
+
+  /** 瀑布式加载更多历史消息（向前翻页） */
+  async function loadMoreSessionHistory(): Promise<void> {
+    if (state.sessionHistoryLoading) return;
+    const sessionId = state.currentSessionId.trim();
+    if (!sessionId) return;
+    const earliestId = state.messages.reduce((min, m) => {
+      const id = Number(m.id || 0);
+      return id > 0 && (min === 0 || id < min) ? id : min;
+    }, 0);
+    if (!earliestId) return;
+    state.sessionHistoryLoading = true;
+    try {
+      await api.openSessionStream(
+        sessionId,
+        {
+          onMessage: async (msg) => {
+            // 追加到列表头部（更早的消息）
+            state.messages = [msg, ...state.messages];
+          },
+          onDone: async (summary) => {
+            state.sessionHasMoreHistory = Boolean(summary.hasMore);
+          },
+        },
+        { beforeMessageId: earliestId },
+      );
+    } finally {
+      state.sessionHistoryLoading = false;
     }
   }
 
@@ -8066,6 +8099,7 @@ function createToonflowStore() {
     continueSessionForWorld,
     quickStart,
     openSession,
+    loadMoreSessionHistory,
     retryOpenCurrentSession,
     startOrchestrationChecker,
     stopOrchestrationChecker,

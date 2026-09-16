@@ -1597,6 +1597,54 @@ function checkAndroidDevice() {
     isAndroidDevice.value = true;
   }
 }
+// 复用 messageViewport（已绑定 .play-thread），监听滚动实现瀑布式加载
+function setupHistoryScrollListener() {
+  const el = messageViewport.value;
+  if (!el) return;
+  el.addEventListener("scroll", historyScrollHandler, { passive: true });
+}
+
+function cleanupHistoryScrollListener() {
+  const el = messageViewport.value;
+  if (historyScrollHandler && el) {
+    el.removeEventListener("scroll", historyScrollHandler);
+  }
+}
+
+// 滚动到顶部时触发加载更多（复用 messageViewport ref）
+// 用一个"必须先向下滚动再向上滚才能触发"的策略避免死循环：
+// - 加载完成后，scrollTop 自然回到接近 0，会再次触发 scroll event
+// - 只有当用户曾经向下滚动（"离开过顶部"），再滚回来时，才允许触发加载
+let lastTriggerAt = 0;
+let hasScrolledAwayFromTop = false;
+const TOP_TRIGGER_THRESHOLD = 50;
+const AWAY_FROM_TOP_THRESHOLD = 120;
+const historyScrollHandler = () => {
+  const el = messageViewport.value;
+  if (!el) return;
+  if (el.scrollTop > AWAY_FROM_TOP_THRESHOLD) {
+    hasScrolledAwayFromTop = true;
+    return;
+  }
+  if (el.scrollTop > TOP_TRIGGER_THRESHOLD) {
+    // 处于中间区：取消"已离开顶部"标记，但不触发加载
+    return;
+  }
+  // 已经在顶部：只有当用户曾经离开过顶部，这次滚回来才触发
+  if (!hasScrolledAwayFromTop) return;
+  if (!store.state.sessionHasMoreHistory) return;
+  if (store.state.sessionHistoryLoading) return;
+  const now = Date.now();
+  if (now - lastTriggerAt < 800) return;
+  hasScrolledAwayFromTop = false; // 触发后立即重置，避免反复触发
+  lastTriggerAt = now;
+  store.loadMoreSessionHistory().then(() => {
+    nextTick(() => {
+      // 新消息已经 unshift 到列表头部，加载完成后无需调整滚动位置
+    });
+  });
+};
+
 onMounted(() => {
   checkAndroidDevice();
   startWorldClockPolling();
@@ -1623,6 +1671,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("permission-denied", onPermissionDenied);
   }
   stopWorldClockPolling();
+  cleanupHistoryScrollListener();
 });
 
 let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
@@ -2737,6 +2786,12 @@ watch(playMode, (mode) => {
   if (mode === "tips" || mode === "setting") {
     closeMenu();
     stopRuntimeVoicePlayback();
+  }
+  // 进入/退出历史模式时设置/清理瀑布式加载监听
+  if (mode === "history" && !(isSessionPlaybackMode.value && playbackViewMode.value === "single")) {
+    nextTick(setupHistoryScrollListener);
+  } else {
+    cleanupHistoryScrollListener();
   }
 });
 
@@ -4072,6 +4127,12 @@ onBeforeUnmount(() => {
       >
         <div v-if="!displayMessages.length && !playOpenOverlayVisible" class="play-empty">{{ emptySessionHint }}<button v-if="playTurnRetryable" type="button" class="play-empty-retry" @click="retryRuntimeMessage">[重试]</button></div>
         <div v-else-if="playMode === 'history' && !(isSessionPlaybackMode && playbackViewMode === 'single')" class="play-thread__history">
+          <!-- 瀑布式加载指示器 -->
+          <div v-if="store.state.sessionHistoryLoading" class="play-history-loading">
+            <span class="play-history-loading__dot"></span>
+            <span class="play-history-loading__dot"></span>
+            <span class="play-history-loading__dot"></span>
+          </div>
           <template v-for="message in displayMessages" :key="message.id">
             <article
               v-if="isRuntimeRetryMessage(message)"
@@ -5389,5 +5450,28 @@ onBeforeUnmount(() => {
   background: #f3f4f6;
   padding: 2px 6px;
   border-radius: 4px;
+}
+/* 瀑布式加载指示器 */
+.play-history-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  color: #999;
+  font-size: 13px;
+}
+.play-history-loading__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ccc;
+  animation: play-history-loading-pulse 1.2s ease-in-out infinite;
+}
+.play-history-loading__dot:nth-child(2) { animation-delay: 0.2s; }
+.play-history-loading__dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes play-history-loading-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 </style>

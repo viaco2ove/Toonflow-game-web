@@ -327,7 +327,7 @@ export class ToonflowApi {
       onMessage?: (msg: MessageItem) => void | Promise<void>;
       onDone?: (summary: { total: number; minId: number; hasMore: boolean }) => void | Promise<void>;
     },
-    options?: { messageLimit?: number },
+    options?: { messageLimit?: number; beforeMessageId?: number },
   ): Promise<void> {
     const controller = new AbortController();
     let idleTimer = 0;
@@ -356,6 +356,8 @@ export class ToonflowApi {
         body: JSON.stringify({
           sessionId,
           messageLimit: options?.messageLimit ?? 30,
+          // 首次加载时用 messageLimit 截断；加载更多历史时传 beforeMessageId 向前翻页
+          beforeMessageId: options?.beforeMessageId ?? undefined,
         }),
         signal: controller.signal,
       });
