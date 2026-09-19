@@ -5500,8 +5500,9 @@ textarea::-webkit-scrollbar-thumb {
   border: 1px solid rgba(188, 204, 226, 0.18);
   box-shadow: 0 14px 28px rgba(5, 14, 26, 0.24);
   backdrop-filter: blur(12px);
-  line-height: 5px;
+  /*line-height: 5px;*/
   /* 任务/小游戏面板需要始终压在立绘之上，否则展开详情时会被绝对定位的角色前景遮住。 */
+  line-height: 1.4;
 }
 
 .play-mini-game-panel__head {
@@ -5535,6 +5536,8 @@ textarea::-webkit-scrollbar-thumb {
   color: #dce9ff;
   font-size: 11px;
   font-weight: 800;
+  position: absolute;
+  right: 0;
 }
 
 .play-mini-game-panel__summary {
@@ -5542,12 +5545,16 @@ textarea::-webkit-scrollbar-thumb {
   gap: 12px;
   flex-wrap: wrap;
   padding: 4px 0;
+  max-height: 62px;
+  overflow-y: auto;
 }
 
 .play-mini-game-panel__summary-item {
   color: rgba(213, 235, 255, 0.78);
   font-size: 12px;
-  white-space: nowrap;
+  /*white-space: nowrap;*/
+  white-space: normal;
+  word-break: break-all;
 }
 
 .play-mini-game-panel__state {

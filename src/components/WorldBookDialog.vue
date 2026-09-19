@@ -297,6 +297,11 @@ function handleBackdropMouseUp() {
 function close() {
   emit("close");
 }
+
+// 正文字数统计 + 超过2000 红色提示
+const MAX_RED_CONTENT_LENGTH = 2000;
+const contentLen = computed(() => (editing.value?.content ?? '').length);
+const contentOver = computed(() => contentLen.value > MAX_RED_CONTENT_LENGTH);
 </script>
 
 <template>
@@ -441,7 +446,7 @@ function close() {
           <div class="field">
             <label>正文 content（注入到 AI 上下文，须自描述）</label>
             <textarea v-model="editing.content" class="input world-book-textarea world-book-content" rows="8" placeholder="[条目名] 正文内容..."></textarea>
-            <label> <span class="counter">当前字数：{{ editing.content?.length ?? 0 }}(超过2000激活时会被截断)</span></label>
+            <label> <span class="counter" :class="[ contentOver ? 'over' : '' ]">当前字数：{{ editing.content?.length ?? 0 }}(超过2000激活时会被截断)</span></label>
           </div>
           <div class="world-book-form-actions">
             <button class="button" type="button" @click="cancelEdit">取消</button>

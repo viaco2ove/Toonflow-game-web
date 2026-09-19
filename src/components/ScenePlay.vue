@@ -1495,7 +1495,7 @@ const commandOptions: CommandOption[] = [
   { id: "alchemy", label: "炼药", desc: "炼制药剂", icon: "🧪" },
   { id: "exit", label: "退出", desc: "退出当前小游戏", icon: "🚪" },
   { id: "sell", label: "卖出", desc: "卖出物品换钱", icon: "💰" },
-  { id: "shop", label: "打开商城", desc: "打开商城", icon: "🛒" },
+  { id: "shop", label: "商城", desc: "打开系统商城", icon: "🏪" },
   { id: "inventory", label: "背包", desc: "查看背包", icon: "🎒" },
   { id: "status", label: "状态", desc: "查看状态", icon: "📊" },
   { id: "map", label: "地图", desc: "查看地图", icon: "🗺️" },
@@ -1991,6 +1991,19 @@ const eventProgressOpen = ref(true);
 // ★ 激活的世界书（阶段2 debug）：实时观察本轮注入了哪些世界书条目
 //   数据来自 /game/storyInfo 返回（后端编排时写入 state.vars，storyInfo 读出），不走 /game/orchestration
 const worldBookOpen = ref(false);
+const shopPanelOpen = ref(false);
+const shopPanelData = computed(() => store.state.shopPanel);
+
+function toggleShopPanel() {
+  shopPanelOpen.value = !shopPanelOpen.value;
+  // 打开面板时，若有数据，自动滚到面板位置
+  if (shopPanelOpen.value) {
+    nextTick(() => {
+      const el = document.querySelector(".play-inline-card--shop");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+}
 const worldBookPage = ref(1);
 const WORLD_BOOK_PAGE_SIZE = 5;
 const activatedWorldBookList = computed(() => store.state.activatedWorldBook || []);
@@ -4674,6 +4687,43 @@ onBeforeUnmount(() => {
               <button type="button" class="button small" :disabled="worldBookPage <= 1" @click="worldBookPrev">上一页</button>
               <span>第 {{ worldBookPage }} / {{ worldBookTotalPages }} 页</span>
               <button type="button" class="button small" :disabled="worldBookPage >= worldBookTotalPages" @click="worldBookNext">下一页</button>
+            </div>
+          </template>
+        </div>
+
+        <button type="button" class="play-link-row" @click="toggleShopPanel">
+          <span>系统商城</span>
+          <span>{{ shopPanelOpen ? "收起 >" : ">" }}</span>
+        </button>
+        <div v-if="shopPanelOpen" class="play-inline-card">
+          <div class="play-inline-card__title">商城面板</div>
+          <div v-if="!shopPanelData" class="play-inline-card__text" style="color:rgba(216,230,249,0.45);font-style:italic;">
+            输入 #打开商城 / #查看短刀多少钱 / #查看武器类 激活。
+          </div>
+          <template v-else>
+            <div v-if="shopPanelData.narration" class="play-inline-card__text" style="margin-bottom:8px;">
+              {{ shopPanelData.narration }}
+            </div>
+            <div v-if="shopPanelData.categories?.length" class="play-world-book-list">
+              <div v-for="cat in shopPanelData.categories" :key="cat.key" class="play-world-book-item">
+                <div class="play-world-book-item__head">
+                  <span class="play-world-book-item__title">{{ cat.label }}</span>
+                  <span class="play-world-book-tag">{{ cat.key }}</span>
+                </div>
+                <div v-if="cat.sampleItems?.length" class="play-world-book-item__content" style="opacity:0.75;">
+                  示例：{{ cat.sampleItems.join("、") }}
+                </div>
+              </div>
+            </div>
+            <div v-if="shopPanelData.items?.length" class="play-world-book-list" style="margin-top:8px;">
+              <div v-for="(it, idx) in shopPanelData.items" :key="`${it.category}_${idx}_${it.name}`" class="play-world-book-item">
+                <div class="play-world-book-item__head">
+                  <span class="play-world-book-item__title">{{ it.name }}</span>
+                  <span class="play-world-book-tag">{{ it.category }}</span>
+                  <span class="play-world-book-tag play-world-book-tag--sticky">{{ it.price }} 金</span>
+                </div>
+                <div v-if="it.desc" class="play-world-book-item__content">{{ it.desc }}</div>
+              </div>
             </div>
           </template>
         </div>

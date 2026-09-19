@@ -1105,7 +1105,14 @@ function createToonflowStore() {
     debugRuntimeState: {} as Record<string, unknown>,
     debugLatestPlan: null as DebugNarrativePlan | null,
     // ★ 阶段2 debug:本轮编排激活的世界书条目，由 /game/storyInfo 返回，面板展示用
-    activatedWorldBook: [] as { title: string; category: string; constant: boolean; content: string }[],
+    activatedWorldBook: [] as { title: string; category: string; constant: boolean; content: string; sticky?: number }[],
+    // ★ #打开商城 等命令回包的商城数据，由 appendStreamedMessage 写入，ScenePlay 商城面板展示
+    shopPanel: null as null | {
+      categories: Array<{ key: string; label: string; sampleItems?: string[] }>;
+      items: Array<{ category: string; name: string; price: number; desc?: string }>;
+      narration: string;
+      source: string;
+    },
     debugStatePreview: "{}",
     debugEndDialog: null as string | null,
     debugEndDialogDetail: "",
@@ -2592,6 +2599,20 @@ function createToonflowStore() {
       ? normalizeSessionRuntimeMessage(msg, state.messages.length + 1, turnState)
       : msg;
     state.messages = [...state.messages, normalized];
+    // ★ #打开商城 / 商城小游戏 中：把 meta.miniGame.publicState 同步到顶层 state.shopPanel
+    const meta = (normalized as any).meta;
+    if (meta && meta.miniGame && meta.miniGame.gameType === "shop") {
+      const ps = meta.miniGame.publicState || {};
+      state.shopPanel = {
+        categories: Array.isArray(ps.categories) ? ps.categories : [],
+        items: Array.isArray(ps.items) ? ps.items : [],
+        narration: typeof ps.narration === "string" ? ps.narration : "",
+        source: "ai",
+      };
+    } else if (normalized && (normalized as any).eventType === "on_shop_open" && meta?.shop) {
+      // 兼容旧 one-shot 命令的回包
+      state.shopPanel = meta.shop;
+    }
     if (state.sessionDetail) {
       state.sessionDetail = {
         ...state.sessionDetail,
