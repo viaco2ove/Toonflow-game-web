@@ -50,6 +50,11 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     agentLabel: "mini_game_agent",
     tsLabel: "src/agents/story/mini_game/index.ts",
   },
+  "story-mini-game-speech": {
+    code: "story-mini-game-speech",
+    agentLabel: "mini_game_speech",
+    tsLabel: "src/modules/game-runtime/engines/MiniGameController.ts",
+  },
   "story-mini-game-battle": {
     code: "story-mini-game-battle",
     agentLabel: "mini_game_battle",
@@ -89,6 +94,11 @@ export const STORY_PROMPT_META: Record<string, StoryPromptMeta> = {
     code: "story-mini-game-upgrade-equipment",
     agentLabel: "mini_game_upgrade_equipment",
     tsLabel: "src/agents/story/mini_game/index.ts",
+  },
+  "story-sell-item": {
+    code: "story-sell-item",
+    agentLabel: "mini_game_sell_item",
+    tsLabel: "src/modules/game-runtime/services/MiniGameSellService.ts",
   },
   "story-safety": {
     code: "story-safety",

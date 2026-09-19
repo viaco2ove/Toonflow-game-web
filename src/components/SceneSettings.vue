@@ -103,6 +103,7 @@ const storyPromptRows = computed(() =>
 );
 const miniGamePromptCodes = new Set([
   "story-mini-game",
+  "story-mini-game-speech",
   "story-mini-game-battle",
   "story-mini-game-fishing",
   "story-mini-game-werewolf",
@@ -111,6 +112,7 @@ const miniGamePromptCodes = new Set([
   "story-mini-game-research-skill",
   "story-mini-game-alchemy",
   "story-mini-game-upgrade-equipment",
+  "story-sell-item",
 ]);
 const taskPromptCodes = new Set([
   "intent-analyzer",
