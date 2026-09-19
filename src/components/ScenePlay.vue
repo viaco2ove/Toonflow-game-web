@@ -1490,7 +1490,7 @@ const commandOptions: CommandOption[] = [
   { id: "battle", label: "战斗", desc: "进入战斗", icon: "⚔️" },
   { id: "fishing", label: "钓鱼", desc: "开始钓鱼", icon: "🎣" },
   { id: "cultivation", label: "修炼", desc: "开始修炼", icon: "🧘" },
-  { id: "mining", label: "采矿", desc: "去挖矿", icon: "⛏️" },
+  { id: "mining", label: "挖矿", desc: "去挖矿", icon: "⛏️" },
   { id: "alchemy", label: "炼药", desc: "炼制药剂", icon: "🧪" },
   { id: "exit", label: "退出", desc: "退出当前小游戏", icon: "🚪" },
   { id: "sell", label: "卖出", desc: "卖出物品换钱", icon: "💰" },
