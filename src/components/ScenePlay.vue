@@ -4928,7 +4928,7 @@ onBeforeUnmount(() => {
                 v-if="canPlayerInput && !androidSubmitting"
                 v-model="store.state.sendText"
                 class="play-textarea"
-                :class="{ 'mention-active': mentionActive }"
+                :class="{ 'mention-active': mentionActive || commandActive }"
                 rows="1"
                 placeholder="输入一句话继续故事"
                 @keydown.enter.prevent="submit"
@@ -4986,7 +4986,7 @@ onBeforeUnmount(() => {
             <textarea
               v-model="store.state.sendText"
               class="play-textarea"
-              :class="{ 'mention-active': mentionActive }"
+              :class="{ 'mention-active': mentionActive || commandActive }"
               rows="1"
               :placeholder="playInputPlaceholder"
               :disabled="!canPlayerInput"
