@@ -1465,12 +1465,44 @@ let playbackRunId = 0;
 const isSessionPlaybackMode = computed(() => !store.state.debugMode && store.state.sessionViewMode === "playback");
 const inputMode = ref<"voice" | "text">("text");
 
-// ========== @ 角色提及功能 ==========
+// ========== @/# 触发面板 ==========
 const mentionActive = ref(false);
 const mentionSearch = ref("");
 const mentionPosition = ref({ bottom: 0, left: 0 });
 const mentionSelectedIndex = ref(0);
 const mentionTriggerPos = ref(0);
+
+// # 命令触发状态
+const commandActive = ref(false);
+const commandSearch = ref("");
+const commandTriggerPos = ref(0);
+
+// # 命令选项列表
+const commandOptions = [
+  { id: "mini_game", label: "小游戏", desc: "触发小游戏", icon: "🎮" },
+  { id: "battle", label: "战斗", desc: "进入战斗", icon: "⚔️" },
+  { id: "fishing", label: "钓鱼", desc: "开始钓鱼", icon: "🎣" },
+  { id: "cultivation", label: "修炼", desc: "开始修炼", icon: "🧘" },
+  { id: "mining", label: "采矿", desc: "去挖矿", icon: "⛏️" },
+  { id: "alchemy", label: "炼药", desc: "炼制药剂", icon: "🧪" },
+  { id: "exit", label: "退出", desc: "退出当前小游戏", icon: "🚪" },
+  { id: "sell", label: "卖出", desc: "卖出物品换钱", icon: "💰" },
+  { id: "inventory", label: "背包", desc: "查看背包", icon: "🎒" },
+  { id: "status", label: "状态", desc: "查看状态", icon: "📊" },
+  { id: "map", label: "地图", desc: "查看地图", icon: "🗺️" },
+  { id: "quest", label: "任务", desc: "查看任务", icon: "📜" },
+];
+
+// 根据搜索词过滤命令
+const filteredCommandOptions = computed(() => {
+  const search = commandSearch.value.trim().toLowerCase();
+  if (!search) return commandOptions;
+  return commandOptions.filter(c => 
+    c.label.toLowerCase().includes(search) || 
+    c.desc.toLowerCase().includes(search) ||
+    c.id.toLowerCase().includes(search)
+  );
+});
 
 // 可被 @ 的角色列表（排除玩家自身）
 const mentionableRoles = computed(() => {
@@ -1484,55 +1516,83 @@ const filteredMentionRoles = computed(() => {
   return mentionableRoles.value.filter((r) => r.name.toLowerCase().includes(search));
 });
 
-// 处理输入框的 @ 触发
+// 处理输入框的 @ / # 触发
 function handleMentionInput(e: Event) {
   const textarea = e.target as HTMLTextAreaElement;
   const text = textarea.value;
   const cursorPos = textarea.selectionStart;
 
-  // 在光标位置前查找最后一个 @
   const textBeforeCursor = text.substring(0, cursorPos);
+
+  // 查找最后一个 @ 和 #
   const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+  const lastHashIndex = textBeforeCursor.lastIndexOf("#");
 
-  if (lastAtIndex === -1) {
-    // 没有 @，隐藏面板
-    mentionActive.value = false;
-    return;
-  }
+  // 检查触发符后是否有空格
+  const atAfter = lastAtIndex >= 0 ? textBeforeCursor.substring(lastAtIndex + 1) : "";
+  const hashAfter = lastHashIndex >= 0 ? textBeforeCursor.substring(lastHashIndex + 1) : "";
+  const atValid = lastAtIndex >= 0 && !/\s/.test(atAfter);
+  const hashValid = lastHashIndex >= 0 && !/\s/.test(hashAfter);
 
-  // 检查 @ 后面是否有空格或其他字符
-  const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
-  if (/\s/.test(textAfterAt)) {
-    // @ 后有空格，说明 @ 已使用，隐藏面板
-    mentionActive.value = false;
-    return;
-  }
+  // 隐藏所有面板
+  mentionActive.value = false;
+  commandActive.value = false;
 
-  // 检查 @ 是否在行首或是第一个字符后（简单判断）
-  // 只要 @ 后面没有空格，就激活提及面板
-  if (lastAtIndex >= 0) {
+  if (atValid && (!hashValid || lastAtIndex > lastHashIndex)) {
+    // @ 角色提及
     mentionActive.value = true;
-    mentionSearch.value = textAfterAt;
+    mentionSearch.value = atAfter;
     mentionTriggerPos.value = lastAtIndex;
     mentionSelectedIndex.value = 0;
-
-    // 计算弹窗位置（输入框上方）
-    nextTick(() => {
-      const rect = textarea.getBoundingClientRect();
-      mentionPosition.value = {
-        bottom: window.innerHeight - rect.top + 8, // 输入框上方 8px
-        left: rect.left,
-      };
-    });
+    showMentionDropdown(textarea);
+  } else if (hashValid) {
+    // # 命令
+    commandActive.value = true;
+    commandSearch.value = hashAfter;
+    commandTriggerPos.value = lastHashIndex;
+    mentionSelectedIndex.value = 0;
+    showMentionDropdown(textarea);
   }
 }
 
-// 处理键盘事件 - 简化：仅支持 Esc 关闭
+function showMentionDropdown(textarea: HTMLTextAreaElement) {
+  nextTick(() => {
+    const rect = textarea.getBoundingClientRect();
+    mentionPosition.value = {
+      bottom: window.innerHeight - rect.top + 8,
+      left: rect.left,
+    };
+  });
+}
+
+// 处理键盘事件 - @/# 面板
 function handleMentionKeydown(e: KeyboardEvent) {
-  if (!mentionActive.value) return;
+  if (!mentionActive.value && !commandActive.value) return;
 
   if (e.key === "Escape") {
     mentionActive.value = false;
+    commandActive.value = false;
+    return;
+  }
+
+  // 上下键导航
+  const isCommand = commandActive.value;
+  const items = isCommand ? filteredCommandOptions.value : filteredMentionRoles.value;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    mentionSelectedIndex.value = (mentionSelectedIndex.value + 1) % items.length;
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    mentionSelectedIndex.value = (mentionSelectedIndex.value - 1 + items.length) % items.length;
+  } else if (e.key === "Enter" && items.length > 0) {
+    e.preventDefault();
+    const idx = mentionSelectedIndex.value;
+    if (commandActive.value) {
+      selectCommand(filteredCommandOptions.value[idx]);
+    } else if (mentionActive.value) {
+      selectMentionRole(filteredMentionRoles.value[idx]);
+    }
   }
 }
 
@@ -1565,11 +1625,33 @@ function selectMentionRole(role: StoryRole) {
   });
 }
 
+// 选择命令
+function selectCommand(cmd: { id: string; label: string; desc: string; icon: string }) {
+  const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea.mention-active");
+  if (!textarea) return;
+
+  const text = store.state.sendText;
+  const cursorPos = textarea.selectionStart;
+  const textBeforeCursor = text.substring(0, cursorPos);
+  const textAfterCursor = text.substring(cursorPos);
+
+  // 替换 # 及后面的搜索文字为 #命令名
+  store.state.sendText = textBeforeCursor.substring(0, commandTriggerPos.value) + "#" + cmd.label + " " + textAfterCursor;
+
+  commandActive.value = false;
+
+  nextTick(() => {
+    const newPos = commandTriggerPos.value + cmd.label.length + 2;
+    textarea.focus();
+    textarea.setSelectionRange(newPos, newPos);
+  });
+}
+
 // 点击其他地方关闭面板
 function handleMentionBlur() {
-  // 延迟关闭，避免点击选项时先触发 blur
   setTimeout(() => {
     mentionActive.value = false;
+    commandActive.value = false;
   }, 150);
 }
 
@@ -4987,10 +5069,10 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- @ 角色提及下拉列表 -->
+    <!-- @/# 触发面板 -->
     <Teleport to="body">
       <div
-        v-if="mentionActive && filteredMentionRoles.length > 0"
+        v-if="(mentionActive && filteredMentionRoles.length > 0) || (commandActive && filteredCommandOptions.length > 0)"
         class="mention-dropdown"
         :style="{
           position: 'fixed',
@@ -5000,21 +5082,39 @@ onBeforeUnmount(() => {
         }"
       >
         <div class="mention-dropdown__header">
-          <span class="mention-dropdown__title">选择角色</span>
-          <button type="button" class="mention-dropdown__close" @mousedown.prevent="mentionActive = false">×</button>
+          <span class="mention-dropdown__title">{{ commandActive ? '命令' : '选择角色' }}</span>
+          <button type="button" class="mention-dropdown__close" @mousedown.prevent="mentionActive = false; commandActive = false">×</button>
         </div>
         <div class="mention-dropdown__list">
-          <div
-            v-for="(role, index) in filteredMentionRoles"
-            :key="role.id || role.name"
-            class="mention-dropdown__item"
-            :class="{ 'is-selected': index === mentionSelectedIndex }"
-            @mousedown.prevent="selectMentionRole(role)"
-            @mouseenter="mentionSelectedIndex = index"
-          >
-            <span class="mention-dropdown__name">@{{ role.name }}</span>
-            <span v-if="role.roleType === 'narrator'" class="mention-dropdown__tag">旁白</span>
-          </div>
+          <!-- @ 角色列表 -->
+          <template v-if="!commandActive">
+            <div
+              v-for="(role, index) in filteredMentionRoles"
+              :key="role.id || role.name"
+              class="mention-dropdown__item"
+              :class="{ 'is-selected': index === mentionSelectedIndex }"
+              @mousedown.prevent="selectMentionRole(role)"
+              @mouseenter="mentionSelectedIndex = index"
+            >
+              <span class="mention-dropdown__name">@{{ role.name }}</span>
+              <span v-if="role.roleType === 'narrator'" class="mention-dropdown__tag">旁白</span>
+            </div>
+          </template>
+          <!-- # 命令列表 -->
+          <template v-else>
+            <div
+              v-for="(cmd, index) in filteredCommandOptions"
+              :key="cmd.id"
+              class="mention-dropdown__item mention-dropdown__item--command"
+              :class="{ 'is-selected': index === mentionSelectedIndex }"
+              @mousedown.prevent="selectCommand(cmd)"
+              @mouseenter="mentionSelectedIndex = index"
+            >
+              <span class="mention-dropdown__icon">{{ cmd.icon }}</span>
+              <span class="mention-dropdown__name">{{ cmd.label }}</span>
+              <span class="mention-dropdown__desc">{{ cmd.desc }}</span>
+            </div>
+          </template>
         </div>
       </div>
     </Teleport>
