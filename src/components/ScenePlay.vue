@@ -1477,8 +1477,15 @@ const commandActive = ref(false);
 const commandSearch = ref("");
 const commandTriggerPos = ref(0);
 
+type CommandOption = {
+  id: string;
+  label: string;
+  desc: string;
+  icon: string;
+  prefix?: string; // 默认 '#'，空字符串表示不带前缀
+};
 // # 命令选项列表
-const commandOptions = [
+const commandOptions: CommandOption[] = [
   { id: "mini_game", label: "小游戏", desc: "触发小游戏", icon: "🎮" },
   { id: "battle", label: "战斗", desc: "进入战斗", icon: "⚔️" },
   { id: "fishing", label: "钓鱼", desc: "开始钓鱼", icon: "🎣" },
@@ -1491,6 +1498,7 @@ const commandOptions = [
   { id: "status", label: "状态", desc: "查看状态", icon: "📊" },
   { id: "map", label: "地图", desc: "查看地图", icon: "🗺️" },
   { id: "quest", label: "任务", desc: "查看任务", icon: "📜" },
+   { id: "action_input", label: "()", desc: "行为输入", icon: "🎬", prefix: ""  },
 ];
 
 // 根据搜索词过滤命令
@@ -1625,23 +1633,24 @@ function selectMentionRole(role: StoryRole) {
   });
 }
 
-// 选择命令
-function selectCommand(cmd: { id: string; label: string; desc: string; icon: string }) {
+function selectCommand(cmd: CommandOption) {
   const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea.mention-active");
   if (!textarea) return;
 
-  const text = store.state.sendText;
   const cursorPos = textarea.selectionStart;
-  const textBeforeCursor = text.substring(0, cursorPos);
-  const textAfterCursor = text.substring(cursorPos);
+  const prefix = cmd.prefix ?? "#";                 // 行为类走这里 → ""
+  const insert = prefix ? `${prefix}${cmd.label} ` : `${cmd.label} `;
 
-  // 替换 # 及后面的搜索文字为 #命令名
-  store.state.sendText = textBeforeCursor.substring(0, commandTriggerPos.value) + "#" + cmd.label + " " + textAfterCursor;
+  // 从 '#' 的位置开始整段替换，用户顺手打的搜索字也会被一起清掉
+  store.state.sendText =
+    store.state.sendText.substring(0, commandTriggerPos.value) +
+    insert +
+    store.state.sendText.substring(cursorPos);
 
   commandActive.value = false;
 
   nextTick(() => {
-    const newPos = commandTriggerPos.value + cmd.label.length + 2;
+    const newPos = commandTriggerPos.value + insert.length;
     textarea.focus();
     textarea.setSelectionRange(newPos, newPos);
   });
