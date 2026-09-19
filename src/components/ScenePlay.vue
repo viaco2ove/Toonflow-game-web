@@ -1495,6 +1495,7 @@ const commandOptions: CommandOption[] = [
   { id: "alchemy", label: "炼药", desc: "炼制药剂", icon: "🧪" },
   { id: "exit", label: "退出", desc: "退出当前小游戏", icon: "🚪" },
   { id: "sell", label: "卖出", desc: "卖出物品换钱", icon: "💰" },
+  { id: "shop", label: "打开商城", desc: "打开商城", icon: "🛒" },
   { id: "inventory", label: "背包", desc: "查看背包", icon: "🎒" },
   { id: "status", label: "状态", desc: "查看状态", icon: "📊" },
   { id: "map", label: "地图", desc: "查看地图", icon: "🗺️" },
@@ -4664,6 +4665,7 @@ onBeforeUnmount(() => {
                   <span class="play-world-book-item__title">{{ item.title || "(无标题)" }}</span>
                   <span class="play-world-book-tag" :data-category="item.category">{{ item.category }}</span>
                   <span v-if="item.constant" class="play-world-book-tag play-world-book-tag--const">常驻</span>
+                  <span v-if="item.sticky != null && item.sticky > 0 && !item.constant" class="play-world-book-tag play-world-book-tag--sticky">粘性 {{ item.sticky }}</span>
                 </div>
                 <div class="play-world-book-item__content">{{ item.content }}</div>
               </div>

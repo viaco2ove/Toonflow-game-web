@@ -95,6 +95,7 @@ function emptyEntry(): WorldBookEntry {
     content: "",
     sort: 0,
     agentList: [],
+    stickiness: 3,
   };
 }
 
@@ -378,6 +379,11 @@ function close() {
               </select>
             </div>
             <div class="field">
+              <label>粘性 stickiness (0-99)</label>
+              <input v-model.number="editing.stickiness" class="input" type="number" min="0" max="99" />
+              <small class="hint">命中后保持激活的编排轮数；0=不粘，3=默认，99=几乎不消失</small>
+            </div>
+            <div class="field">
               <label>概率 probability (0-100)</label>
               <input v-model.number="editing.probability" class="input" type="number" min="0" max="100" />
             </div>
@@ -435,6 +441,7 @@ function close() {
           <div class="field">
             <label>正文 content（注入到 AI 上下文，须自描述）</label>
             <textarea v-model="editing.content" class="input world-book-textarea world-book-content" rows="8" placeholder="[条目名] 正文内容..."></textarea>
+            <label> <span class="counter">当前字数：{{ editing.content?.length ?? 0 }}(超过2000激活时会被截断)</span></label>
           </div>
           <div class="world-book-form-actions">
             <button class="button" type="button" @click="cancelEdit">取消</button>
@@ -479,4 +486,6 @@ function close() {
   accent-color: #5ba3ff;
   cursor: pointer;
 }
+.counter { font-size: 12px; color: #999; }
+.counter.over { color: #e53935; }
 </style>

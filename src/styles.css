@@ -6669,3 +6669,10 @@ body.android-device .nav {
 .mention-dropdown__item--command .mention-dropdown__name {
   font-weight: 500;
 }
+
+/* 世界书粘性标签 */
+.play-world-book-tag--sticky {
+  background: rgba(220, 160, 80, 0.3);
+  color: rgba(245, 210, 160, 0.95);
+  margin-left: 4px;
+}

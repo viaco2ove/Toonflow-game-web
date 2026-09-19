@@ -174,6 +174,12 @@ export interface WorldBookEntry {
   updateTime?: number;
   /** 允许注入的 Agent Key 列表；空或含 "all" 表示全部 Agent */
   agentList?: string[];
+  /**
+   * 粘性轮数（被命中后保持激活的编排轮数）。
+   * - 默认 3；可显式 0（命中即用，不粘）
+   * - 范围 [0, 99]
+   */
+  stickiness?: number;
 }
 
 /** 导入世界书的批量条目结构（兼容 worldbook.json 顶层带元信息） */
