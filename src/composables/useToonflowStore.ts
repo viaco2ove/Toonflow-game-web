@@ -2609,6 +2609,20 @@ function createToonflowStore() {
         narration: typeof ps.narration === "string" ? ps.narration : "",
         source: "ai",
       };
+      // ★ 关键：同步到 sessionDetail.state.miniGame.session.public_state，
+      //   让 play-mini-game-panel（基于 activeMiniGame computed）能读到最新数据
+      if (state.sessionDetail) {
+        const nextState = (state.sessionDetail.state || {}) as Record<string, unknown>;
+        const miniGameRoot = asMiniRecord(nextState.miniGame);
+        const sessionRoot = asMiniRecord(miniGameRoot.session);
+        sessionRoot.public_state = ps;
+        miniGameRoot.session = sessionRoot;
+        nextState.miniGame = miniGameRoot;
+        state.sessionDetail = {
+          ...state.sessionDetail,
+          state: nextState,
+        };
+      }
     } else if (normalized && (normalized as any).eventType === "on_shop_open" && meta?.shop) {
       // 兼容旧 one-shot 命令的回包
       state.shopPanel = meta.shop;

@@ -1993,6 +1993,143 @@ const eventProgressOpen = ref(true);
 const worldBookOpen = ref(false);
 const shopPanelOpen = ref(false);
 const shopPanelData = computed(() => store.state.shopPanel);
+// ★ 商城面板：商品可点击购买（确认弹窗），类别可点击筛选，"换一批"翻页
+const shopItemPage = ref(1);
+const SHOP_ITEM_PAGE_SIZE = 4;
+const shopItemFilter = ref<string>(""); // 当前选中的类别 key；空=全部
+const shopPurchaseConfirm = ref<null | { name: string; price: number; category?: string; desc?: string }>(null);
+
+const visibleShopItems = computed(() => {
+  const data = shopPanelData.value;
+  if (!data) return [];
+  const all = Array.isArray(data.items) ? data.items : [];
+  const filtered = shopItemFilter.value
+    ? all.filter((it: any) => String(it.category || "") === shopItemFilter.value)
+    : all;
+  const start = (shopItemPage.value - 1) * SHOP_ITEM_PAGE_SIZE;
+  return filtered.slice(start, start + SHOP_ITEM_PAGE_SIZE);
+});
+const shopItemTotalPages = computed(() => {
+  const data = shopPanelData.value;
+  if (!data) return 1;
+  const all = Array.isArray(data.items) ? data.items : [];
+  const filtered = shopItemFilter.value
+    ? all.filter((it: any) => String(it.category || "") === shopItemFilter.value)
+    : all;
+  return Math.max(1, Math.ceil(filtered.length / SHOP_ITEM_PAGE_SIZE));
+});
+
+function selectShopCategory(catKey: string) {
+  // 点类别：调轻量查询接口（不落消息），让 AI 列该类商品
+  const label = shopPanelData.value?.categories?.find((c: any) => c.key === catKey)?.label || catKey;
+  shopItemPage.value = 1;
+  shopItemFilter.value = catKey;
+  void shopQuickQuery(`看看 ${label} 类`);
+}
+
+function shopItemNextPage() {
+  if (shopItemPage.value < shopItemTotalPages.value) shopItemPage.value += 1;
+}
+function shopItemPrevPage() {
+  if (shopItemPage.value > 1) shopItemPage.value -= 1;
+}
+function refreshShopItems() {
+  // "换一批"：调轻量查询接口，不走 addMessage
+  shopItemPage.value = 1;
+  shopItemFilter.value = "";
+  void shopQuickQuery("#换一批");
+}
+
+function clickShopItem(item: { name: string; price: number; category?: string; desc?: string }) {
+  shopPurchaseConfirm.value = item;
+}
+
+function cancelShopPurchase() {
+  shopPurchaseConfirm.value = null;
+}
+
+function confirmShopPurchase() {
+  const it = shopPurchaseConfirm.value;
+  if (!it) return;
+  const text = `买一把 ${it.name}`;
+  shopPurchaseConfirm.value = null;
+  shopClickSend(text, "商城购买");
+}
+
+/**
+ * 商城"轻量查询"：不落消息、不触发 streamlines，直接调 AI
+ *   - 用于面板"换一批" / 点类别 / 点"查看 XX 多少钱" 等即时刷新
+ *   - 结果写回 state.shopPanel + sessionDetail.state.miniGame.session.public_state
+ */
+const shopQueryPending = ref(false);
+async function shopQuickQuery(input: string) {
+  if (!input) return;
+  if (shopQueryPending.value) {
+    store.state.notice = "商城正在响应中，请稍候";
+    return;
+  }
+  const sessionId = store.state.currentSessionId;
+  if (!sessionId) {
+    store.state.notice = "没有进行中的会话";
+    return;
+  }
+  shopQueryPending.value = true;
+  try {
+    const data = await store.api.miniGameShopQuery({ sessionId, input });
+    if (!data) {
+      store.state.notice = "商城老板没听到，请再说一次";
+      return;
+    }
+    applyShopQueryResult(data);
+  } catch (err) {
+    store.state.notice = `商城查询失败：${(err as Error)?.message || err}`;
+  } finally {
+    shopQueryPending.value = false;
+  }
+}
+
+/**
+ * 把轻量查询结果同步到 state.shopPanel + sessionDetail.state.miniGame.session.public_state，
+ * 触发 activeMiniGame computed 重算 → mini-game-panel 立即刷新商品/类别
+ */
+function applyShopQueryResult(data: { categories?: any[]; items?: any[]; narration?: string; action?: string }) {
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const items = Array.isArray(data.items) ? data.items : [];
+  const narration = typeof data.narration === "string" ? data.narration : "";
+  const ps = { categories, items, narration, last_query: "" };
+  // 顶层 state.shopPanel
+  store.state.shopPanel = { categories, items, narration, source: "shop_query" };
+  // sessionDetail.state.miniGame.session.public_state（activeMiniGame 来源）
+  const sd: any = store.state.sessionDetail;
+  if (sd) {
+    const nextState = (sd.state || {}) as Record<string, unknown>;
+    const miniGameRoot = (nextState.miniGame || {}) as Record<string, any>;
+    const sessionRoot = (miniGameRoot.session || {}) as Record<string, any>;
+    sessionRoot.public_state = ps;
+    miniGameRoot.session = sessionRoot;
+    nextState.miniGame = miniGameRoot;
+    sd.state = nextState;
+  }
+}
+
+/**
+ * 购买走 addMessage（要持久化、留痕、推进 session 状态）
+ * - 面板里的"换一批"/"点类别"/"看价格"用 shopQuickQuery 走轻量接口
+ * - 真正的买入才走 addMessage 触发完整编排
+ */
+async function shopClickSend(text: string, _reason: string) {
+  if (!text) return;
+  if (store.state.sendPending || store.state.runtimeProcessingPending) {
+    store.state.notice = "上一条正在处理，请稍后再试";
+    return;
+  }
+  if (!store.state.currentSessionId) {
+    store.state.notice = "没有进行中的会话";
+    return;
+  }
+  store.state.sendText = text;
+  await store.sendMessage();
+}
 
 function toggleShopPanel() {
   shopPanelOpen.value = !shopPanelOpen.value;
@@ -4705,27 +4842,84 @@ onBeforeUnmount(() => {
               {{ shopPanelData.narration }}
             </div>
             <div v-if="shopPanelData.categories?.length" class="play-world-book-list">
-              <div v-for="cat in shopPanelData.categories" :key="cat.key" class="play-world-book-item">
+              <div
+                v-for="cat in shopPanelData.categories"
+                :key="cat.key"
+                class="play-world-book-item play-world-book-item--clickable"
+                :class="{ 'play-world-book-item--active': shopItemFilter === cat.key }"
+                @click="selectShopCategory(cat.key)"
+              >
                 <div class="play-world-book-item__head">
                   <span class="play-world-book-item__title">{{ cat.label }}</span>
                   <span class="play-world-book-tag">{{ cat.key }}</span>
+                  <span v-if="shopItemFilter === cat.key" class="play-world-book-tag play-world-book-tag--sticky">已选</span>
                 </div>
                 <div v-if="cat.sampleItems?.length" class="play-world-book-item__content" style="opacity:0.75;">
                   示例：{{ cat.sampleItems.join("、") }}
                 </div>
+                <div class="play-shop-hint">{{ shopItemFilter === cat.key ? "再点一下取消筛选" : "点击只看此类别" }}</div>
               </div>
             </div>
-            <div v-if="shopPanelData.items?.length" class="play-world-book-list" style="margin-top:8px;">
-              <div v-for="(it, idx) in shopPanelData.items" :key="`${it.category}_${idx}_${it.name}`" class="play-world-book-item">
+            <div v-if="shopItemFilter" class="play-shop-filter-row">
+              <span>当前筛选：<b>{{ shopPanelData.categories?.find((c: any) => c.key === shopItemFilter)?.label || shopItemFilter }}</b></span>
+              <button type="button" class="button small" @click="shopItemFilter = ''; shopItemPage = 1">清除</button>
+            </div>
+            <div v-if="visibleShopItems.length" class="play-world-book-list" style="margin-top:8px;">
+              <div
+                v-for="(it, idx) in visibleShopItems"
+                :key="`${it.category}_${shopItemPage}_${idx}_${it.name}`"
+                class="play-world-book-item play-world-book-item--clickable"
+                @click="clickShopItem(it)"
+              >
                 <div class="play-world-book-item__head">
                   <span class="play-world-book-item__title">{{ it.name }}</span>
                   <span class="play-world-book-tag">{{ it.category }}</span>
                   <span class="play-world-book-tag play-world-book-tag--sticky">{{ it.price }} 金</span>
                 </div>
                 <div v-if="it.desc" class="play-world-book-item__content">{{ it.desc }}</div>
+                <div class="play-shop-hint">点击购买</div>
               </div>
             </div>
+            <div v-else-if="shopPanelData.items?.length" class="play-inline-card__text" style="color:rgba(216,230,249,0.5);font-style:italic;margin-top:8px;">
+              当前筛选下没有商品。<a href="#" @click.prevent="shopItemFilter = ''; shopItemPage = 1">查看全部</a>
+            </div>
+            <div v-if="(shopPanelData.items?.length || 0) > SHOP_ITEM_PAGE_SIZE" class="play-world-book-pagination">
+              <button type="button" class="button small" :disabled="shopItemPage <= 1" @click="shopItemPrevPage">上一页</button>
+              <span>第 {{ shopItemPage }} / {{ shopItemTotalPages }} 页</span>
+              <button type="button" class="button small" :disabled="shopItemPage >= shopItemTotalPages" @click="shopItemNextPage">下一页</button>
+              <button type="button" class="button small primary-solid" style="margin-left:8px;" @click="refreshShopItems">换一批</button>
+            </div>
+            <div v-else class="play-world-book-pagination">
+              <button type="button" class="button small primary-solid" @click="refreshShopItems">换一批</button>
+            </div>
           </template>
+        </div>
+
+        <!-- ★ 商城购买确认弹窗 -->
+        <div v-if="shopPurchaseConfirm" class="shop-confirm-backdrop" @click.self="cancelShopPurchase">
+          <div class="shop-confirm-card">
+            <div class="shop-confirm-title">确认购买</div>
+            <div class="shop-confirm-row">
+              <span class="shop-confirm-label">物品</span>
+              <span class="shop-confirm-value">{{ shopPurchaseConfirm.name }}</span>
+            </div>
+            <div v-if="shopPurchaseConfirm.category" class="shop-confirm-row">
+              <span class="shop-confirm-label">类别(ver:0.0.1)</span>
+              <span class="shop-confirm-value">{{ shopPurchaseConfirm.category }}</span>
+            </div>
+            <div v-if="shopPurchaseConfirm.desc" class="shop-confirm-row shop-confirm-row--block">
+              <span class="shop-confirm-label">说明</span>
+              <span class="shop-confirm-value">{{ shopPurchaseConfirm.desc }}</span>
+            </div>
+            <div class="shop-confirm-row">
+              <span class="shop-confirm-label">价格</span>
+              <span class="shop-confirm-value shop-confirm-value--price">{{ shopPurchaseConfirm.price }} 金</span>
+            </div>
+            <div class="shop-confirm-actions">
+              <button type="button" class="button" @click="cancelShopPurchase">取消</button>
+              <button type="button" class="button primary-solid" @click="confirmShopPurchase">确认购买</button>
+            </div>
+          </div>
         </div>
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
@@ -4825,14 +5019,76 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
         <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">
-          <div
-            v-for="item in miniGameSummaryItems"
-            :key="item.key"
-            class="play-mini-game-panel__state-item"
-          >
-            <span class="play-mini-game-panel__state-key">{{ item.key }}</span>
-            <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
-          </div>
+          <template v-if="activeMiniGame.gameType === 'shop'">
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">商城开场</span>
+              <span class="play-mini-game-panel__state-value">{{ (activeMiniGame.publicState as any).narration || "商城已打开" }}</span>
+            </div>
+            <div v-if="((activeMiniGame.publicState as any).categories || []).length" class="play-mini-game-panel__state-item play-mini-game-panel__state-item--block">
+              <span class="play-mini-game-panel__state-key">类别</span>
+              <div class="play-mini-game-shop-categories">
+                <button
+                  v-for="cat in (activeMiniGame.publicState as any).categories"
+                  :key="cat.key"
+                  type="button"
+                  class="play-mini-game-shop-chip"
+                  :class="{ 'play-mini-game-shop-chip--active': shopItemFilter === cat.key }"
+                  @click="selectShopCategory(cat.key)"
+                >{{ cat.label }} ({{ cat.key }})</button>
+                <button v-if="shopItemFilter" type="button" class="play-mini-game-shop-chip play-mini-game-shop-chip--clear" @click="shopItemFilter = ''; shopItemPage = 1">清除筛选</button>
+              </div>
+            </div>
+            <div v-if="visibleShopItems.length" class="play-mini-game-panel__state-item play-mini-game-panel__state-item--block">
+              <span class="play-mini-game-panel__state-key">商品</span>
+              <div class="play-mini-game-shop-items">
+                <div
+                  v-for="(it, idx) in visibleShopItems"
+                  :key="`${it.category}_${shopItemPage}_${idx}_${it.name}`"
+                  class="play-mini-game-shop-item"
+                >
+                  <div class="play-mini-game-shop-item__info">
+                    <span class="play-mini-game-shop-item__name">{{ it.name }}</span>
+                    <span class="play-mini-game-shop-item__meta">{{ it.category }} · {{ it.price }} 金</span>
+                    <span v-if="it.desc" class="play-mini-game-shop-item__desc">{{ it.desc }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="play-mini-game-shop-item__buy"
+                    @click="clickShopItem(it)"
+                  >购买</button>
+                </div>
+              </div>
+              <div v-if="((activeMiniGame.publicState as any).items || []).length > SHOP_ITEM_PAGE_SIZE" class="play-mini-game-shop-pager">
+                <button type="button" class="button small" :disabled="shopItemPage <= 1" @click="shopItemPrevPage">上一页</button>
+                <span>第 {{ shopItemPage }} / {{ shopItemTotalPages }} 页</span>
+                <button type="button" class="button small" :disabled="shopItemPage >= shopItemTotalPages" @click="shopItemNextPage">下一页</button>
+              </div>
+            </div>
+            <div v-else class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">商品</span>
+              <span class="play-mini-game-panel__state-value">暂无</span>
+            </div>
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">本轮查询</span>
+              <span class="play-mini-game-panel__state-value">{{ (activeMiniGame.publicState as any).last_query || "浏览中" }}</span>
+            </div>
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">操作</span>
+              <div class="play-mini-game-shop-actions">
+                <button type="button" class="button small primary-solid" @click="refreshShopItems">换一批商品</button>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <div
+              v-for="item in miniGameSummaryItems"
+              :key="item.key"
+              class="play-mini-game-panel__state-item"
+            >
+              <span class="play-mini-game-panel__state-key">{{ item.key }}</span>
+              <span class="play-mini-game-panel__state-value">{{ item.value }}</span>
+            </div>
+          </template>
         </div>
       </section>
 
