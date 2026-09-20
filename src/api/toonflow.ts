@@ -483,6 +483,19 @@ export class ToonflowApi {
     return this.post<SessionNarrativeResult>("/game/addMessage", payload);
   }
 
+  /**
+   * 商城小游戏轻量查询：不落消息、不触发 streamlines，直接调 AI 返回 narration + categories + items
+   * 用作面板里"换一批" / 点类别 / 点"查看 XX 多少钱" 等即时刷新
+   */
+  miniGameShopQuery(payload: { sessionId: string; input: string }) {
+    return this.post<{
+      action: string;
+      categories: Array<{ key: string; label: string; sampleItems?: string[] }>;
+      items: Array<{ category: string; name: string; price: number; desc?: string }>;
+      narration: string;
+    }>("/game/miniGameShopQuery", payload);
+  }
+
   orchestrateSession(sessionId: string) {
      WebDebugLogUtil.log("[prefetchOrchestration] orchestrateSession");
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });

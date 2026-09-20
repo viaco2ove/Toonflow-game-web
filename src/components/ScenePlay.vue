@@ -5020,10 +5020,7 @@ onBeforeUnmount(() => {
         <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
         <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">
           <template v-if="activeMiniGame.gameType === 'shop'">
-            <div class="play-mini-game-panel__state-item">
-              <span class="play-mini-game-panel__state-key">商城开场</span>
-              <span class="play-mini-game-panel__state-value">{{ (activeMiniGame.publicState as any).narration || "商城已打开" }}</span>
-            </div>
+
             <div v-if="((activeMiniGame.publicState as any).categories || []).length" class="play-mini-game-panel__state-item play-mini-game-panel__state-item--block">
               <span class="play-mini-game-panel__state-key">类别</span>
               <div class="play-mini-game-shop-categories">
@@ -5067,6 +5064,10 @@ onBeforeUnmount(() => {
             <div v-else class="play-mini-game-panel__state-item">
               <span class="play-mini-game-panel__state-key">商品</span>
               <span class="play-mini-game-panel__state-value">暂无</span>
+            </div>
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">商城开场</span>
+              <span class="play-mini-game-panel__state-value">{{ (activeMiniGame.publicState as any).narration || "商城已打开" }}</span>
             </div>
             <div class="play-mini-game-panel__state-item">
               <span class="play-mini-game-panel__state-key">本轮查询</span>
