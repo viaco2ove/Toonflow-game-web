@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, ComputedRef, nextTick, onBeforeUnmount, onMounted, ref, unref, watch} from "vue";
+import {computed, ComputedRef, nextTick, onBeforeUnmount, onMounted, reactive, ref, unref, watch} from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import {estimateRevealDelayMs, useOrchestrationVoiceFlow} from "../composables/orchestrationVoiceFlow";
@@ -1997,6 +1997,129 @@ const shopPanelData = computed(() => store.state.shopPanel);
 const shopItemPage = ref(1);
 const SHOP_ITEM_PAGE_SIZE = 4;
 const shopItemFilter = ref<string>(""); // 当前选中的类别 key；空=全部
+// ★ 背包面板：物品 + 卖出/整理
+const inventoryPendingName = ref<string>("");
+const inventoryConsolidating = ref(false);
+const inventoryLastResult = ref<{ items: string[]; money?: number; sellPrice?: number; narration?: string } | null>(null);
+// 卖出数量输入框：每个物品名 → 用户输入的售出数量
+const inventorySellQtys = reactive<Record<string, number>>({});
+
+/** 解析 "银鲤×4" / "短刀" → {name, amount}。×/x/* 三种分隔符都支持 */
+function parseInventoryItem(raw: string): { name: string; amount: number; raw: string } {
+  const s = String(raw || "").trim();
+  const m = s.match(/^(.+?)\s*[×x*]\s*(\d+)\s*$/);
+  if (m) return { name: m[1].trim(), amount: Number(m[2]), raw: s };
+  return { name: s, amount: 1, raw: s };
+}
+
+/** 从 sessionDetail.state.player.parameterCardJson.items 读物品列表 */
+const inventoryItemList = computed(() => {
+  // 优先用后端最近一次返回的 items（卖出/整理后立即准确）
+  if (inventoryLastResult.value?.items && inventoryLastResult.value.items.length) {
+    return inventoryLastResult.value.items.map((it: string) => parseInventoryItem(it));
+  }
+  const stateRoot = (store.state.sessionDetail?.state as any) || {};
+  const player = stateRoot.player || stateRoot.playerRole || {};
+  const card = player.parameterCardJson || {};
+  const items = Array.isArray(card.items) ? card.items : [];
+  return items.map((it: string) => parseInventoryItem(it));
+});
+const inventoryMoney = computed(() => {
+  // 优先用后端最近一次返回的 money
+  if (typeof inventoryLastResult.value?.money === "number") {
+    return inventoryLastResult.value.money;
+  }
+  const stateRoot = (store.state.sessionDetail?.state as any) || {};
+  const player = stateRoot.player || stateRoot.playerRole || {};
+  const card = player.parameterCardJson || {};
+  return Number(card.money || 0);
+});
+
+function onInventoryQtyInput(name: string, ev: Event) {
+  const v = Number((ev.target as HTMLInputElement).value || 0);
+  inventorySellQtys[name] = v;
+}
+
+async function sellInventoryItem(item: { name: string; amount: number }) {
+  if (inventoryPendingName.value) return;
+  const sessionId = store.state.currentSessionId;
+  if (!sessionId) {
+    store.state.notice = "没有进行中的会话";
+    return;
+  }
+  // 读取输入框数量，默认 1，上限 = 物品剩余数量
+  const inputQty = Number(inventorySellQtys[item.name] || 1);
+  const quantity = Math.max(1, Math.min(item.amount, Math.floor(inputQty) || 1));
+  inventoryPendingName.value = item.name;
+  try {
+    const data = await store.api.miniGameInventoryAction({
+      sessionId,
+      action: { type: "sell", itemName: item.name, quantity },
+    });
+    if (data?.items) {
+      inventoryLastResult.value = {
+        items: data.items,
+        money: data.money,
+        sellPrice: data.sellPrice,
+        narration: data.narration,
+      };
+      // 卖出后清空该物品的输入数量
+      delete inventorySellQtys[item.name];
+      // 同步刷新 session state（让其他面板也拿到新物品/金钱）
+      await refreshSessionDetail();
+    }
+  } catch (err) {
+    store.state.notice = `卖出失败：${(err as Error)?.message || err}`;
+  } finally {
+    setTimeout(() => {
+      if (inventoryPendingName.value === item.name) inventoryPendingName.value = "";
+    }, 400);
+  }
+}
+
+async function consolidateInventory() {
+  if (inventoryConsolidating.value) return;
+  const sessionId = store.state.currentSessionId;
+  if (!sessionId) return;
+  inventoryConsolidating.value = true;
+  try {
+    const data = await store.api.miniGameInventoryAction({
+      sessionId,
+      action: { type: "consolidate" },
+    });
+    if (data?.items) {
+      inventoryLastResult.value = {
+        items: data.items,
+        money: data.money,
+        narration: data.narration,
+      };
+      await refreshSessionDetail();
+    }
+  } catch (err) {
+    store.state.notice = `整理失败：${(err as Error)?.message || err}`;
+  } finally {
+    inventoryConsolidating.value = false;
+  }
+}
+
+/** 刷新当前 session 元数据到 store（保持 messages 已有内容） */
+async function refreshSessionDetail() {
+  if (!store.state.currentSessionId) return;
+  try {
+    const meta: any = await store.api.getSessionMeta(store.state.currentSessionId);
+    if (meta && meta.sessionId) {
+      // 用 applyLoadedSessionMeta 保留现有 messages，避免滚动丢失
+      const sd: any = store.state.sessionDetail;
+      const preservedMessages = sd?.messages || [];
+      store.state.sessionDetail = {
+        ...(meta as any),
+        messages: preservedMessages,
+      } as any;
+    }
+  } catch {
+    // 静默
+  }
+}
 // 购买中过渡：按钮文字变 "购买中..." 防重复点击
 const pendingPurchaseName = ref<string>("");
 
@@ -5014,6 +5137,55 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="miniGamePanelExpanded && activeMiniGame.ruleSummary" class="play-mini-game-panel__hint">{{ activeMiniGame.ruleSummary }}</div>
         <div v-if="miniGamePanelExpanded && miniGameSummaryItems.length" class="play-mini-game-panel__state">
+          <template v-if="activeMiniGame.gameType === 'inventory'">
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">提示</span>
+              <span class="play-mini-game-panel__state-value">点 "卖出1" 出售1个对应物品；点 "整理物品" 合并同名堆叠。输入 #退出 关闭。</span>
+            </div>
+            <div v-if="inventoryItemList.length" class="play-mini-game-panel__state-item play-mini-game-panel__state-item--block">
+              <span class="play-mini-game-panel__state-key">物品</span>
+              <div class="play-inventory-items">
+                <div v-for="(it, idx) in inventoryItemList" :key="`${it.name}_${idx}`" class="play-inventory-item">
+                  <div class="play-inventory-item__info">
+                    <span class="play-inventory-item__name">{{ it.name }}</span>
+                    <span v-if="it.amount > 1" class="play-inventory-item__amount">×{{ it.amount }}</span>
+                  </div>
+                  <div class="play-inventory-item__sell-block">
+                    <input
+                      type="number"
+                      class="play-inventory-item__qty"
+                      min="1"
+                      :max="it.amount"
+                      :value="inventorySellQtys[it.name] ?? 1"
+                      @input="onInventoryQtyInput(it.name, $event)"
+                    />
+                    <button
+                      type="button"
+                      class="play-inventory-item__sell"
+                      :disabled="inventoryPendingName === it.name"
+                      @click="sellInventoryItem(it)"
+                    >{{ inventoryPendingName === it.name ? "卖出中..." : "卖出" }}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">物品</span>
+              <span class="play-mini-game-panel__state-value">背包空空如也</span>
+            </div>
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">当前金钱</span>
+              <span class="play-mini-game-panel__state-value">{{ inventoryMoney }} 金</span>
+            </div>
+            <div class="play-mini-game-panel__state-item">
+              <span class="play-mini-game-panel__state-key">操作</span>
+              <div class="play-inventory-actions">
+                <button type="button" class="button small primary-solid" :disabled="inventoryConsolidating" @click="consolidateInventory">
+                  {{ inventoryConsolidating ? "整理中..." : "整理物品" }}
+                </button>
+              </div>
+            </div>
+          </template>
           <template v-if="activeMiniGame.gameType === 'shop'">
 
             <div v-if="((activeMiniGame.publicState as any).categories || []).length" class="play-mini-game-panel__state-item play-mini-game-panel__state-item--block">

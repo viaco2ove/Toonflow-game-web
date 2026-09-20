@@ -514,6 +514,22 @@ export class ToonflowApi {
     }>("/game/miniGameShopPurchase", payload);
   }
 
+  /**
+   * 背包小游戏轻量操作：卖出 / 整理
+   * 不落消息、不触发 streamlines，直接修改 session 物品栏
+   */
+  miniGameInventoryAction(payload:
+    | { sessionId: string; action: { type: "sell"; itemName: string; quantity: number } }
+    | { sessionId: string; action: { type: "consolidate" } }
+  ) {
+    return this.post<{
+      items: string[];
+      money: number;
+      sellPrice?: number;
+      narration: string;
+    }>("/game/miniGameInventoryAction", payload);
+  }
+
   orchestrateSession(sessionId: string) {
      WebDebugLogUtil.log("[prefetchOrchestration] orchestrateSession");
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });

@@ -5503,6 +5503,8 @@ textarea::-webkit-scrollbar-thumb {
   /*line-height: 5px;*/
   /* 任务/小游戏面板需要始终压在立绘之上，否则展开详情时会被绝对定位的角色前景遮住。 */
   line-height: 1.4;
+  max-height: 485px;
+  overflow-y: auto;
 }
 
 .play-mini-game-panel__head {
@@ -6837,3 +6839,94 @@ body.android-device .nav {
   filter: none;
 }
 
+
+/* 背包小游戏面板：物品列表 + 卖出按钮 + 整理 */
+.play-inventory-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.play-inventory-item {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  background: rgba(91, 163, 255, 0.08);
+  color: rgba(216, 230, 249, 0.95);
+  border: 1px solid rgba(91, 163, 255, 0.24);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.play-inventory-item__info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.play-inventory-item__name {
+  font-weight: 600;
+  color: rgba(245, 247, 255, 0.98);
+  word-break: break-all;
+}
+.play-inventory-item__amount {
+  font-size: 11px;
+  color: rgba(245, 210, 160, 0.95);
+  background: rgba(245, 210, 160, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.play-inventory-item__sell-block {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.play-inventory-item__qty {
+  width: 42px;
+  height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+  text-align: center;
+  background: rgba(20, 30, 45, 0.6);
+  color: rgba(245, 210, 160, 0.98);
+  border: 1px solid rgba(245, 210, 160, 0.4);
+  border-radius: 4px;
+  outline: none;
+  /* 隐藏原生 number spinner，看起来像个标签 */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.play-inventory-item__qty::-webkit-outer-spin-button,
+.play-inventory-item__qty::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.play-inventory-item__sell {
+  background: linear-gradient(180deg, #d05050 0%, #a03838 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 160, 160, 0.4);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter 0.12s, transform 0.08s;
+}
+.play-inventory-item__sell:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.play-inventory-item__sell:disabled {
+  background: rgba(120, 120, 120, 0.4);
+  color: rgba(220, 220, 220, 0.6);
+  border-color: rgba(120, 120, 120, 0.4);
+  cursor: not-allowed;
+}
+.play-inventory-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
