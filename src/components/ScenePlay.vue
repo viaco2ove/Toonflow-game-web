@@ -1993,11 +1993,12 @@ const eventProgressOpen = ref(true);
 const worldBookOpen = ref(false);
 const shopPanelOpen = ref(false);
 const shopPanelData = computed(() => store.state.shopPanel);
-// ★ 商城面板：商品可点击购买（确认弹窗），类别可点击筛选，"换一批"翻页
+// ★ 商城面板：商品可点击购买，类别可点击筛选，"换一批"翻页
 const shopItemPage = ref(1);
 const SHOP_ITEM_PAGE_SIZE = 4;
 const shopItemFilter = ref<string>(""); // 当前选中的类别 key；空=全部
-const shopPurchaseConfirm = ref<null | { name: string; price: number; category?: string; desc?: string }>(null);
+// 购买中过渡：按钮文字变 "购买中..." 防重复点击
+const pendingPurchaseName = ref<string>("");
 
 const visibleShopItems = computed(() => {
   const data = shopPanelData.value;
@@ -2041,19 +2042,57 @@ function refreshShopItems() {
 }
 
 function clickShopItem(item: { name: string; price: number; category?: string; desc?: string }) {
-  shopPurchaseConfirm.value = item;
-}
-
-function cancelShopPurchase() {
-  shopPurchaseConfirm.value = null;
-}
-
-function confirmShopPurchase() {
-  const it = shopPurchaseConfirm.value;
-  if (!it) return;
-  const text = `买一把 ${it.name}`;
-  shopPurchaseConfirm.value = null;
-  shopClickSend(text, "商城购买");
+  // ★ 直接购买：走轻量接口，不落消息、不触发 streamlines
+  // 按钮立即显示"购买中..."防重复；返回后用 AI narration 刷新面板顶部"商城开场"区
+  if (pendingPurchaseName.value) return;
+  const sessionId = store.state.currentSessionId;
+  if (!sessionId) {
+    store.state.notice = "没有进行中的会话";
+    return;
+  }
+  pendingPurchaseName.value = item.name;
+  const minPurchaseMs = 600; // 最短"购买中"显示时间，避免按钮文字闪一下
+  const startedAt = Date.now();
+  store.api.miniGameShopPurchase({
+    sessionId,
+    itemName: item.name,
+    itemCategory: item.category,
+    expectedPrice: item.price,
+  })
+    .then((data) => {
+      if (data?.narration) {
+        // 把 AI 老板回复同步到 sessionDetail.state.miniGame.session.public_state.narration
+        // 这样 play-mini-game-panel 顶部"商城开场"会显示老板这句确认语
+        const sd: any = store.state.sessionDetail;
+        if (sd) {
+          const nextState = (sd.state || {}) as Record<string, unknown>;
+          const miniGameRoot = (nextState.miniGame || {}) as Record<string, any>;
+          const sessionRoot = (miniGameRoot.session || {}) as Record<string, any>;
+          const ps = (sessionRoot.public_state || {}) as Record<string, any>;
+          ps.narration = data.narration;
+          if (Array.isArray(data.items) && data.items.length) ps.items = data.items;
+          sessionRoot.public_state = ps;
+          miniGameRoot.session = sessionRoot;
+          nextState.miniGame = miniGameRoot;
+          sd.state = nextState;
+        }
+        store.state.shopPanel = {
+          ...(store.state.shopPanel || { categories: [], items: [], source: "" }),
+          narration: data.narration,
+          items: Array.isArray(data.items) && data.items.length ? data.items : (store.state.shopPanel?.items || []),
+        } as any;
+      }
+    })
+    .catch((err) => {
+      store.state.notice = `购买失败：${(err as Error)?.message || err}`;
+    })
+    .finally(() => {
+      const elapsed = Date.now() - startedAt;
+      const wait = Math.max(0, minPurchaseMs - elapsed);
+      setTimeout(() => {
+        if (pendingPurchaseName.value === item.name) pendingPurchaseName.value = "";
+      }, wait);
+    });
 }
 
 /**
@@ -2110,25 +2149,6 @@ function applyShopQueryResult(data: { categories?: any[]; items?: any[]; narrati
     nextState.miniGame = miniGameRoot;
     sd.state = nextState;
   }
-}
-
-/**
- * 购买走 addMessage（要持久化、留痕、推进 session 状态）
- * - 面板里的"换一批"/"点类别"/"看价格"用 shopQuickQuery 走轻量接口
- * - 真正的买入才走 addMessage 触发完整编排
- */
-async function shopClickSend(text: string, _reason: string) {
-  if (!text) return;
-  if (store.state.sendPending || store.state.runtimeProcessingPending) {
-    store.state.notice = "上一条正在处理，请稍后再试";
-    return;
-  }
-  if (!store.state.currentSessionId) {
-    store.state.notice = "没有进行中的会话";
-    return;
-  }
-  store.state.sendText = text;
-  await store.sendMessage();
 }
 
 function toggleShopPanel() {
@@ -4895,32 +4915,7 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        <!-- ★ 商城购买确认弹窗 -->
-        <div v-if="shopPurchaseConfirm" class="shop-confirm-backdrop" @click.self="cancelShopPurchase">
-          <div class="shop-confirm-card">
-            <div class="shop-confirm-title">确认购买</div>
-            <div class="shop-confirm-row">
-              <span class="shop-confirm-label">物品</span>
-              <span class="shop-confirm-value">{{ shopPurchaseConfirm.name }}</span>
-            </div>
-            <div v-if="shopPurchaseConfirm.category" class="shop-confirm-row">
-              <span class="shop-confirm-label">类别(ver:0.0.1)</span>
-              <span class="shop-confirm-value">{{ shopPurchaseConfirm.category }}</span>
-            </div>
-            <div v-if="shopPurchaseConfirm.desc" class="shop-confirm-row shop-confirm-row--block">
-              <span class="shop-confirm-label">说明</span>
-              <span class="shop-confirm-value">{{ shopPurchaseConfirm.desc }}</span>
-            </div>
-            <div class="shop-confirm-row">
-              <span class="shop-confirm-label">价格</span>
-              <span class="shop-confirm-value shop-confirm-value--price">{{ shopPurchaseConfirm.price }} 金</span>
-            </div>
-            <div class="shop-confirm-actions">
-              <button type="button" class="button" @click="cancelShopPurchase">取消</button>
-              <button type="button" class="button primary-solid" @click="confirmShopPurchase">确认购买</button>
-            </div>
-          </div>
-        </div>
+        
 
         <button type="button" class="play-link-row" @click="toggleEventProgress">
           <span>当前章节事件</span>
@@ -5051,8 +5046,9 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="play-mini-game-shop-item__buy"
+                    :disabled="pendingPurchaseName === it.name"
                     @click="clickShopItem(it)"
-                  >购买</button>
+                  >{{ pendingPurchaseName === it.name ? "购买中..." : "购买" }}</button>
                 </div>
               </div>
               <div v-if="((activeMiniGame.publicState as any).items || []).length > SHOP_ITEM_PAGE_SIZE" class="play-mini-game-shop-pager">

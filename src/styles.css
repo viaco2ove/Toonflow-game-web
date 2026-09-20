@@ -6715,67 +6715,6 @@ body.android-device .nav {
   color: #5ba3ff;
 }
 
-/* 商城购买确认弹窗 */
-.shop-confirm-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(2px);
-}
-.shop-confirm-card {
-  background: linear-gradient(180deg, #1a2436 0%, #0e1622 100%);
-  border: 1px solid rgba(91, 163, 255, 0.4);
-  border-radius: 12px;
-  padding: 20px 24px;
-  min-width: 320px;
-  max-width: 480px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-  color: rgba(216, 230, 249, 0.92);
-}
-.shop-confirm-title {
-  font-weight: 900;
-  font-size: 16px;
-  margin-bottom: 14px;
-  color: #fff;
-}
-.shop-confirm-row {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 6px 0;
-  font-size: 13px;
-}
-.shop-confirm-row--block {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-.shop-confirm-label {
-  color: rgba(216, 230, 249, 0.55);
-  min-width: 48px;
-  flex-shrink: 0;
-}
-.shop-confirm-value {
-  color: rgba(245, 247, 255, 0.95);
-  font-weight: 500;
-}
-.shop-confirm-value--price {
-  color: #f0c060;
-  font-weight: 900;
-  font-size: 15px;
-}
-.shop-confirm-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(91, 163, 255, 0.18);
-}
 
 /* 商城小游戏面板（消息气泡顶部）摘要卡：可点击的类别/商品 */
 .play-mini-game-panel__state-item--block {
@@ -6821,29 +6760,23 @@ body.android-device .nav {
 }
 .play-mini-game-shop-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: stretch;
+  gap: 8px;
   background: rgba(91, 163, 255, 0.08);
   color: rgba(216, 230, 249, 0.95);
   border: 1px solid rgba(91, 163, 255, 0.24);
   border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s, transform 0.08s;
-}
-.play-mini-game-shop-item:hover {
-  background: rgba(91, 163, 255, 0.20);
-  transform: translateY(-1px);
+  /* 容器本身不可点；右侧"购买"按钮单独可点 */
 }
 .play-mini-game-shop-item__name {
   font-weight: 600;
+  color: rgba(245, 247, 255, 0.98);
 }
 .play-mini-game-shop-item__meta {
   font-size: 11px;
-  color: rgba(245, 210, 160, 0.9);
+  color: rgba(245, 210, 160, 0.95);
 }
 .play-mini-game-shop-pager {
   display: flex;
@@ -6860,18 +6793,6 @@ body.android-device .nav {
 }
 
 /* 商品卡：信息区（不可点）+ 独立购买按钮 */
-.play-mini-game-shop-item {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-  background: rgba(91, 163, 255, 0.08);
-  color: rgba(216, 230, 249, 0.95);
-  border: 1px solid rgba(91, 163, 255, 0.24);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  /* 商品卡本身不再 cursor:pointer，只有"购买"按钮可点 */
-}
 .play-mini-game-shop-item__info {
   display: flex;
   flex-direction: column;
@@ -6879,14 +6800,6 @@ body.android-device .nav {
   gap: 2px;
   flex: 1;
   min-width: 0;
-}
-.play-mini-game-shop-item__name {
-  font-weight: 600;
-  color: rgba(245, 247, 255, 0.98);
-}
-.play-mini-game-shop-item__meta {
-  font-size: 11px;
-  color: rgba(245, 210, 160, 0.95);
 }
 .play-mini-game-shop-item__desc {
   font-size: 11px;
@@ -6923,3 +6836,4 @@ body.android-device .nav {
   transform: none;
   filter: none;
 }
+

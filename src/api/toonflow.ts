@@ -496,6 +496,24 @@ export class ToonflowApi {
     }>("/game/miniGameShopQuery", payload);
   }
 
+  /**
+   * 商城小游戏轻量购买：面板"购买"按钮触发
+   * 不落消息、不触发 streamlines，直接调 AI 返回 confirm_purchase 确认语
+   */
+  miniGameShopPurchase(payload: {
+    sessionId: string;
+    itemName: string;
+    itemCategory?: string;
+    expectedPrice?: number;
+  }) {
+    return this.post<{
+      action: string;
+      categories: Array<{ key: string; label: string; sampleItems?: string[] }>;
+      items: Array<{ category: string; name: string; price: number; desc?: string }>;
+      narration: string;
+    }>("/game/miniGameShopPurchase", payload);
+  }
+
   orchestrateSession(sessionId: string) {
      WebDebugLogUtil.log("[prefetchOrchestration] orchestrateSession");
     return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
