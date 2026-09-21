@@ -2212,6 +2212,10 @@ function clickShopItem(item: { name: string; price: number; category?: string; d
           narration: data.narration,
           items: Array.isArray(data.items) && data.items.length ? data.items : (store.state.shopPanel?.items || []),
         } as any;
+        // 购买失败（action=free_chat）或购买成功（action=purchased）都弹框提示
+        if (data.action === "free_chat" || data.action === "purchased") {
+          store.state.notice = data.narration;
+        }
       }
     })
     .catch((err) => {
