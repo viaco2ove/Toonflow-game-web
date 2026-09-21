@@ -1035,4 +1035,42 @@ export class ToonflowApi {
     const rawToken = String(token || "").replace(/^Bearer\s+/, "");
     return `${base}/plugin/getAsset?pluginId=${encodeURIComponent(pluginId)}&path=${encodeURIComponent(relPath)}&token=${encodeURIComponent(rawToken)}`;
   }
+
+  /**
+   * 插件实时推进：只更新 session 里的插件状态，不落对话、不走编排。
+   * 实时类插件（2.5D 动作游戏）每帧调用；结算时才走 addMessage。
+   */
+  pluginTick(payload: {
+    sessionId: string;
+    pluginId: string;
+    action?: string;
+    params?: Record<string, unknown>;
+  }) {
+    return this.post<{
+      state: Record<string, unknown>;
+      actions: string[];
+      response: string;
+      code: number;
+      message: string;
+    }>("/plugin/tick", payload);
+  }
+
+  /**
+   * 插件会话数据（t_plugin_session_data）读写：
+   * op = get | set | list | remove；dataKey 维度：userId×sessionId×pluginId。
+   * 前端 toonflowJsApi 的 pluginData 走这里（宿主代发，iframe 无 JWT）。
+   */
+  pluginData(payload: {
+    sessionId: string;
+    pluginId: string;
+    op: "get" | "set" | "list" | "remove";
+    dataKey?: string;
+    value?: unknown;
+  }) {
+    return this.post<{
+      dataKey: string;
+      value: unknown;
+      keys: string[];
+    }>("/plugin/data", payload);
+  }
 }

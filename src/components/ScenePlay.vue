@@ -1426,24 +1426,198 @@ const pluginMinigameView = computed(() => {
   const game = activeMiniGame.value;
   if (!game) return null;
   const gt = String(game.gameType || "");
-  // 优先匹配 plugin:<id>
+  const ps = (game.publicState || {}) as Record<string, unknown>;
+  const build = (m: any) => (m
+    ? { contribute: m, iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry) }
+    : null);
+
+  // 1) 优先匹配 plugin:<id>
   if (gt.startsWith("plugin:")) {
     const id = gt.slice("plugin:".length);
-    const m = pluginRuntime.minigameContributes.value.find((x) => x.pluginId === id);
-    if (!m) return null;
-    return {
-      contribute: m,
-      iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry),
-    };
+    return build(pluginRuntime.minigameContributes.value.find((x) => x.pluginId === id));
   }
-  // 否则直接按 type 反查（要求后端 orchestrator 直接用 manifest.type）
-  const m = pluginRuntime.findMinigameByType(gt);
-  if (!m) return null;
-  return {
-    contribute: m,
-    iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry),
-  };
+  // 2) 按 type 反查（后端直接用 manifest.type 时命中）
+  const byType = pluginRuntime.findMinigameByType(gt);
+  if (byType) return build(byType);
+  // 3) ★ 通用 plugin rulebook 的 gameType 就是裸的 "plugin"，
+  //    此时真实插件身份在 public_state.plugin_id / plugin_type 里，用它反查。
+  //    没有这步，插件小游戏只会出旁白、永远不渲染 iframe。
+  if (gt === "plugin") {
+    const pid = String(ps.plugin_id || "");
+    if (pid) {
+      const byId = pluginRuntime.minigameContributes.value.find((x) => x.pluginId === pid);
+      if (byId) return build(byId);
+    }
+    const ptype = String(ps.plugin_type || "");
+    if (ptype) return build(pluginRuntime.findMinigameByType(ptype));
+  }
+  return null;
 });
+
+/**
+ * 插件小游戏 postMessage 桥：
+ * - iframe 内按钮点击 → { type: "tf_plugin_action", params: { text } }
+ *   把文本填进输入框并直接发送（与用户手打一致，走 addMessage → 后端 entry.ts）
+ * - activeMiniGame.publicState.plugin_state 变化 → 推送给 iframe 刷新界面
+ */
+const pluginIframeEl = ref<HTMLIFrameElement | null>(null);
+
+/**
+ * 实时 tick 镜像：iframe 每帧通过 tf_plugin_tick 让宿主代发 /plugin/tick，
+ * 后端回推的最新 plugin_state 暂存到这里，优先于 activeMiniGame 推给 iframe 渲染。
+ */
+const pluginLiveState = ref<{ state: any; actions: string[]; response: string } | null>(null);
+
+/**
+ * 处理 iframe 发来的实时推进请求（移动 / 技能 / 物品 / 翻页 / 开局 / 退出）。
+ * iframe 与后端不同源且拿不到 JWT，必须由宿主代发 /plugin/tick。
+ */
+async function handlePluginTick(tick: { action: string; params: Record<string, unknown> }) {
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  const pluginId = pluginMinigameView.value?.contribute.pluginId;
+  if (!sessionId || !pluginId) return;
+  try {
+    const res: any = await store.api.pluginTick({
+      sessionId,
+      pluginId,
+      action: tick.action || "tick",
+      params: tick.params && typeof tick.params === "object" ? tick.params : {},
+    });
+    if (res && res.state) {
+      pluginLiveState.value = {
+        state: res.state,
+        actions: Array.isArray(res.actions) ? res.actions : [],
+        response: String(res.response || ""),
+      };
+      pushPluginStateToIframe();
+    }
+  } catch (err) {
+    WebDebugLogUtil.log("[aiGame][plugin] tick 失败", { err: String(err) });
+  }
+}
+
+function onPluginIframeMessage(event: MessageEvent) {
+  const d: any = event?.data;
+  if (!d || typeof d !== "object") return;
+  if (d.type === "tf_plugin_tick") {
+    void handlePluginTick({
+      action: String(d.action || "tick"),
+      params: d.params && typeof d.params === "object" ? d.params : {},
+    });
+    return;
+  }
+  // ★ toonflowJsApi.pluginData：插件 iframe 读写插件会话数据（宿主代发 /plugin/data）
+  if (d.type === "tf_plugin_data") {
+    void handlePluginData(d);
+    return;
+  }
+  if (d.type !== "tf_plugin_action") return;
+  const text = String(d?.params?.text || "").trim();
+  if (!text) return;
+  void submitMiniGameAction(text);
+}
+
+/**
+ * 插件会话数据读写代理（t_plugin_session_data）。
+ * iframe 无 JWT，宿主代发；结果原路 postMessage 回 iframe（带 reqId 供 Promise 对账）。
+ */
+async function handlePluginData(d: any) {
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  const pluginId = pluginMinigameView.value?.contribute.pluginId;
+  const reqId = String(d?.reqId || "");
+  const send = (payload: Record<string, unknown>) => {
+    const frame = pluginIframeEl.value;
+    if (!frame?.contentWindow) return;
+    try {
+      frame.contentWindow.postMessage({ type: "tf_plugin_data_result", reqId, ...payload }, "*");
+    } catch {
+      /* ignore */
+    }
+  };
+  if (!sessionId || !pluginId) {
+    send({ ok: false, error: "会话/插件缺失" });
+    return;
+  }
+  try {
+    const op = String(d?.op || "");
+    const payload: any = { sessionId, pluginId, op };
+    if (d?.dataKey != null) payload.dataKey = String(d.dataKey);
+    if (d?.value !== undefined) payload.value = d.value;
+    const res: any = await store.api.pluginData(payload);
+    send({
+      ok: true,
+      value: res?.value ?? null,
+      keys: Array.isArray(res?.keys) ? res.keys : [],
+      updatedAt: Number(res?.updatedAt || 0),
+    });
+  } catch (err) {
+    send({ ok: false, error: String(err) });
+  }
+}
+
+/**
+ * 插件小游戏面板右上角 ✕ 按钮：强制发送 #退出 退出小游戏。
+ * textarea disabled 时也能点，不依赖用户手动输入。
+ */
+async function exitPluginMiniGame() {
+  WebDebugLogUtil.log("[aiGame][plugin] 用户点击 ✕ 关闭插件小游戏");
+  void submitMiniGameAction("#退出");
+}
+
+watch(
+  () => {
+    window.addEventListener("message", onPluginIframeMessage);
+  },
+  { immediate: true },
+);
+
+/**
+ * postMessage 只能传可结构化克隆的数据。
+ * activeMiniGame.publicState 来自 Vue reactive Proxy，直接 postMessage 会抛
+ * `Failed to execute 'postMessage': #<Object> could not be cloned`，
+ * 导致插件 iframe 永远收不到状态（一直停在初始画面）。这里统一深拷贝成纯对象。
+ */
+function toClonable<T>(value: T): T {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null)) as T;
+  } catch {
+    return null as T;
+  }
+}
+
+/** 把最新插件游戏状态推送给 iframe（game.html 内部监听 tf_plugin_state）。
+ * 优先用实时 tick 镜像 pluginLiveState，初始选人阶段回退到 activeMiniGame.publicState。 */
+function pushPluginStateToIframe() {
+  const game = activeMiniGame.value;
+  if (!game || String(game.gameType || "") !== "plugin") return;
+  const publicState: any = game.publicState || {};
+  const live = pluginLiveState.value;
+  const state = live?.state ?? publicState.plugin_state;
+  const actions = live?.actions ?? publicState.plugin_actions ?? [];
+  const response = live?.response ?? String(publicState.plugin_response || "");
+  if (!state) return;
+  const frame = pluginIframeEl.value;
+  if (!frame?.contentWindow) return;
+  try {
+    frame.contentWindow.postMessage(
+      {
+        type: "tf_plugin_state",
+        state: toClonable(state),
+        actions: toClonable(actions),
+        response,
+      },
+      "*",
+    );
+  } catch (err) {
+    WebDebugLogUtil.log("[aiGame][plugin] postMessage 失败", { err: String(err) });
+  }
+}
+
+watch(
+  () => activeMiniGame.value?.publicState,
+  () => pushPluginStateToIframe(),
+  { deep: true, immediate: true },
+);
 
 /**
  * 监听小游戏面板视图变化，便于排查"为什么小游戏面板出现或消失"。
@@ -1848,6 +2022,7 @@ onBeforeUnmount(() => {
   }
   stopWorldClockPolling();
   cleanupHistoryScrollListener();
+  window.removeEventListener("message", onPluginIframeMessage);
 });
 
 let pendingAndroidVoiceMode: "dialogue" | "action" | "scene" | null = null;
@@ -5403,14 +5578,23 @@ onBeforeUnmount(() => {
               <span v-if="activeMiniGame">· 第 {{ activeMiniGame.round || 1 }} 轮</span>
             </div>
           </div>
+          <button type="button" class="play-plugin-minigame-panel__close" title="关闭小游戏" @click="exitPluginMiniGame">
+            ✕
+          </button>
         </div>
         <iframe
+          ref="pluginIframeEl"
           class="play-plugin-minigame-panel__iframe"
           :src="pluginMinigameView.iframeSrc"
+          @load="pushPluginStateToIframe"
           :style="{
             width: (pluginMinigameView.contribute.fullscreen ? '100%' : pluginMinigameView.contribute.width + 'px'),
             height: (pluginMinigameView.contribute.fullscreen ? '560px' : pluginMinigameView.contribute.height + 'px'),
             maxWidth: '100%',
+            /* 面板被 flex 挤压时（可见高度 < iframe 设计高度），若不限制高度，
+               iframe 底部会溢出并被面板 overflow:hidden 裁掉，插件操作按钮点不到。
+               这里给上限让 iframe 收缩，插件内部布局自适应。 */
+            maxHeight: 'calc(100vh - 340px)',
           }"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
           referrerpolicy="no-referrer"

@@ -6699,6 +6699,15 @@ body.android-device .nav {
   border-radius: 8px;
   background: rgba(8, 12, 22, 0.85);
   overflow: hidden;
+  /* 输入区 .play-input-shell / 底部 chip 带 z-index:1，会盖住面板底部，
+     导致插件操作按钮看得见却点不到。面板需抬到它们之上。 */
+  position: relative;
+  z-index: 2;
+  /* 面板高度由父级 flex 决定，做成列向 flex 后 iframe 才会跟着收缩，
+     而不是按 manifest 的设计高度撑破面板被 overflow:hidden 裁掉。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .play-plugin-minigame-panel__head {
   display: flex;
@@ -6718,11 +6727,32 @@ body.android-device .nav {
   color: rgba(180, 200, 230, 0.6);
   margin-top: 2px;
 }
+.play-plugin-minigame-panel__close {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  color: rgba(220,230,250,0.8);
+  width: 26px;
+  height: 26px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.play-plugin-minigame-panel__close:hover {
+  background: rgba(255,80,80,0.25);
+  border-color: rgba(255,80,80,0.5);
+  color: #ff7070;
+}
 .play-plugin-minigame-panel__iframe {
   display: block;
   border: 0;
   width: 100%;
   background: #000;
+  /* 跟随面板可用高度收缩（内联 height 只作设计基准，flex-shrink 允许变小） */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .play-plugin-minigame-panel__hint {
   padding: 6px 12px;
