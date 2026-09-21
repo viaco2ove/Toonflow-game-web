@@ -16,7 +16,7 @@
 
 .marquee-content {
   display: inline-block;
-  animation: marquee-left 8s linear infinite;
+  animation: marquee-left var(--marquee-duration, 8s) linear infinite;
 }
 
 .marquee-container:hover .marquee-content {
