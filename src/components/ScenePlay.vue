@@ -2215,6 +2215,8 @@ function clickShopItem(item: { name: string; price: number; category?: string; d
         // 购买失败（action=free_chat）或购买成功（action=purchased）都弹框提示
         if (data.action === "free_chat" || data.action === "purchased") {
           store.state.notice = data.narration;
+          // 购买成功时刷新 sessionDetail，让角色参数卡（背包/金钱）同步更新
+          if (data.action === "purchased") refreshSessionDetail();
         }
       }
     })
