@@ -1462,6 +1462,9 @@ const pluginMinigameView = computed(() => {
  */
 const pluginIframeEl = ref<HTMLIFrameElement | null>(null);
 
+/** 插件小游戏面板全屏状态，由 iframe 内 toonflow.minigame.setFullscreen(true/false) 触发 */
+const pluginPanelFullscreen = ref(false);
+
 /**
  * 实时 tick 镜像：iframe 每帧通过 tf_plugin_tick 让宿主代发 /plugin/tick，
  * 后端回推的最新 plugin_state 暂存到这里，优先于 activeMiniGame 推给 iframe 渲染。
@@ -1509,6 +1512,11 @@ function onPluginIframeMessage(event: MessageEvent) {
   // ★ toonflowJsApi.pluginData：插件 iframe 读写插件会话数据（宿主代发 /plugin/data）
   if (d.type === "tf_plugin_data") {
     void handlePluginData(d);
+    return;
+  }
+  // ★ toonflowJsApi.minigame.setFullscreen：插件请求切换面板全屏状态
+  if (d.type === "tf_plugin_fullscreen") {
+    pluginPanelFullscreen.value = d.fullscreen === true;
     return;
   }
   if (d.type !== "tf_plugin_action") return;
@@ -5569,6 +5577,7 @@ onBeforeUnmount(() => {
       <section
         v-if="pluginMinigameView && playMode !== 'setting' && playMode !== 'tips' && !isSessionPlaybackMode"
         class="play-plugin-minigame-panel"
+        :class="{ 'play-plugin-minigame-panel--fullscreen': pluginPanelFullscreen }"
       >
         <div class="play-plugin-minigame-panel__head">
           <div>
@@ -5587,7 +5596,7 @@ onBeforeUnmount(() => {
           class="play-plugin-minigame-panel__iframe"
           :src="pluginMinigameView.iframeSrc"
           @load="pushPluginStateToIframe"
-          :style="{
+          :style="pluginPanelFullscreen ? {} : {
             width: (pluginMinigameView.contribute.fullscreen ? '100%' : pluginMinigameView.contribute.width + 'px'),
             height: (pluginMinigameView.contribute.fullscreen ? '560px' : pluginMinigameView.contribute.height + 'px'),
             maxWidth: '100%',

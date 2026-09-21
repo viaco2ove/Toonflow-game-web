@@ -6762,6 +6762,32 @@ body.android-device .nav {
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* 全屏模式：插件 iframe 内调用 toonflow.minigame.setFullscreen(true) 触发 */
+.play-plugin-minigame-panel--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.play-plugin-minigame-panel--fullscreen .play-plugin-minigame-panel__head {
+  flex-shrink: 0;
+}
+.play-plugin-minigame-panel--fullscreen .play-plugin-minigame-panel__iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+}
+.play-plugin-minigame-panel--fullscreen .play-plugin-minigame-panel__hint {
+  display: none;
+}
+
 /* 世界书粘性标签 */
 .play-world-book-tag--sticky {
   background: rgba(220, 160, 80, 0.3);
