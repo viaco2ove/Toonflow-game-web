@@ -2004,11 +2004,17 @@ const inventoryLastResult = ref<{ items: string[]; money?: number; sellPrice?: n
 // 卖出数量输入框：每个物品名 → 用户输入的售出数量
 const inventorySellQtys = reactive<Record<string, number>>({});
 
-/** 解析 "银鲤×4" / "短刀" → {name, amount}。×/x/* 三种分隔符都支持 */
+/** 解析 "银鲤×4"、"银鲤×4（备注）"、"短刀（备注）"、"短刀" → {name, amount}。
+ * 与后端 miniGameInventoryAction.ts 的 parseItemName 保持一致。*/
 function parseInventoryItem(raw: string): { name: string; amount: number; raw: string } {
   const s = String(raw || "").trim();
-  const m = s.match(/^(.+?)\s*[×x*]\s*(\d+)\s*$/);
+  if (!s) return { name: "", amount: 0, raw: s };
+  // 名称×N + 可选括号备注
+  const m = s.match(/^(.+?)\s*[×x*]\s*(\d+)\s*([（(][^）)]*[)）])?\s*$/);
   if (m) return { name: m[1].trim(), amount: Number(m[2]), raw: s };
+  // 名称 + 括号备注（无 ×N）
+  const m2 = s.match(/^(.+?)\s*([（(][^）)]*[)）])\s*$/);
+  if (m2) return { name: m2[1].trim(), amount: 1, raw: s };
   return { name: s, amount: 1, raw: s };
 }
 
@@ -2067,6 +2073,8 @@ async function sellInventoryItem(item: { name: string; amount: number }) {
       delete inventorySellQtys[item.name];
       // 同步刷新 session state（让其他面板也拿到新物品/金钱）
       await refreshSessionDetail();
+      // narration 弹框提示
+      if (data.narration) store.state.notice = data.narration;
     }
   } catch (err) {
     store.state.notice = `卖出失败：${(err as Error)?.message || err}`;
@@ -2493,6 +2501,25 @@ const playbackCanPlay = computed(() => playbackMessages.value.length > 0 && play
 const allowRoleView = computed(() => currentWorld.value?.settings?.allowRoleView !== false);
 const canEditCurrentWorld = computed(() => store.canEditWorld(currentWorld.value));
 const settingSelectedRole = computed(() => roleCards.value.find((item) => item.id === settingRoleId.value) || roleCards.value[0] || null);
+
+/** 从 role_key_information 提取【当前行为】段（不含标签前缀） */
+const settingRoleCurrentBehavior = computed(() => {
+  const raw = settingSelectedRole.value?.parameterCardJson?.role_key_information || "";
+  const matched = String(raw).match(/【当前行为】(.+)/);
+  return matched ? (matched[1] || "").trim() : "";
+});
+
+/** role_key_information 去掉【当前行为】段后剩下的身份备注 */
+const settingRoleIdentityNote = computed(() => {
+  const raw = settingSelectedRole.value?.parameterCardJson?.role_key_information || "";
+  return String(raw).replace(/【当前行为】.+$/, "").trim();
+});
+
+/** 走马灯速度：每字固定 0.12s，字多则久，速度恒定 */
+const marqueeDuration = (text: string) => {
+  const len = (text || "").length;
+  return len ? Math.max(3, len * 0.05) : 8;
+};
 
 // 玩家行动提示器：动态拉取 3 条第一人称提示。
 // 每次点 play-tip-fab 切到 tips 视图，或在 tips 视图下手动刷新时都会拉新的。
@@ -4849,11 +4876,19 @@ onBeforeUnmount(() => {
         </div>
         <div v-else-if="settingSelectedRole" class="play-inline-card">
           <div class="play-inline-card__title">{{ settingSelectedRole.name }}</div>
-          <!-- 当前行为：跑马灯滚动显示 -->
-          <div class="play-inline-card__text">关键信息：</div>
-          <div v-if="settingSelectedRole.parameterCardJson?.role_key_information" class="play-inline-card__marquee">
+          <!-- 身份备注：跑马灯 -->
+          <div class="play-inline-card__text">身份备注：</div>
+          <div v-if="settingRoleIdentityNote" class="play-inline-card__marquee">
             <span class="marquee-container role_key_information" style="display:inline-block;width:100%;overflow:hidden;">
-              <span class="marquee-content">{{ settingSelectedRole.parameterCardJson?.role_key_information }}</span>
+              <span class="marquee-content" :style="{ '--marquee-duration': marqueeDuration(settingRoleIdentityNote) + 's' }">{{ settingRoleIdentityNote }}</span>
+            </span>
+          </div>
+          <div v-else class="play-inline-card__text" style="color:rgba(216,230,249,0.45);font-style:italic;">暂无身份备注</div>
+          <!-- 当前行为：跑马灯 -->
+          <div class="play-inline-card__text">当前行为：</div>
+          <div v-if="settingRoleCurrentBehavior" class="play-inline-card__marquee">
+            <span class="marquee-container role_key_information" style="display:inline-block;width:100%;overflow:hidden;">
+              <span class="marquee-content" :style="{ '--marquee-duration': marqueeDuration(settingRoleCurrentBehavior) + 's' }">{{ settingRoleCurrentBehavior }}</span>
             </span>
           </div>
           <div v-else class="play-inline-card__text" style="color:rgba(216,230,249,0.45);font-style:italic;">暂无当前行为</div>
