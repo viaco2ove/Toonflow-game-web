@@ -40,6 +40,8 @@ import type {
   WorldBookEntry,
   WorldBookImportPayload,
   ProgressAlignReport,
+  PluginListItem,
+  PluginInstallResult,
 } from "../types/toonflow";
 import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
@@ -1002,5 +1004,35 @@ export class ToonflowApi {
 
   describeImage(payload: { imageBase64: string; type?: "role" | "scene" }) {
     return this.post<{ description: string }>("/other/describeImage", payload);
+  }
+
+  /* ---------------------- 插件系统 ---------------------- */
+
+  /** 已安装插件列表 */
+  listPlugins() {
+    return this.post<{ plugins: PluginListItem[] }>("/plugin/list", {});
+  }
+
+  /** 安装 / 覆盖升级插件（.tpg/zip 包，base64） */
+  installPlugin(payload: { fileName?: string | null; base64Data: string }) {
+    return this.post<PluginInstallResult>("/plugin/install", payload);
+  }
+
+  /** 卸载插件 */
+  uninstallPlugin(pluginId: string) {
+    return this.post<{ pluginId: string }>("/plugin/uninstall", { pluginId });
+  }
+
+  /** 启用 / 禁用插件 */
+  setPluginEnabled(pluginId: string, enabled: boolean) {
+    return this.post<{ pluginId: string; enabled: boolean; status: string }>("/plugin/setEnabled", { pluginId, enabled });
+  }
+
+  /** 插件内静态资源 URL（<script src> / iframe 用，带 token 的 GET） */
+  pluginAssetUrl(pluginId: string, relPath: string): string {
+    const { baseUrl, token } = this.getConfig();
+    const base = String(baseUrl || "").replace(/\/+$/, "");
+    const rawToken = String(token || "").replace(/^Bearer\s+/, "");
+    return `${base}/plugin/getAsset?pluginId=${encodeURIComponent(pluginId)}&path=${encodeURIComponent(relPath)}&token=${encodeURIComponent(rawToken)}`;
   }
 }

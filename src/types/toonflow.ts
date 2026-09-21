@@ -653,6 +653,94 @@ export interface AiModelOptionItem {
 
 export type AiModelListMap = Record<string, AiModelOptionItem[]>;
 
+/* ============================ 插件系统 ============================ */
+
+export interface PluginContributes {
+  sidebar?: PluginSidebarItem[];
+  minigame?: PluginMinigameContribute;
+  commands?: PluginCommandContribute[];
+  settings?: PluginSettingsContribute;
+  [key: string]: unknown;
+}
+
+export interface PluginSidebarItem {
+  id: string;
+  label: string;
+  icon?: string;
+  command?: string;
+  pluginId?: string;
+  [key: string]: unknown;
+}
+
+export interface PluginMinigameContribute {
+  type: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  fullscreen?: boolean;
+  entry: string;
+  [key: string]: unknown;
+}
+
+export interface PluginCommandContribute {
+  id: string;
+  label: string;
+  desc?: string;
+  icon?: string;
+  command?: string;
+  [key: string]: unknown;
+}
+
+export interface PluginSettingsContribute {
+  schema?: Array<{
+    key: string;
+    type: "select" | "switch" | "input" | "number";
+    label: string;
+    options?: string[];
+    default?: unknown;
+  }>;
+}
+
+export interface PluginManifest {
+  specVersion?: number;
+  id: string;
+  name?: { $t?: string; fallback?: string } | string;
+  version?: string;
+  author?: string;
+  description?: { $t?: string; fallback?: string } | string;
+  minAppVersion?: string;
+  entry?: string;
+  backendEntry?: string;
+  cover?: string;
+  permissions?: string[];
+  contributes?: PluginContributes;
+  dependencies?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+export interface PluginListItem {
+  id: number;
+  pluginId: string;
+  name: string;
+  version: string;
+  author: string;
+  description: string;
+  enabled: boolean;
+  status: string;
+  installedAt: number | null;
+  updatedAt: number | null;
+  entry: string | null;
+  backendEntry: string | null;
+  manifest: PluginManifest | null;
+}
+
+export interface PluginInstallResult {
+  pluginId: string;
+  version: string;
+  dirName: string;
+  upgraded: boolean;
+}
+
 export interface StoryRuntimeConfig {
   storyOrchestratorPayloadMode?: "compact" | "advanced";
   storyMemoryPayloadMode?: "compact" | "advanced";

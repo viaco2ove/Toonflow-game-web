@@ -2,6 +2,7 @@
 import {computed, ComputedRef, nextTick, onBeforeUnmount, onMounted, reactive, ref, unref, watch} from "vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
+import { pluginRuntime } from "../composables/usePluginRuntime";
 import {estimateRevealDelayMs, useOrchestrationVoiceFlow} from "../composables/orchestrationVoiceFlow";
 import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
@@ -1415,6 +1416,36 @@ const miniGameSummaryItems = computed(() => {
 });
 
 /**
+ * 插件小游戏视图：
+ * - 当 activeMiniGame.gameType 命中某个插件 manifest.contributes.minigame.type 时
+ *   返回该插件的元信息（pluginId/entry/width/height）和拼好的 iframe URL。
+ * - 约定：插件 minigame 的 gameType 形如 `plugin:<id>` 或直接是 manifest.type。
+ *   当后端不知道插件存在时，gameType 仍是裸的 `field_survival`——此时按 type 反查插件清单。
+ */
+const pluginMinigameView = computed(() => {
+  const game = activeMiniGame.value;
+  if (!game) return null;
+  const gt = String(game.gameType || "");
+  // 优先匹配 plugin:<id>
+  if (gt.startsWith("plugin:")) {
+    const id = gt.slice("plugin:".length);
+    const m = pluginRuntime.minigameContributes.value.find((x) => x.pluginId === id);
+    if (!m) return null;
+    return {
+      contribute: m,
+      iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry),
+    };
+  }
+  // 否则直接按 type 反查（要求后端 orchestrator 直接用 manifest.type）
+  const m = pluginRuntime.findMinigameByType(gt);
+  if (!m) return null;
+  return {
+    contribute: m,
+    iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry),
+  };
+});
+
+/**
  * 监听小游戏面板视图变化，便于排查"为什么小游戏面板出现或消失"。
  */
 watch(
@@ -1484,8 +1515,8 @@ type CommandOption = {
   icon: string;
   prefix?: string; // 默认 '#'，空字符串表示不带前缀
 };
-// # 命令选项列表
-const commandOptions: CommandOption[] = [
+// # 命令选项列表（基础内置项）
+const baseCommandOptions: CommandOption[] = [
   { id: "mini_game", label: "小游戏", desc: "触发小游戏", icon: "🎮" },
   { id: "battle", label: "战斗", desc: "进入战斗", icon: "⚔️" },
   { id: "fishing", label: "钓鱼", desc: "开始钓鱼", icon: "🎣" },
@@ -1503,12 +1534,40 @@ const commandOptions: CommandOption[] = [
    { id: "action_input", label: "()", desc: "行为输入", icon: "🎬", prefix: ""  },
 ];
 
+// 插件运行时贡献的命令（来自 manifest.contributes.sidebar）
+// 协议：插件命令的 insertText 由 composable 预先拼好（已含 #前缀和尾随空格）
+type PluginCommandOption = CommandOption & { insertText?: string; pluginId?: string; sourceId?: string; isPlugin?: boolean };
+
+const commandOptions = computed<(CommandOption | PluginCommandOption)[]>(() => {
+  const list: (CommandOption | PluginCommandOption)[] = [...baseCommandOptions];
+  const sidebar = pluginRuntime.sidebarCommands.value;
+  if (sidebar.length > 0) {
+    // 插件分组用同构的 CommandOption 表示，但额外带 insertText/isPlugin 字段
+    list.push({ id: "_plugin_section", label: "── 插件 ──", desc: "", icon: "🧩" });
+    for (const s of sidebar) {
+      list.push({
+        id: s.id,
+        label: s.label,
+        desc: s.desc,
+        icon: s.icon,
+        insertText: s.insertText,
+        pluginId: s.pluginId,
+        sourceId: s.sourceId,
+        isPlugin: true,
+      } as PluginCommandOption);
+    }
+  }
+  return list;
+});
+
 // 根据搜索词过滤命令
 const filteredCommandOptions = computed(() => {
+  const list = commandOptions.value;
   const search = commandSearch.value.trim().toLowerCase();
-  if (!search) return commandOptions;
-  return commandOptions.filter(c => 
-    c.label.toLowerCase().includes(search) || 
+  // 分隔线永远保留
+  if (!search) return list;
+  return list.filter(c =>
+    c.label.toLowerCase().includes(search) ||
     c.desc.toLowerCase().includes(search) ||
     c.id.toLowerCase().includes(search)
   );
@@ -1635,9 +1694,26 @@ function selectMentionRole(role: StoryRole) {
   });
 }
 
-function selectCommand(cmd: CommandOption) {
+function selectCommand(cmd: CommandOption | PluginCommandOption) {
   const textarea = document.querySelector<HTMLTextAreaElement>(".play-textarea.mention-active");
   if (!textarea) return;
+
+  // 插件命令：用 prebuilt insertText 直接写入输入框 + 自动发送（与 #野外生存 同构）
+  const pluginCmd = cmd as PluginCommandOption;
+  if (pluginCmd.isPlugin && pluginCmd.insertText) {
+    const cursorPos = textarea.selectionStart;
+    store.state.sendText =
+      store.state.sendText.substring(0, commandTriggerPos.value) +
+      pluginCmd.insertText +
+      store.state.sendText.substring(cursorPos);
+    commandActive.value = false;
+
+    // 自动发送：等下一个 tick 让 Vue 响应 sendText 变更，再走正常 submit 链路
+    nextTick(() => {
+      void submit();
+    });
+    return;
+  }
 
   const cursorPos = textarea.selectionStart;
   const prefix = cmd.prefix ?? "#";                 // 行为类走这里 → ""
@@ -1741,6 +1817,13 @@ const historyScrollHandler = () => {
 onMounted(() => {
   checkAndroidDevice();
   startWorldClockPolling();
+  // 加载当前用户已启用的插件（注入命令面板 / 暴露 minigame）
+  void pluginRuntime.reload();
+  // 监听插件版本号变化：插件管理弹窗里安装/卸载/启停后会自增
+  watch(
+    () => store.state.pluginRuntimeVersion,
+    () => void pluginRuntime.reload(true),
+  );
   // 监听原生语音识别事件
   if (isAndroidDevice.value) {
     window.addEventListener("speechstart", onNativeSpeechStart);
@@ -5302,6 +5385,41 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
+      <!--
+        插件小游戏 iframe 容器：
+        - 当 activeMiniGame.gameType 命中插件 manifest.contributes.minigame.type 时挂载
+        - URL 由 usePluginRuntime.resolveIframeUrl() 拼接（带 token 的 GET 资源）
+        - 关闭小游戏时由 visibleStatuses 变化自动卸载 iframe（v-if 控制）
+      -->
+      <section
+        v-if="pluginMinigameView && playMode !== 'setting' && playMode !== 'tips' && !isSessionPlaybackMode"
+        class="play-plugin-minigame-panel"
+      >
+        <div class="play-plugin-minigame-panel__head">
+          <div>
+            <div class="play-plugin-minigame-panel__title">{{ pluginMinigameView.contribute.title }}</div>
+            <div class="play-plugin-minigame-panel__meta">
+              来自插件：{{ pluginMinigameView.contribute.pluginId }}
+              <span v-if="activeMiniGame">· 第 {{ activeMiniGame.round || 1 }} 轮</span>
+            </div>
+          </div>
+        </div>
+        <iframe
+          class="play-plugin-minigame-panel__iframe"
+          :src="pluginMinigameView.iframeSrc"
+          :style="{
+            width: (pluginMinigameView.contribute.fullscreen ? '100%' : pluginMinigameView.contribute.width + 'px'),
+            height: (pluginMinigameView.contribute.fullscreen ? '560px' : pluginMinigameView.contribute.height + 'px'),
+            maxWidth: '100%',
+          }"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          referrerpolicy="no-referrer"
+        />
+        <div class="play-plugin-minigame-panel__hint">
+          提示：插件通过 postMessage 与主界面通信，输入 #退出 可关闭小游戏。
+        </div>
+      </section>
+
       <div class="play-story-footer">
         <div class="play-story-main">
 <!--          {{ chapterObjectivePreview }}{{ playMode }}-->
@@ -5630,18 +5748,25 @@ onBeforeUnmount(() => {
           </template>
           <!-- # 命令列表 -->
           <template v-else>
-            <div
-              v-for="(cmd, index) in filteredCommandOptions"
-              :key="cmd.id"
-              class="mention-dropdown__item mention-dropdown__item--command"
-              :class="{ 'is-selected': index === mentionSelectedIndex }"
-              @mousedown.prevent="selectCommand(cmd)"
-              @mouseenter="mentionSelectedIndex = index"
-            >
-              <span class="mention-dropdown__icon">{{ cmd.icon }}</span>
-              <span class="mention-dropdown__name">{{ cmd.label }}</span>
-              <span class="mention-dropdown__desc">{{ cmd.desc }}</span>
-            </div>
+            <template v-for="(cmd, index) in filteredCommandOptions" :key="cmd.id">
+              <div
+                v-if="cmd.id === '_plugin_section'"
+                class="mention-dropdown__divider"
+              >
+                {{ cmd.label }}
+              </div>
+              <div
+                v-else
+                class="mention-dropdown__item mention-dropdown__item--command"
+                :class="{ 'is-selected': index === mentionSelectedIndex }"
+                @mousedown.prevent="selectCommand(cmd)"
+                @mouseenter="mentionSelectedIndex = index"
+              >
+                <span class="mention-dropdown__icon">{{ cmd.icon }}</span>
+                <span class="mention-dropdown__name">{{ cmd.label }}</span>
+                <span class="mention-dropdown__desc">{{ cmd.desc }}</span>
+              </div>
+            </template>
           </template>
         </div>
       </div>

@@ -1049,6 +1049,8 @@ function createToonflowStore() {
     settingsTokenUsageStats: [] as AiTokenUsageStatsItem[],
     settingsTokenUsageLoading: false,
     storyPrompts: [] as PromptItem[],
+    /** 插件运行时版本号：插件安装/卸载/启停后 +1，触发 ScenePlay 重载插件列表 */
+    pluginRuntimeVersion: 0,
     aiGenerating: false,
     avatarProcessingTarget: "" as "" | "account" | "user" | "npc",
     avatarProcessingNpcIndex: null as number | null,

@@ -6679,6 +6679,59 @@ body.android-device .nav {
   font-weight: 500;
 }
 
+/* 插件分组分隔行（不可选中） */
+.mention-dropdown__divider {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.5px;
+  background: rgba(255, 255, 255, 0.04);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 插件小游戏 iframe 容器 */
+.play-plugin-minigame-panel {
+  margin: 12px 0;
+  border: 1px solid rgba(120, 160, 220, 0.35);
+  border-radius: 8px;
+  background: rgba(8, 12, 22, 0.85);
+  overflow: hidden;
+}
+.play-plugin-minigame-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(120, 160, 220, 0.2);
+  background: rgba(20, 30, 50, 0.5);
+}
+.play-plugin-minigame-panel__title {
+  font-weight: 600;
+  font-size: 14px;
+  color: rgba(220, 230, 250, 0.95);
+}
+.play-plugin-minigame-panel__meta {
+  font-size: 11px;
+  color: rgba(180, 200, 230, 0.6);
+  margin-top: 2px;
+}
+.play-plugin-minigame-panel__iframe {
+  display: block;
+  border: 0;
+  width: 100%;
+  background: #000;
+}
+.play-plugin-minigame-panel__hint {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: rgba(180, 200, 230, 0.55);
+  border-top: 1px solid rgba(120, 160, 220, 0.18);
+  background: rgba(0, 0, 0, 0.25);
+}
+
 /* 世界书粘性标签 */
 .play-world-book-tag--sticky {
   background: rgba(220, 160, 80, 0.3);

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import SettingsModelManagerDialog from "./SettingsModelManagerDialog.vue";
+import SettingsPluginManagerDialog from "./SettingsPluginManagerDialog.vue";
 import { storyPromptMeta } from "../utils/storyPromptCatalog";
 
 // 版本号：web 版本从 .env 内联，app 版本运行时从后端获取
@@ -194,6 +195,13 @@ async function applyRecommendedModel(key: string) {
   await store.bindRecommendedGameModel(key);
 }
 
+const showPluginManager = ref(false);
+
+function onPluginManagerChanged() {
+  // 插件增删/启停后，强制 ScenePlay 重新加载命令面板
+  store.state.pluginRuntimeVersion = (store.state.pluginRuntimeVersion || 0) + 1;
+}
+
 async function changeStoryOrchestratorPayloadMode(value: string) {
   await store.saveStoryOrchestratorPayloadMode(value === "advanced" ? "advanced" : "compact");
 }
@@ -312,6 +320,21 @@ watch(
       <div class="settings-action-row" v-else>
         <button class="button settings-outline-btn" type="button" @click="openAccountDialog('changePassword')">修改密码</button>
         <button class="button settings-danger-btn" type="button" @click="store.clearToken">退出登录</button>
+      </div>
+    </section>
+
+    <section class="surface section-block settings-card settings-card--plain">
+      <div class="section-title settings-section-title">插件管理</div>
+      <div class="subtle">安装 / 卸载 / 启用 / 禁用小游戏等扩展插件（.tpg 或 .zip 包）。</div>
+      <div class="settings-action-row">
+        <button
+          class="button primary settings-solid-btn"
+          type="button"
+          :disabled="!store.state.token"
+          @click="showPluginManager = true"
+        >
+          打开插件管理
+        </button>
       </div>
     </section>
 
@@ -620,6 +643,11 @@ watch(
     :config-type="store.GAME_MODEL_SLOTS.find((item) => item.key === activeModelKey)?.configType || 'text'"
     :selected-id="store.settingsModelBinding(activeModelKey)?.configId || null"
     @confirmed="onModelManagerConfirmed"
+  />
+
+  <SettingsPluginManagerDialog
+    v-model="showPluginManager"
+    @changed="onPluginManagerChanged"
   />
 
   <div v-if="showTokenUsageDialog" class="modal-backdrop" @click.self="showTokenUsageDialog = false">
