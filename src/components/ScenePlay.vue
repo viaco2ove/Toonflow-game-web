@@ -1520,6 +1520,19 @@ function onPluginIframeMessage(event: MessageEvent) {
     return;
   }
   if (d.type !== "tf_plugin_action") return;
+  // ★ toonflowJsApi.minigame.done/abort：不走文本，直接触发退出流程
+  if (d.kind === "abort") {
+    WebDebugLogUtil.log("[aiGame][plugin] 插件 iframe 发送 abort，强制退出小游戏");
+    pluginPanelFullscreen.value = false;
+    void submitMiniGameAction("#退出");
+    return;
+  }
+  if (d.kind === "done") {
+    pluginPanelFullscreen.value = false;
+    // done 有 result 时可后续扩展结算展示，这里只关闭全屏并把 result 带回聊天
+    void submitMiniGameAction(d.result != null ? `#done ${JSON.stringify(d.result)}` : "#退出");
+    return;
+  }
   const text = String(d?.params?.text || "").trim();
   if (!text) return;
   void submitMiniGameAction(text);
@@ -5427,7 +5440,7 @@ onBeforeUnmount(() => {
         <button type="button" class="play-tip-back" @click="toggleTipsMode">返回</button>
       </section>
 
-      <section v-if="activeMiniGame && playMode !== 'setting' && playMode !== 'tips' && !isSessionPlaybackMode" class="play-mini-game-panel">
+      <section v-if="activeMiniGame && !pluginMinigameView && playMode !== 'setting' && playMode !== 'tips' && !isSessionPlaybackMode" class="play-mini-game-panel">
         <div class="play-mini-game-panel__head">
           <div>
             <div class="play-mini-game-panel__title">{{ activeMiniGame.displayName }}</div>
