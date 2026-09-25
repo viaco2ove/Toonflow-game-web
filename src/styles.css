@@ -6766,6 +6766,7 @@ body.android-device .nav {
 .play-plugin-minigame-panel--fullscreen {
   position: fixed;
   inset: 0;
+  top: 0px;
   z-index: 9999;
   margin: 0;
   border-radius: 0;
@@ -6777,6 +6778,7 @@ body.android-device .nav {
 }
 .play-plugin-minigame-panel--fullscreen .play-plugin-minigame-panel__head {
   flex-shrink: 0;
+  display:none;
 }
 .play-plugin-minigame-panel--fullscreen .play-plugin-minigame-panel__iframe {
   flex: 1 1 auto;
