@@ -34,17 +34,39 @@ function checkAndroidDevice() {
 
 function updateAndroidInsets() {
   const insets = (window as any).androidInsets;
+  console.log("Android insets is", insets);
   if (insets) {
     // 🚨 修正：Android 传过来的（insets.top / density）已经是 CSS 逻辑像素了
     // 直接使用，不要再除以 dpr，否则会遭遇“二次缩水”
-    const top = Math.round(insets.top);
+    let top = Math.round(insets.top);
+    console.log("Android top is", top)
+    if(top==0){
+      console.error("Android top is 0？？？")
+      top=40;
+    }
+
     const bottom = Math.round(insets.bottom);
     const ime = Math.round(insets.ime || 0);
 
     document.documentElement.style.setProperty("--android-inset-top", `${top}px`);
     document.documentElement.style.setProperty("--android-inset-bottom", `${bottom}px`);
     document.documentElement.style.setProperty("--android-ime-height", `${ime}px`);
+    androidInsetsReady = true;
+  }else {
+    alert ("Android insets is null");
+    console.error("Android top is null");
   }
+}
+
+/** ★ 兜底：Android 的 evaluateJavascript 注入时机晚于 Vue onMounted，
+ *  首次调用时 window.androidInsets 往往还是 undefined。
+ *  轮询直到拿到数据（最多 ~10 秒），不依赖 Android 侧补发事件。 */
+let androidInsetsReady = false;
+let androidInsetsTimer: ReturnType<typeof setTimeout> | null = null;
+function pollAndroidInsets(retries = 40) {
+  updateAndroidInsets();
+  if (androidInsetsReady || retries <= 0) return;
+  androidInsetsTimer = setTimeout(() => pollAndroidInsets(retries - 1), 250);
 }
 
 function isImportantNotice(text: string) {
@@ -73,7 +95,7 @@ const bottomActive = computed(() => {
 onMounted(async () => {
   checkAndroidDevice();
   window.addEventListener("android-insets", updateAndroidInsets);
-  updateAndroidInsets();
+  pollAndroidInsets();
   if (!store.state.selectedProjectId && store.state.projects.length) {
     store.selectProject(store.state.projects[0].id);
   }
@@ -106,6 +128,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (noticeTimer) clearTimeout(noticeTimer);
+  if (androidInsetsTimer) clearTimeout(androidInsetsTimer);
   window.removeEventListener("android-insets", updateAndroidInsets);
 });
 
