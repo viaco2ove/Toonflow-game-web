@@ -9,9 +9,9 @@
     "preview": "vite preview --host",
     "type-check": "tsc --noEmit",
     "electron:dev": "concurrently -k \"vite --host\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "vite build && node scripts/inline-dist-assets.mjs && electron-builder",
-    "electron:build:win": "vite build && node scripts/inline-dist-assets.mjs && electron-builder --win",
-    "electron:build:linux": "vite build && node scripts/inline-dist-assets.mjs && electron-builder --linux"
+    "electron:build": "INLINE_DIST=1 vite build && INLINE_DIST=1 node scripts/inline-dist-assets.mjs && electron-builder",
+    "electron:build:win": "INLINE_DIST=1 vite build && INLINE_DIST=1 node scripts/inline-dist-assets.mjs && electron-builder --win",
+    "electron:build:linux": "INLINE_DIST=1 vite build && INLINE_DIST=1 node scripts/inline-dist-assets.mjs && electron-builder --linux"
   },
   "dependencies": {
     "axios": "^1.8.2",

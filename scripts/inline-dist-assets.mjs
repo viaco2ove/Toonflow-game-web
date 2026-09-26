@@ -43,6 +43,17 @@ function replaceAsync(input, pattern, replacer) {
 }
 
 async function main() {
+  // ★ 默认不再内联 JS/CSS。
+  //   - Web 浏览器：HTML 走相对路径按需加载 chunks，享受 HTTP 缓存
+  //   - Android WebView：通过 WebViewAssetLoader 加载多个外置资源，冷启动从 2-4s 降到 500ms
+  //   - Electron 桌面：需要单文件 HTML 离线分发，调用方在 package.json 里
+  //     设置 `INLINE_DIST=1` 显式开启内联
+  const forceInline = process.env.INLINE_DIST === "1" || process.env.INLINE_DIST === "true";
+  if (!forceInline) {
+    console.log("Skipped inlining (set INLINE_DIST=1 to force inline). Use external assets.");
+    return;
+  }
+
   let html = await readFile(htmlPath, "utf8");
 
   const cssResult = await inlineAssetTag(
