@@ -6768,6 +6768,7 @@ body.android-device .nav {
   inset: 0;
   top: 0px;
   z-index: 9999;
+  padding-top: var(--android-inset-top);
   margin: 0;
   border-radius: 0;
   border: none;
