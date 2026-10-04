@@ -1514,6 +1514,30 @@ function onPluginIframeMessage(event: MessageEvent) {
     void handlePluginData(d);
     return;
   }
+  // ★ game.md 对话功能：插件小游戏内角色发言同步到 Toonflow-game-web 聊天框
+  if (d.type === "tf_plugin_chat") {
+    const speaker = String(d?.speaker || "旁白");
+    const text = String(d?.text || "").trim();
+    if (!text) return;
+    // 中立NPC用旁白身份发言；其他角色用通用 assistant 角色类型
+    const roleType = speaker === "旁白" ? "narrator" : "assistant";
+    const chatMsg = {
+      id: Date.now(),
+      role: speaker,
+      roleType,
+      eventType: "narrate",
+      content: text,
+      createTime: Date.now(),
+      meta: {
+        fromPlugin: true,
+        pluginChat: true,
+        speaker,
+        avatar: typeof d?.avatar === "string" ? d.avatar : undefined,
+      } as Record<string, unknown>,
+    };
+    store.state.messages = [...store.state.messages, chatMsg];
+    return;
+  }
   // ★ toonflowJsApi.minigame.setFullscreen：插件请求切换面板全屏状态
   if (d.type === "tf_plugin_fullscreen") {
     pluginPanelFullscreen.value = d.fullscreen === true;
