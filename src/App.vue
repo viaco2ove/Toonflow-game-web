@@ -53,7 +53,7 @@ function updateAndroidInsets() {
     document.documentElement.style.setProperty("--android-ime-height", `${ime}px`);
     androidInsetsReady = true;
   }else {
-    console.error("Android top is null");
+    console.log("Android top is null");
   }
 }
 
