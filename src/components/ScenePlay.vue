@@ -1475,10 +1475,24 @@ const pluginLiveState = ref<{ state: any; actions: string[]; response: string } 
  * 处理 iframe 发来的实时推进请求（移动 / 技能 / 物品 / 翻页 / 开局 / 退出）。
  * iframe 与后端不同源且拿不到 JWT，必须由宿主代发 /plugin/tick。
  */
+/**
+ * ★ 409 连击防护：tick 失败（尤其 409「当前没有进行中的该插件小游戏」）时
+ * iframe 仍会每帧重试 → 后端刷屏 + UI 冻结。这里做三件事：
+ *   1. 连续失败计数，超阈值后暂停代发并通知 iframe 降频/停止；
+ *   2. 查 /plugin/data 确认插件真实状态（phase）——仍 playing 说明只是 stateJson
+ *      指针被编排 clobber（后端已自愈重试），恢复代发；确实 over/无数据说明
+ *      游戏已结束（如用户在聊天框输入 #退出），通知 iframe 停止 tick；
+ *   3. 恢复窗口内任何一次成功 tick 都会清零计数。
+ */
+const pluginTickFailStreak = ref(0);
+const pluginTickPaused = ref(false);
+const PLUGIN_TICK_FAIL_LIMIT = 5;
+
 async function handlePluginTick(tick: { action: string; params: Record<string, unknown> }) {
   const sessionId = String(store.state.currentSessionId || "").trim();
   const pluginId = pluginMinigameView.value?.contribute.pluginId;
   if (!sessionId || !pluginId) return;
+  if (pluginTickPaused.value) return;
   try {
     const res: any = await store.api.pluginTick({
       sessionId,
@@ -1486,6 +1500,7 @@ async function handlePluginTick(tick: { action: string; params: Record<string, u
       action: tick.action || "tick",
       params: tick.params && typeof tick.params === "object" ? tick.params : {},
     });
+    pluginTickFailStreak.value = 0;
     if (res && res.state) {
       pluginLiveState.value = {
         state: res.state,
@@ -1495,7 +1510,36 @@ async function handlePluginTick(tick: { action: string; params: Record<string, u
       pushPluginStateToIframe();
     }
   } catch (err) {
-    WebDebugLogUtil.log("[aiGame][plugin] tick 失败", { err: String(err) });
+    pluginTickFailStreak.value += 1;
+    WebDebugLogUtil.log("[aiGame][plugin] tick 失败", {
+      err: String(err),
+      streak: pluginTickFailStreak.value,
+    });
+    if (pluginTickFailStreak.value >= PLUGIN_TICK_FAIL_LIMIT) {
+      // 连续失败：先查插件真实状态再决定停还是继续
+      pluginTickPaused.value = true;
+      let phase = "";
+      try {
+        const probe: any = await store.api.pluginData({ sessionId, pluginId, op: "get", dataKey: "plugin_state" });
+        phase = String(probe?.value?.phase || "");
+      } catch {
+        phase = "";
+      }
+      if (phase === "playing") {
+        // 插件状态仍活跃：只是 stateJson 指针被编排复写（后端已自愈），恢复代发
+        pluginTickPaused.value = false;
+        pluginTickFailStreak.value = 0;
+      } else {
+        // 游戏确实结束/数据缺失：通知 iframe 停止 tick，避免无限 409 刷屏
+        const frame = pluginIframeEl.value;
+        try {
+          frame?.contentWindow?.postMessage({ type: "tf_plugin_tick_halted", reason: phase || "no_state" }, "*");
+        } catch {
+          /* ignore */
+        }
+        WebDebugLogUtil.log("[aiGame][plugin] tick 已暂停（游戏结束/无活跃状态），已通知 iframe", { phase });
+      }
+    }
   }
 }
 
