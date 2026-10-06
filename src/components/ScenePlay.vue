@@ -1436,10 +1436,17 @@ const pluginMinigameView = computed(() => {
     const id = gt.slice("plugin:".length);
     return build(pluginRuntime.minigameContributes.value.find((x) => x.pluginId === id));
   }
-  // 2) 按 type 反查（后端直接用 manifest.type 时命中）
+  // 2) 按 type 反查（后端直接用 manifest.type 如 "field_survival" 时命中）
   const byType = pluginRuntime.findMinigameByType(gt);
   if (byType) return build(byType);
-  // 3) ★ 通用 plugin rulebook 的 gameType 就是裸的 "plugin"，
+  // 3) ★ 按 publicState.plugin_id 再查一次（插件清单还没加载完时 byType 会漏掉，
+  //    加载完成后 publicState.plugin_id 还在，可兜底）。
+  const pid2 = String(ps.plugin_id || "");
+  if (pid2) {
+    const byId2 = pluginRuntime.minigameContributes.value.find((x) => x.pluginId === pid2);
+    if (byId2) return build(byId2);
+  }
+  // 4) ★ 通用 plugin rulebook 的 gameType 就是裸的 "plugin"，
   //    此时真实插件身份在 public_state.plugin_id / plugin_type 里，用它反查。
   //    没有这步，插件小游戏只会出旁白、永远不渲染 iframe。
   if (gt === "plugin") {
@@ -1678,7 +1685,9 @@ function toClonable<T>(value: T): T {
  * 优先用实时 tick 镜像 pluginLiveState，初始选人阶段回退到 activeMiniGame.publicState。 */
 function pushPluginStateToIframe() {
   const game = activeMiniGame.value;
-  if (!game || String(game.gameType || "") !== "plugin") return;
+  // 原来只允许 gameType === "plugin"，导致 field_survival 等 manifest.type 直接下发时状态推不进去。
+  // 放宽条件：有 pluginMinigameView（iframe 已挂载）时即推送，不管 gameType 是 "plugin" 还是 "field_survival"。
+  if (!game || !pluginMinigameView.value) return;
   const publicState: any = game.publicState || {};
   const live = pluginLiveState.value;
   const state = live?.state ?? publicState.plugin_state;
