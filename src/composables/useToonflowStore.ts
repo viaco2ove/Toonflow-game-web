@@ -3102,6 +3102,17 @@ function createToonflowStore() {
   }
 
   /**
+   * ★ 2026-10-10 fix：# 前缀的系统指令（#野外生存 / #退出 等）必须无视轮转模式立刻执行。
+   *   原行为：narrative 模式下用户消息被后端 LLM 编排，#野外生存 被当成普通对话，插件不启动
+   *   → 角色列表空。修复：识别为系统指令后，自动切到「手动」模式 + 继续提交（addMessage 已设 orchestrate:false，
+   *   tick/manual 模式后端不再经 LLM，直接落库触发 on_mini_game_start）。
+   */
+  function isPluginSystemCommand(content: string | null | undefined): boolean {
+    const t = String(content || "").trim();
+    return t.startsWith("#") && t.length > 1;
+  }
+
+  /**
    * 判断服务端返回的消息里，是否已经明确告知"当前没有进行中的小游戏"。
    *
    * 用途：
@@ -7954,6 +7965,16 @@ function createToonflowStore() {
     const content = state.sendText.trim();
     if (!content || state.sendPending || state.runtimeProcessingPending) return;
     clearRuntimeRetryState();
+    // ★ 2026-10-10 fix：# 前缀系统指令（#野外生存 等）必须无视轮转模式立刻启动插件。
+    //   narrative 模式后端会走 LLM 编排把 #野外生存 当普通对话 → 不出 on_mini_game_start
+    //   → 插件 UI 不弹、角色列表空。修复：在消息提交前，临时把时间模式切到 manual（前端权威），
+    //   让后端 addMessage 走 orchestrate:false 直接落库；消息发送完成（state.sendPending=false
+    //   即 finally 块执行后）再切回原模式——**时间模式不永久改变**。
+    const isPluginCmd = isPluginSystemCommand(content) && content !== "#退出";
+    const previousMode = state.timeWeatherMode;
+    if (isPluginCmd && previousMode === "narrative") {
+      setTimeWeatherMode("manual");
+    }
     state.sendPending = true;
     try {
       if (state.debugMode) {
@@ -7984,6 +8005,10 @@ function createToonflowStore() {
       state.notice = message;
     } finally {
       state.sendPending = false;
+      // ★ 2026-10-10 fix：# 系统指令后恢复时间模式（仅当之前是 narrative 模式时）
+      if (isPluginCmd && previousMode === "narrative") {
+        setTimeWeatherMode(previousMode);
+      }
     }
   }
 
