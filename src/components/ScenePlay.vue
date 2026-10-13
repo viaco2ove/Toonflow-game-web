@@ -1427,8 +1427,43 @@ const pluginMinigameView = computed(() => {
   if (!game) return null;
   const gt = String(game.gameType || "");
   const ps = (game.publicState || {}) as Record<string, unknown>;
+  // ★ 把当前世界名/ID/会话ID追加到 iframe URL，插件 storyMap 等模块可从 location.search 读到。
+  //   /plugin/getAsset 已实测接受未识别 query 参数（curl 401 是 token 问题，不是 404）。
+  //   来源优先级：sessionDetail.world.name（game 路径，loadSession 时填）→ store.worldName（编辑器路径）→ publicState 内的 worldName。
+  const resolveStoryContext = (): { name: string; worldId: string; sessionId: string } => {
+    try {
+      const sd: any = (store as any).state?.sessionDetail;
+      const w = sd?.world;
+      const name =
+        (w && typeof w.name === "string" && w.name) ||
+        String((store.state as any).worldName || "").trim() ||
+        (ps && typeof (ps as any).worldName === "string" ? (ps as any).worldName : "") ||
+        (ps && (ps as any).plugin_state && typeof (ps as any).plugin_state.worldName === "string" ? (ps as any).plugin_state.worldName : "");
+      const worldId =
+        (w && w.id != null ? String(w.id) : "") ||
+        String((store.state as any).worldId || "").trim() ||
+        (ps && (ps as any).plugin_state && (ps as any).plugin_state.worldId != null ? String((ps as any).plugin_state.worldId) : "");
+      const sessionId = String(sd?.sessionId || (store as any).state?.currentSessionId || "").trim();
+      return {
+        name: String(name || "").trim(),
+        worldId: String(worldId || "").trim(),
+        sessionId: String(sessionId || "").trim(),
+      };
+    } catch { return { name: "", worldId: "", sessionId: "" }; }
+  };
+  const appendStory = (base: string): string => {
+    try {
+      const { name, worldId, sessionId } = resolveStoryContext();
+      if (!name && !worldId && !sessionId) return base;
+      const u = new URL(base, location.href);
+      if (name) u.searchParams.set("story", name);
+      if (worldId) u.searchParams.set("worldId", worldId);
+      if (sessionId) u.searchParams.set("sessionId", sessionId);
+      return u.toString();
+    } catch { return base; }
+  };
   const build = (m: any) => (m
-    ? { contribute: m, iframeSrc: pluginRuntime.resolveIframeUrl(m.pluginId, m.entry) }
+    ? { contribute: m, iframeSrc: appendStory(pluginRuntime.resolveIframeUrl(m.pluginId, m.entry)) }
     : null);
 
   // 1) 优先匹配 plugin:<id>
@@ -1618,7 +1653,9 @@ function onPluginIframeMessage(event: MessageEvent) {
  * iframe 无 JWT，宿主代发；结果原路 postMessage 回 iframe（带 reqId 供 Promise 对账）。
  */
 async function handlePluginData(d: any) {
-  const sessionId = String(store.state.currentSessionId || "").trim();
+  // iframe 可显式指定 sessionId（读跨会话模板用 "all"），否则回退当前会话。
+  const requested = String(d?.sessionId || "").trim();
+  const sessionId = requested || String(store.state.currentSessionId || "").trim();
   const pluginId = pluginMinigameView.value?.contribute.pluginId;
   const reqId = String(d?.reqId || "");
   const send = (payload: Record<string, unknown>) => {
