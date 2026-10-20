@@ -380,4 +380,9 @@ export const LOG_TAG_GROUPS: LogTagGroup[] = [
       "resolveRuntimeVoiceUrl inflight",
     ],
   },
+  {
+    prefix: "[plugins]",
+    description: "插件相关。",
+    tags: ["[plugins]"],
+  },
 ];
