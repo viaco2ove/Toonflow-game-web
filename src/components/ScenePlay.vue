@@ -1462,8 +1462,26 @@ const pluginMinigameView = computed(() => {
       return u.toString();
     } catch { return base; }
   };
+  /**
+   * ★ P2 协议分流（2026-11-01，网络通信机制 v2 §4）：
+   *   manifest.contributes.minigame.interaction 决定协议形态——
+   *   - "turn-based"：回合/指令型，插件端**不发 tick**，只在玩家出招时发 action（通信量 → 0）
+   *   - "realtime"（默认）：实时动作型，保持 10Hz tick（+ O1-O4 优化）
+   * 通过 iframe src 的 query 参数传给插件端（插件读 location.search 判定）。
+   * ★ realtime 也显式拼上（而非省略）：便于排查时一眼看出协议形态，
+   *   插件端对缺省值同样按 realtime 处理，行为完全兼容。
+   */
+  const appendInteraction = (base: string, m: any): string => {
+    try {
+      const it = String(m?.interaction || "realtime");
+      if (!it) return base;
+      const u = new URL(base, location.href);
+      u.searchParams.set("interaction", it);
+      return u.toString();
+    } catch { return base; }
+  };
   const build = (m: any) => (m
-    ? { contribute: m, iframeSrc: appendStory(pluginRuntime.resolveIframeUrl(m.pluginId, m.entry)) }
+    ? { contribute: m, iframeSrc: appendInteraction(appendStory(pluginRuntime.resolveIframeUrl(m.pluginId, m.entry)), m) }
     : null);
 
   // 1) 优先匹配 plugin:<id>

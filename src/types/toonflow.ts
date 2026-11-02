@@ -679,6 +679,14 @@ export interface PluginMinigameContribute {
   height?: number;
   fullscreen?: boolean;
   entry: string;
+  /**
+   * ★ P2 协议分流（2026-11-01，网络通信机制 v2 §4）：
+   *   - "realtime"（默认）：实时动作型，插件前端主动发 tick（10Hz 活跃档）
+   *   - "turn-based"：回合/指令型，插件**不发 tick**，只在玩家出招时发 action
+   * 宿主会把它作为 query 参数（?interaction=...）拼进 iframe src，
+   * 插件端据此决定是否启动 tick 上报循环。
+   */
+  interaction?: "realtime" | "turn-based" | string;
   [key: string]: unknown;
 }
 

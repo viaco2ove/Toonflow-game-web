@@ -1039,6 +1039,8 @@ export class ToonflowApi {
   /**
    * 插件实时推进：只更新 session 里的插件状态，不落对话、不走编排。
    * 实时类插件（2.5D 动作游戏）每帧调用；结算时才走 addMessage。
+   * ★ O1（2026-11-01）：帧 tick 且状态无变化时 state 为 null（304 语义）——
+   *   调用方须判空跳过状态合并（ScenePlay.handlePluginTick 已有 res.state 守卫）。
    */
   pluginTick(payload: {
     sessionId: string;
@@ -1047,7 +1049,7 @@ export class ToonflowApi {
     params?: Record<string, unknown>;
   }) {
     return this.post<{
-      state: Record<string, unknown>;
+      state: Record<string, unknown> | null;
       actions: string[];
       response: string;
       code: number;

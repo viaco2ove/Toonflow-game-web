@@ -47,6 +47,8 @@ export interface ResolvedPluginMinigame {
   width: number;
   height: number;
   fullscreen: boolean;
+  /** ★ P2：交互形态（realtime / turn-based），由 manifest.contributes.minigame.interaction 决定 */
+  interaction: string;
   item: PluginListItem;
 }
 
@@ -155,6 +157,8 @@ const minigameContributes = computed<ResolvedPluginMinigame[]>(() => {
       width: Number(m.width) || 960,
       height: Number(m.height) || 640,
       fullscreen: Boolean(m.fullscreen),
+      // ★ P2 协议分流：manifest 声明 interaction，默认 realtime（保持既有行为不变）
+      interaction: String(m.interaction || "realtime"),
       item: p,
     });
   }
