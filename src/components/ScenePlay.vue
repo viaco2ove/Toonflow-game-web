@@ -1547,12 +1547,31 @@ const pluginLiveState = ref<{ state: any; actions: string[]; response: string } 
 const pluginTickFailStreak = ref(0);
 const pluginTickPaused = ref(false);
 const PLUGIN_TICK_FAIL_LIMIT = 5;
+// ★ 2026-11-14 弱网保护：tick 在途标志 + 动作队列。
+//   此前 iframe 每 100ms 发一条 tf_plugin_tick，宿主无条件代发 HTTP——慢链路
+//   （WiFi RTT 100ms+ / 服务器偶发秒级阻塞）下浏览器 6 连接全被 tick 占满，
+//   技能/物品点击（同一通道）排队 10s+ →「技能放不出来」、pluginData 全线超时。
+//   现在：① 帧 tick（action==="tick"）在途时直接丢弃——状态由下一个 tick 带上，
+//   不丢信息；② 玩家动作（skill/attack/item/goto_enemy/sys_*）永不丢弃，
+//   排入队列在在途请求完成后立即发出（保序）。
+let pluginTickInFlight = false;
+const pluginActionQueue: Array<{ action: string; params: Record<string, unknown> }> = [];
+const PLUGIN_ACTION_QUEUE_MAX = 8;
 
 async function handlePluginTick(tick: { action: string; params: Record<string, unknown> }) {
   const sessionId = String(store.state.currentSessionId || "").trim();
   const pluginId = pluginMinigameView.value?.contribute.pluginId;
   if (!sessionId || !pluginId) return;
   if (pluginTickPaused.value) return;
+  // ★ 帧 tick 在途 → 丢弃本帧（弱网防堆积核心）
+  if (tick.action === "tick" && pluginTickInFlight) return;
+  // 玩家动作在途 → 排队（有上限，防极端点击风暴；超出丢最旧）
+  if (pluginTickInFlight) {
+    if (pluginActionQueue.length >= PLUGIN_ACTION_QUEUE_MAX) pluginActionQueue.shift();
+    pluginActionQueue.push({ action: tick.action, params: tick.params });
+    return;
+  }
+  pluginTickInFlight = true;
   try {
     const res: any = await store.api.pluginTick({
       sessionId,
@@ -1598,6 +1617,16 @@ async function handlePluginTick(tick: { action: string; params: Record<string, u
           /* ignore */
         }
         WebDebugLogUtil.log("[aiGame][plugin] tick 已暂停（游戏结束/无活跃状态），已通知 iframe", { phase });
+      }
+    }
+  } finally {
+    pluginTickInFlight = false;
+    // 在途完成：立即补发排队的玩家动作（帧 tick 丢弃）
+    while (pluginActionQueue.length) {
+      const next = pluginActionQueue.shift()!;
+      if (next.action !== "tick") {
+        void handlePluginTick(next);
+        break;
       }
     }
   }
