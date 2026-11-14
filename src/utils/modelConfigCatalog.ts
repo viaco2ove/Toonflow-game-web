@@ -63,6 +63,14 @@ export const MODEL_MANUFACTURERS: ManufacturerOption[] = [
     },
   },
   {
+    value: "agnes",
+    label: "agnes",
+    website: "https://api.agnes-ai.cn",
+    defaults: {
+      image: "https://api.agnes-ai.cn/v1/images/generations",
+    },
+  },
+  {
     value: "gemini",
     label: "Gemini",
     website: "https://ai.google.dev/gemini-api/docs/api-key?hl=zh-cn",
