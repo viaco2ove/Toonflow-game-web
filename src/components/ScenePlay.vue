@@ -7,6 +7,7 @@ import {estimateRevealDelayMs, useOrchestrationVoiceFlow} from "../composables/o
 import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
+import { PluginRealtimeChannel } from "../lib/pluginRealtime";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import {WEBP_LOG_TAGS} from "../utils/logTagList";
 
@@ -1558,11 +1559,62 @@ let pluginTickInFlight = false;
 const pluginActionQueue: Array<{ action: string; params: Record<string, unknown> }> = [];
 const PLUGIN_ACTION_QUEUE_MAX = 8;
 
+// ★ v3.1（2026-11-14）实时全双工通道：WS 就绪时动作/位姿走 /plugin/realtime，
+//   状态由服务端 tick 循环推送；WS 未就绪/断线 → 自动走下方原 HTTP 路径（回退）。
+//   换会话/换插件时销毁重建（握手 scope 绑定 sessionId+pluginId）。
+function createRealtimeChannel(): PluginRealtimeChannel {
+  const apiAny = store.api as any;
+  return new PluginRealtimeChannel({
+    baseUrl: () => String(apiAny["getConfig"]().baseUrl || ""),
+    token: () => String(apiAny["getConfig"]().token || ""),
+    getSessionId: () => String(store.state.currentSessionId || "").trim(),
+    getPluginId: () => pluginMinigameView.value?.contribute.pluginId || "",
+    events: {
+      onState: (state, actions, response) => {
+        // 与 HTTP res.state 同构：直接喂既有消费路径
+        pluginLiveState.value = {
+          state,
+          actions: Array.isArray(actions) ? actions : [],
+          response: String(response || ""),
+        };
+        pushPluginStateToIframe();
+      },
+    },
+  });
+}
+let pluginRealtimeChannel: PluginRealtimeChannel = createRealtimeChannel();
+
+// ★ v3.1：面板挂载/会话切换时建立实时通道（WS）；断线自动回退 HTTP 并机会性重连
+const realtimeScopeKey = computed(() => {
+  const v = pluginMinigameView.value;
+  return v ? `${v.contribute.pluginId}|${String(store.state.currentSessionId || "")}` : "";
+});
+watch(realtimeScopeKey, (key) => {
+  // 销毁旧通道实例并新建（destroy 是终态，实例不可复用）
+  pluginRealtimeChannel.destroy();
+  pluginRealtimeChannel = createRealtimeChannel();
+  if (key) pluginRealtimeChannel.connect();
+}, { immediate: true });
+
 async function handlePluginTick(tick: { action: string; params: Record<string, unknown> }) {
   const sessionId = String(store.state.currentSessionId || "").trim();
   const pluginId = pluginMinigameView.value?.contribute.pluginId;
   if (!sessionId || !pluginId) return;
   if (pluginTickPaused.value) return;
+  // ★ v3.1：WS 实时通道就绪 → 帧tick整包上报（世界推进由服务端驱动），
+  //   动作即时上行（ack 异步）；state 由服务端 push 喂 pluginLiveState（见 events.onState）。
+  //   ★ 战斗断链修复（2026-11-14）：必须整包透传 tick.params——localEnemies/walkGrid/
+  //   levelName/input 是 entry 侧敌怪表重建/寻路/地图权威的唯一来源，只传 player
+  //   会导致野怪不刷新不打架、技能目标对不上不扣血。
+  //   WS 未就绪/断线 → 继续走下方 HTTP 路径（回退），行为与本注释之前的版本一致。
+  if (pluginRealtimeChannel.isOpen) {
+    if (tick.action === "tick") {
+      pluginRealtimeChannel.sendTickParams(tick.params);
+    } else {
+      pluginRealtimeChannel.sendAction(tick.action, tick.params);
+    }
+    return;
+  }
   // ★ 帧 tick 在途 → 丢弃本帧（弱网防堆积核心）
   if (tick.action === "tick" && pluginTickInFlight) return;
   // 玩家动作在途 → 排队（有上限，防极端点击风暴；超出丢最旧）
@@ -4895,6 +4947,8 @@ onBeforeUnmount(() => {
     window.clearInterval(pendingDotsTimer);
     pendingDotsTimer = null;
   }
+  // ★ v3.1：插件实时通道随组件卸载销毁（回退 HTTP 的原有清理不受影响）
+  pluginRealtimeChannel.destroy();
   // WebP 动画清理已由 useWebpAvatar 的 onBeforeUnmount 处理
   stopChapterBgmPlayback();
   clearPressTimer();
