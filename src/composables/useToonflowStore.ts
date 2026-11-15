@@ -1092,6 +1092,9 @@ function createToonflowStore() {
     sessionAwaitUserSessionId: "",
     sendPending: false,
     runtimeProcessingPending: false,
+    // ★ 插嘴状态：用户点了插嘴按钮后为 true，随每次编排请求携带 interruptSpeech 参数，
+    //   后端该轮编排强制安排用户发言；用户发言成功后清除。
+    interruptSpeechPending: false,
     // 揭示流程进行中标志：waitForMessageReveal 期间为 true，防止 Watch 在 reveal 完成前提前触发
     runtimeRevealPending: false,
     sessionDetail: null as Loadable<SessionDetail>,
@@ -1724,7 +1727,7 @@ function createToonflowStore() {
     ) {
       return;
     }
-    const promise = api.orchestrateSession(sessionId);
+    const promise = api.orchestrateSession(sessionId, { interruptSpeech: state.interruptSpeechPending });
     WebDebugLogUtil.log("[orchestrateSession] promise", promise);
     // 异步打印结果，同时记录到 lastPrefetchSnapshot 供检测器读取
     promise.then(data => {
@@ -1881,7 +1884,7 @@ function createToonflowStore() {
     } else {
       clearPendingSessionOrchestrationPrefetch();
       try {
-        result = await api.orchestrateSession(sessionId);
+        result = await api.orchestrateSession(sessionId, { interruptSpeech: state.interruptSpeechPending });
       } catch (err) {
         if (err instanceof OrchestrationApiError) {
           throw new OrchestrationError(err.orchestrationError);
@@ -6317,6 +6320,8 @@ function createToonflowStore() {
     state.sessionEndDialogDetail = "";
     state.sessionFailedAcknowledged = false;
     state.sessionFreeMode = false;
+    // ★ 插嘴标记属于会话上下文，切换/打开会话时必须清除，避免串到其他会话
+    state.interruptSpeechPending = false;
     state.notice = options?.playback ? "正在读取回放数据..." : "正在读取记忆与角色参数...";
     state.sessionRuntimeStage = "";
     state.sessionDetail = null;
@@ -7878,10 +7883,11 @@ function createToonflowStore() {
 
   /**
    * 插嘴：用户在旁白/NPC 连续推进时主动要求发言。
-   * - 调 /game/interruptSpeech 把"连续未涉及用户发言"计数顶到兜底阈值；
+   * 纯前端状态方案：置 interruptSpeechPending 标记，
+   * 之后每次编排请求携带 interruptSpeech=true，后端该轮强制安排用户发言；
+   * 用户发言成功后标记清除（见 sendMessage）。
    * - 会话空闲时立即触发一轮编排，让"下个编排"马上安排用户发言；
-   * - 正在编排/生成中时只写标记并提示，当前这轮结束后自动生效。
-   * 返回是否标记成功。
+   * - 正在编排/生成中时只置标记并提示，当前这轮结束后自动生效。
    */
   async function interruptSpeech(): Promise<boolean> {
     const sessionId = String(state.currentSessionId || "").trim();
@@ -7889,19 +7895,14 @@ function createToonflowStore() {
       state.notice = "当前没有进行中的故事";
       return false;
     }
-    try {
-      await api.interruptSpeech(sessionId);
-    } catch (err) {
-      state.notice = `插嘴失败：${err instanceof Error ? err.message : String(err)}`;
-      return false;
-    }
-    // 正在生成台词/编排中：本轮已在跑，标记等下一轮编排生效
+    state.interruptSpeechPending = true;
+    // 正在生成台词/编排中：本轮已在跑，标记随下一轮编排请求生效
     if (state.sendPending || state.runtimeProcessingPending) {
-      state.notice = "已标记插嘴，本句结束后将安排你发言";
+      state.notice = "已插嘴，本句结束后将安排你发言";
       return true;
     }
     state.notice = "已插嘴，正在安排你发言...";
-    // 空闲：直接触发下一轮编排（复用"继续编排"链路）
+    // 空闲：直接触发下一轮编排（复用"继续编排"链路，请求会带上插嘴标记）
     await continueSessionNarrative();
     return true;
   }
@@ -8016,6 +8017,8 @@ function createToonflowStore() {
       const optimistic = appendLocalPendingPlayerMessage(content);
       state.sendText = "";
       await performSessionPlayerMessage(content, optimistic.id);
+      // ★ 插嘴标记消费完成：用户已成功发言，清除插嘴状态（后端该轮编排已安排过用户发言）
+      state.interruptSpeechPending = false;
     } catch (error) {
       const message = `发送失败：${asUiErrorMessage(error)}`;
       if (!state.debugMode) {

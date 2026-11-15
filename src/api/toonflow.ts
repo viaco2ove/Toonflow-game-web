@@ -548,9 +548,13 @@ export class ToonflowApi {
     }>("/game/miniGameInventoryAction", payload);
   }
 
-  orchestrateSession(sessionId: string) {
+  orchestrateSession(sessionId: string, options: { interruptSpeech?: boolean } = {}) {
      WebDebugLogUtil.log("[prefetchOrchestration] orchestrateSession");
-    return this.post<SessionOrchestrationResult>("/game/orchestration", { sessionId });
+    // ★ interruptSpeech：插嘴标记。前端插嘴状态随编排请求携带，该轮编排强制安排用户发言
+    return this.post<SessionOrchestrationResult>("/game/orchestration", {
+      sessionId,
+      interruptSpeech: options.interruptSpeech === true,
+    });
   }
 
   /**
@@ -616,14 +620,6 @@ export class ToonflowApi {
       "/game/applyOrchestrateOption",
       { sessionId, role: option.role, motive: option.motive },
     );
-  }
-
-  /**
-   * 插嘴：用户在旁白/NPC 连续推进时主动要求发言。
-   * 后端把"连续未涉及用户发言"计数顶到兜底阈值，下一轮编排强制安排用户发言。
-   */
-  interruptSpeech(sessionId: string) {
-    return this.post<{ ok: boolean; streak: number }>("/game/interruptSpeech", { sessionId });
   }
 
   continueSession(sessionId: string) {

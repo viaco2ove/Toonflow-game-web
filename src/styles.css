@@ -4501,6 +4501,12 @@ textarea::-webkit-scrollbar-thumb {
   cursor: not-allowed;
 }
 
+/* 插嘴标记已激活：高亮提示"下个编排将安排用户发言" */
+.player-interrupt-btn.is-active {
+  background: rgba(64, 132, 255, 0.75);
+  border-color: rgba(140, 190, 255, 0.9);
+}
+
 .player-interrupt-btn svg {
   width: 14px;
   height: 14px;
