@@ -1423,8 +1423,12 @@ const miniGameSummaryItems = computed(() => {
  * - 约定：插件 minigame 的 gameType 形如 `plugin:<id>` 或直接是 manifest.type。
  *   当后端不知道插件存在时，gameType 仍是裸的 `field_survival`——此时按 type 反查插件清单。
  */
-const pluginMinigameView = computed(() => {
-  const game = activeMiniGame.value;
+/** ★ 页面级构建标记（2026-11-15）：iframe src 的 cache-busting 参数。
+ *  页面加载时取一次即固定 —— src 变化会重建 iframe（:key 绑 src），
+ *  固定值保证「同一页面会话内 iframe 不重建」，换页则强制拉新 game.html。 */
+const PAGE_BUILD_TAG = Date.now().toString(36);
+
+const pluginMinigameView = computed(() => {  const game = activeMiniGame.value;
   if (!game) return null;
   const gt = String(game.gameType || "");
   const ps = (game.publicState || {}) as Record<string, unknown>;
@@ -1478,6 +1482,12 @@ const pluginMinigameView = computed(() => {
       if (!it) return base;
       const u = new URL(base, location.href);
       u.searchParams.set("interaction", it);
+      // ★ 2026-11-15 cache-busting：iframe src 固定 → 浏览器复用旧 game.html
+      //   （插件改完代码页面里看不到新功能，排查极耗时）。加 v 参数强制重新拉取。
+      //   后端 getAsset 忽略未知 query 参数（已实测接受）。
+      //   ★ v 取**页面加载时刻**的固定值（不是 Date.now()）：iframe 的 :key 绑 src，
+      //     若每次 computed 重算都变 → iframe 被反复重建（游戏状态丢失、连接抖动）。
+      u.searchParams.set("v", PAGE_BUILD_TAG);
       return u.toString();
     } catch { return base; }
   };
@@ -5823,6 +5833,7 @@ onBeforeUnmount(() => {
           ref="pluginIframeEl"
           class="play-plugin-minigame-panel__iframe"
           :src="pluginMinigameView.iframeSrc"
+          :key="pluginMinigameView.iframeSrc"
           @load="pushPluginStateToIframe"
           :style="pluginPanelFullscreen ? {} : {
             width: (pluginMinigameView.contribute.fullscreen ? '100%' : pluginMinigameView.contribute.width + 'px'),

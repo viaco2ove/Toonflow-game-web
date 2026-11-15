@@ -46,6 +46,22 @@ import type {
 import {WebDebugLogUtil} from "../utils/WebDebugLogUtil";
 
 /**
+ * ★ 插件资源 cache-busting 版本号（2026-11-15）
+ * iframe src 是固定 URL → 浏览器缓存旧 game.html（后端虽发 no-store，iframe 导航仍可能复用）
+ * → 插件改动后页面加载的还是旧代码。给 URL 加 v 参数强制重新拉取。
+ * 取值 = 会话内递增的构建号（每次页面加载 +1，足够区分不同次部署；同一页面刷新后
+ * 因为 iframe src 变化会重新拉取）。后端忽略未知 query 参数（已实测接受）。
+ */
+const assetVersionMap: Map<string, number> = new Map();
+function pluginAssetVersion(pluginId: string, relPath: string): string {
+  const key = `${pluginId}::${relPath}`;
+  if (!assetVersionMap.has(key)) assetVersionMap.set(key, 1);
+  const n = assetVersionMap.get(key)!;
+  assetVersionMap.set(key, n + 1);
+  return `${Date.now().toString(36)}${n}`;
+}
+
+/**
  * 编排层专用错误：当 /game/orchestration 返回 HTTP 500 时，
  * 后端会把 orchestrationError 信息放在响应体里，前端据此抛出带类型的编排错误。
  */
@@ -1033,7 +1049,11 @@ export class ToonflowApi {
     const { baseUrl, token } = this.getConfig();
     const base = String(baseUrl || "").replace(/\/+$/, "");
     const rawToken = String(token || "").replace(/^Bearer\s+/, "");
-    return `${base}/plugin/getAsset?pluginId=${encodeURIComponent(pluginId)}&path=${encodeURIComponent(relPath)}&token=${encodeURIComponent(rawToken)}`;
+    // ★ 2026-11-15 cache-busting：iframe 的 src 是固定 URL，浏览器会缓存旧 game.html
+    //   （后端已发 no-store，但 iframe 导航仍可能被复用）→ 插件改动后页面加载的还是旧代码，
+    //   表现为「改了没生效」「新功能不出现」。加一个随会话变化的 v 参数强制重新拉取。
+    const v = pluginAssetVersion(pluginId, relPath);
+    return `${base}/plugin/getAsset?pluginId=${encodeURIComponent(pluginId)}&path=${encodeURIComponent(relPath)}&token=${encodeURIComponent(rawToken)}${v ? `&v=${v}` : ""}`;
   }
 
   /**

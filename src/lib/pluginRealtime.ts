@@ -130,6 +130,15 @@ export class PluginRealtimeChannel {
       } else if (m.type === "pong") {
         const dt = Date.now() - Number(m.ts || 0);
         if (dt > 0 && dt < 60000) this.lastRttMs = dt;
+      } else if (m.type === "kicked") {
+        // ★ 2026-11-15：同会话新连接建立 → 旧连接被服务端踢（防双连接状态打架）。
+        //   旧页面必须**彻底停手**：不再重连、不再发 tick（否则两个前端各自驱动
+        //   内存态 → 同一角色出现两个「执行中」、操作互相覆盖）。
+        this.destroyed = true;
+        this.stopHeartbeat();
+        try { this.ws?.close(4000, "kicked"); } catch { /* 已关闭 */ }
+        this.ws = null;
+        this.setState("off");
       }
     };
     ws.onclose = () => this.onDown();
