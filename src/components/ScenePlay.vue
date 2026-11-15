@@ -4359,6 +4359,12 @@ async function onContinueNarrative(): Promise<void> {
   }
 }
 
+// 插嘴：旁白/NPC 连续推进时，用户主动要求发言。
+// 忙碌中也不拦截——后端写标记后，正在跑的这轮结束、下一轮编排即安排用户发言。
+async function onInterruptSpeech(): Promise<void> {
+  await store.interruptSpeech();
+}
+
 function stopPlaybackSequence() {
   playbackPlaying.value = false;
   playbackRunId += 1;
@@ -5281,6 +5287,21 @@ onBeforeUnmount(() => {
                 title="跳过发言"
               >
                 跳过
+              </button>
+              <!-- 插嘴：旁白/NPC 连续推进时，点击后下一轮编排强制安排用户发言 -->
+              <button
+                v-if="playMode !== 'history' && playMode !== 'setting' && playMode !== 'tips'"
+                type="button"
+                class="player-interrupt-btn"
+                :disabled="canPlayerSpeak"
+                @click="onInterruptSpeech"
+                title="插嘴：下一轮编排安排你发言"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"></path>
+                  <path d="M12 8v6"></path>
+                  <path d="M9 11h6"></path>
+                </svg>
               </button>
               <button
                 v-if="shouldShowContinueNarrative"

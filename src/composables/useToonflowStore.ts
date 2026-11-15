@@ -7877,6 +7877,36 @@ function createToonflowStore() {
   }
 
   /**
+   * 插嘴：用户在旁白/NPC 连续推进时主动要求发言。
+   * - 调 /game/interruptSpeech 把"连续未涉及用户发言"计数顶到兜底阈值；
+   * - 会话空闲时立即触发一轮编排，让"下个编排"马上安排用户发言；
+   * - 正在编排/生成中时只写标记并提示，当前这轮结束后自动生效。
+   * 返回是否标记成功。
+   */
+  async function interruptSpeech(): Promise<boolean> {
+    const sessionId = String(state.currentSessionId || "").trim();
+    if (!sessionId) {
+      state.notice = "当前没有进行中的故事";
+      return false;
+    }
+    try {
+      await api.interruptSpeech(sessionId);
+    } catch (err) {
+      state.notice = `插嘴失败：${err instanceof Error ? err.message : String(err)}`;
+      return false;
+    }
+    // 正在生成台词/编排中：本轮已在跑，标记等下一轮编排生效
+    if (state.sendPending || state.runtimeProcessingPending) {
+      state.notice = "已标记插嘴，本句结束后将安排你发言";
+      return true;
+    }
+    state.notice = "已插嘴，正在安排你发言...";
+    // 空闲：直接触发下一轮编排（复用"继续编排"链路）
+    await continueSessionNarrative();
+    return true;
+  }
+
+  /**
    * 玩家行动提示器：每次点 play-tip-fab 都拉新的 3 条。
    * 失败时不抛错（后端会兜底，前端 catch 仅写 notice）。
    */
@@ -8189,6 +8219,7 @@ function createToonflowStore() {
     getDebugChapterIndex,
     syncDebugChapter,
     sendMessage,
+    interruptSpeech,
     fetchPlayTips,
     alignSessionWithAi,
     fetchOrchestrateOptions,

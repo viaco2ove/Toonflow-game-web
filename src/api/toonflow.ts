@@ -618,6 +618,14 @@ export class ToonflowApi {
     );
   }
 
+  /**
+   * 插嘴：用户在旁白/NPC 连续推进时主动要求发言。
+   * 后端把"连续未涉及用户发言"计数顶到兜底阈值，下一轮编排强制安排用户发言。
+   */
+  interruptSpeech(sessionId: string) {
+    return this.post<{ ok: boolean; streak: number }>("/game/interruptSpeech", { sessionId });
+  }
+
   continueSession(sessionId: string) {
     return this.post<SessionNarrativeResult>("/game/continueSession", { sessionId });
   }
