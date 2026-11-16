@@ -3,10 +3,13 @@ import { computed, ref } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { ProgressAlignReport, SessionItem } from "../types/toonflow";
 import StoryCover from "./StoryCover.vue";
+import SkeletonList from "./SkeletonList.vue";
 import WorldBookViewerDialog from "./WorldBookViewerDialog.vue";
 
 const store = useToonflowStore();
 const sessions = computed(() => store.state.sessions);
+// ★ 2026-11-16 分模块加载态：会话接口 pending 期间显示骨架，不再误显示「暂无会话记录」
+const sessionsLoading = computed(() => !!store.state.mainTabLoading?.sessions);
 const sessionListError = computed(() => store.state.sessionListError || "");
 
 // ★ 世界书只读查看弹窗
@@ -148,6 +151,10 @@ async function smartAlign() {
     <div v-if="sessionListError" class="history-empty">
       <div>会话列表加载失败：{{ sessionListError }}</div>
       <button class="history-refresh-btn" type="button" @click="store.reloadAll">重试</button>
+    </div>
+
+    <div v-else-if="sessionsLoading" class="history-empty history-empty--loading">
+      <SkeletonList :count="4" />
     </div>
 
     <div v-else-if="!sessions.length" class="history-empty">暂无会话记录</div>

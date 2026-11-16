@@ -8,6 +8,7 @@ import { useWebpAvatar } from "../composables/useWebpAvatar";
 import type { MessageItem, OrchestratorRuntimeMeta, RoleParameterCard, RuntimeEventDigestItem, RuntimeRetryMessageMeta, StageProgress, StageProgressStatus, StoryRole, VoiceBindingDraft, VoiceMixItem } from "../types/toonflow";
 import { fileToDataUrl } from "../utils/file";
 import { PluginRealtimeChannel } from "../lib/pluginRealtime";
+import { WorldClockChannel } from "../lib/worldClockChannel";
 import { WebDebugLogUtil } from "../utils/WebDebugLogUtil";
 import {WEBP_LOG_TAGS} from "../utils/logTagList";
 
@@ -4508,6 +4509,16 @@ async function onTimeModeChange(event: Event) {
   if (!sessionId) return;
   // 先写本地 store 立即响应 UI
   store.setTimeWeatherMode(value);
+  // ★ 模式切换后接续时钟通道：realtime=本地算（停 WS/轮询）；其它模式重启 WS（推送优先）
+  if (value === "realtime") {
+    stopWorldClockPolling();
+    const hour = new Date().getHours();
+    const slotMap: Array<[number, string]> = [[5, "凌晨"], [7, "清晨"], [11, "上午"], [14, "正午"], [17, "下午"], [19, "黄昏"], [22, "夜晚"], [24, "深夜"]];
+    const slot = slotMap.find(([h]) => hour < h)?.[1] || "凌晨";
+    store.syncWorldClockDisplay({ timeOfDay: slot, weather: slot === "下午" ? "多云" : "晴" });
+  } else {
+    startWorldClockPolling();
+  }
   // 再同步后端
   try {
     const api = store.api as any;
@@ -4543,48 +4554,112 @@ async function onManualClockChange() {
   }
 }
 
-/** 轮询 worldClock 同步时间/天气显示 */
+/** 世界时钟同步：WS 推送优先（/game/realtimeClock，值变化才推），HTTP 轮询兜底。
+ *  2026-11-16 改造：此前固定每 10s HTTP 轮询 getWorldClock，后端每次要整行读
+ *  t_gameSession 并解析完整 stateJson（编排器写入后可达 MB 级）→ 高频请求 + 事件循环负担。 */
 let worldClockTimer: number | null = null;
-function startWorldClockPolling() {
-  stopWorldClockPolling();
-  const tick = async () => {
-    const sessionId = String(store.state.currentSessionId || "").trim();
-    if (!sessionId) return;
-    const mode = store.state.timeWeatherMode;
-    if (mode === "realtime") {
-      // 现实同步：前端本地算，不调后端
-      const hour = new Date().getHours();
-      const slotMap: Array<[number, string]> = [[5, "凌晨"], [7, "清晨"], [11, "上午"], [14, "正午"], [17, "下午"], [19, "黄昏"], [22, "夜晚"], [24, "深夜"]];
-      const slot = slotMap.find(([h]) => hour < h)?.[1] || "凌晨";
-      const weatherBySlot: Record<string, string> = { 清晨: "晴", 上午: "晴", 正午: "晴", 下午: "多云", 黄昏: "多云", 夜晚: "晴", 深夜: "阴", 凌晨: "阴" };
-      store.syncWorldClockDisplay({ timeOfDay: slot, weather: weatherBySlot[slot] || "晴" });
-      return;
+let worldClockChannel: WorldClockChannel | null = null;
+/** HTTP 兜底轮询间隔（WS 正常时轮询不跑） */
+const WORLD_CLOCK_FALLBACK_MS = 15000;
+
+function applyWorldClockData(data: any): void {
+  if (data?.worldClock) {
+    store.syncWorldClockDisplay({ timeOfDay: data.worldClock.timeOfDay, weather: data.worldClock.weather });
+    // 同步后端 mode（可能被服务端改了）
+    if (data.timeMode && data.timeMode !== store.state.timeWeatherMode) {
+      store.setTimeWeatherMode(data.timeMode);
     }
-    const api = store.api as any;
-    if (!api || typeof api.getWorldClock !== "function") return;
-    try {
-      const res = await api.getWorldClock(sessionId);
-      const data = (res as any)?.data || res;
-      if (data?.worldClock) {
-        store.syncWorldClockDisplay({ timeOfDay: data.worldClock.timeOfDay, weather: data.worldClock.weather });
-        // 同步后端 mode（可能被服务端改了）
-        if (data.timeMode && data.timeMode !== store.state.timeWeatherMode) {
-          store.setTimeWeatherMode(data.timeMode);
-        }
-      }
-    } catch {
-      // 静默失败，下一轮重试
-    }
-  };
-  // 立即跑一次,然后每 10s 一次
-  tick();
-  worldClockTimer = window.setInterval(tick, 10000);
+  }
 }
-function stopWorldClockPolling() {
+
+function startWorldClockFallbackPolling() {
+  if (worldClockTimer != null) return; // 已在跑
+  worldClockTimer = window.setInterval(() => {
+    void fetchWorldClockOnce();
+  }, WORLD_CLOCK_FALLBACK_MS);
+}
+
+function stopWorldClockFallbackPolling() {
   if (worldClockTimer != null) {
     clearInterval(worldClockTimer);
     worldClockTimer = null;
   }
+}
+
+/** HTTP 兜底：原轮询逻辑抽成单次拉取 */
+async function fetchWorldClockOnce(): Promise<void> {
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  if (!sessionId) return;
+  const api = store.api as any;
+  if (!api || typeof api.getWorldClock !== "function") return;
+  try {
+    const res = await api.getWorldClock(sessionId);
+    const data = (res as any)?.data || res;
+    applyWorldClockData(data);
+  } catch {
+    // 静默失败，下一轮重试
+  }
+}
+
+function startWorldClockChannel(): void {
+  stopWorldClockChannel();
+  const apiAny = store.api as any;
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  if (!apiAny?.getConfig || !sessionId) {
+    // 无会话/配置未就绪 → 直接走 HTTP 兜底
+    startWorldClockFallbackPolling();
+    return;
+  }
+  worldClockChannel = new WorldClockChannel({
+    baseUrl: () => String(apiAny["getConfig"]().baseUrl || ""),
+    token: () => String(apiAny["getConfig"]().token || ""),
+    getSessionId: () => String(store.state.currentSessionId || "").trim(),
+    events: {
+      onClock: (data) => {
+        applyWorldClockData(data);
+        // 推送正常 → 确保轮询停着
+        stopWorldClockFallbackPolling();
+      },
+      onStateChange: (s) => {
+        if (s === "fallback") {
+          // WS 放弃 → 回退 HTTP 轮询
+          startWorldClockFallbackPolling();
+        } else if (s === "open") {
+          stopWorldClockFallbackPolling();
+        }
+      },
+    },
+  });
+  worldClockChannel.connect();
+}
+
+function stopWorldClockChannel(): void {
+  if (worldClockChannel) {
+    worldClockChannel.destroy();
+    worldClockChannel = null;
+  }
+}
+
+function startWorldClockPolling() {
+  stopWorldClockPolling();
+  const sessionId = String(store.state.currentSessionId || "").trim();
+  const mode = store.state.timeWeatherMode;
+  if (mode === "realtime") {
+    // 现实同步：前端本地算，不连后端
+    const hour = new Date().getHours();
+    const slotMap: Array<[number, string]> = [[5, "凌晨"], [7, "清晨"], [11, "上午"], [14, "正午"], [17, "下午"], [19, "黄昏"], [22, "夜晚"], [24, "深夜"]];
+    const slot = slotMap.find(([h]) => hour < h)?.[1] || "凌晨";
+    const weatherBySlot: Record<string, string> = { 清晨: "晴", 上午: "晴", 正午: "晴", 下午: "多云", 黄昏: "多云", 夜晚: "晴", 深夜: "阴", 凌晨: "阴" };
+    store.syncWorldClockDisplay({ timeOfDay: slot, weather: weatherBySlot[slot] || "晴" });
+    return;
+  }
+  void fetchWorldClockOnce(); // 立即拉一次当前值（不等首推）
+  // WS 推送优先；WS 放弃（fallback）时由 onStateChange 自动起 HTTP 兜底轮询
+  startWorldClockChannel();
+}
+function stopWorldClockPolling() {
+  stopWorldClockFallbackPolling();
+  stopWorldClockChannel();
 }
 
 function stopVoiceRecognition() {

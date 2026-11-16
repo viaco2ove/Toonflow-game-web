@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import StoryCover from "./StoryCover.vue";
+import SkeletonList from "./SkeletonList.vue";
 
 const store = useToonflowStore();
 const PLAY_AUTO_VOICE_STORAGE_KEY = "toonflow.playAutoVoice";
@@ -14,6 +15,8 @@ function readPlayAutoVoicePreference(): boolean {
 const autoVoice = ref(readPlayAutoVoicePreference());
 const rec = computed(() => store.recommendedWorld());
 const hasRec = computed(() => !!rec.value);
+// ★ 2026-11-16 分模块加载态：推荐位加载中显示骨架，不再误导「暂无可游玩故事」
+const worldsLoading = computed(() => !!store.state.mainTabLoading?.worlds);
 const projectName = computed(() => store.selectedProjectName());
 const recommendationHint = computed(() => {
   if (!rec.value) return "当前还没有可游玩的已发布故事。";
@@ -78,6 +81,16 @@ watch(autoVoice, (enabled) => {
         </div>
       </div>
     </article>
+
+    <section v-else-if="worldsLoading" class="home-empty-card">
+      <div class="home-header">
+        <div class="home-headline">
+          <div class="home-title">主页</div>
+          <div v-if="projectName" class="home-subtitle">项目：{{ projectName }}</div>
+        </div>
+      </div>
+      <SkeletonList :count="1" variant="hero" />
+    </section>
 
     <section v-else class="home-empty-card">
       <div class="home-header">

@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import ImageGenerateDialog from "./ImageGenerateDialog.vue";
 import LayeredAvatar from "./LayeredAvatar.vue";
 import StoryCover from "./StoryCover.vue";
+import SkeletonList from "./SkeletonList.vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import type { WorldItem } from "../types/toonflow";
 import { imageStyleForKey } from "../utils/imageStyles";
@@ -11,6 +12,8 @@ const store = useToonflowStore();
 
 const drafts = computed(() => store.draftWorldsForSelectedProject());
 const published = computed(() => store.publishedWorldsForSelectedProject());
+// ★ 2026-11-16 分模块加载态：接口 pending 期间显示骨架屏，不再把「加载中」误显示成「暂无」
+const worldsLoading = computed(() => !!store.state.mainTabLoading?.worlds);
 // “我的”页应该展示真实存在的草稿/已发布故事，不能因为名称刚好与项目名重复就被隐藏。
 const visibleDrafts = computed(() => drafts.value);
 const visiblePublished = computed(() => published.value);
@@ -278,7 +281,7 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
         </div>
       </article>
 
-      <article v-if="!visiblePublished.length" class="my-work-card my-summary-card my-published-entry-card placeholder">
+      <article v-if="!visiblePublished.length && !worldsLoading" class="my-work-card my-summary-card my-published-entry-card placeholder">
         <div class="my-empty-card">暂无已发布故事</div>
         <div class="my-work-body my-work-body--compact">
           <div class="my-work-row">
@@ -286,6 +289,9 @@ async function handleAccountImageConfirm(payload: { prompt: string; styleKey: st
             <span class="my-work-status published">已发布</span>
           </div>
         </div>
+      </article>
+      <article v-if="!visiblePublished.length && worldsLoading" class="my-work-card placeholder">
+        <SkeletonList :count="2" />
       </article>
     </div>
   </section>

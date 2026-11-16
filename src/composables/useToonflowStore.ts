@@ -1027,6 +1027,13 @@ function createToonflowStore() {
     selectedProjectId: Number(storageGet("toonflow.selectedProjectId", "-1")) || -1,
     selectedProjectNameCache: storageGet("toonflow.selectedProjectNameCache", ""),
     worlds: [] as WorldItem[],
+    /** ★ 2026-11-16 分模块加载态：各接口独立上屏，骨架屏按键显示（谁先回来谁先显示） */
+    mainTabLoading: {
+      user: false,
+      projects: false,
+      worlds: false,
+      sessions: false,
+    } as Record<"user" | "projects" | "worlds" | "sessions", boolean>,
     homeRecommendWorldId: Number(storageGet("toonflow.homeRecommendWorldId", "0")) || 0,
     hallKeyword: "",
     hallCategory: "all",
@@ -5438,39 +5445,70 @@ function createToonflowStore() {
    * - 点击底部主菜单时，主动拉取该页面依赖的数据，而不是只切换 activeTab；
    * - "我的/主页/创建故事"共用账号、项目、故事数据，"聊过"额外刷新会话列表。
    */
+  /** ★ 2026-11-16 去重：同一轮分模块刷新进行中时不再叠加发起
+   *  （tab 来回切换/快速点击会并发多轮 Promise.all，后端接口 10s+ 时请求雪崩成堆 pending） */
+  let mainTabRefreshInFlight = false;
   async function refreshMainTabData(tab: AppTab) {
     if (!state.token.trim()) return;
+    if (mainTabRefreshInFlight) return;
+    mainTabRefreshInFlight = true;
+    const needsSessionList = tab === "history" || tab === "my";
+    const markLoading = (k: "user" | "projects" | "worlds" | "sessions", v: boolean) => {
+      state.mainTabLoading[k] = v;
+    };
+    markLoading("user", true);
+    markLoading("projects", true);
+    markLoading("worlds", true);
+    if (needsSessionList) markLoading("sessions", true);
     try {
-      const needsSessionList = tab === "history" || tab === "my";
-      const [user, projects, worlds, sessions] = await Promise.all([
-        api.getUser().catch(() => null),
-        api.getProjects().catch(() => []),
-        api.listWorlds(undefined, true).catch(() => []),
-        needsSessionList ? requestSessionList(undefined).catch(() => [] as SessionItem[]) : Promise.resolve(null),
-      ]);
-      if (user) {
-        state.userName = String((user as any).name || "");
-        state.userId = Number((user as any).id || 0);
-        const accountAvatarPath = String((user as any).avatarPath || "").trim();
-        const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
-        state.accountAvatarPath = accountAvatarPath;
-        state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
-      }
-      state.projects = projects || [];
-      if (!state.projects.length) {
-        state.selectedProjectId = 0;
-      } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
-        state.selectedProjectId = state.projects[0].id;
-      }
-      state.worlds = worlds || [];
-      if (tab === "home") {
-        refreshRecommendedWorld();
-      }
-      if (needsSessionList && sessions) {
-        state.sessions = dedupeSessionsByWorld(sessions || []);
-      }
+      // ★ 分模块独立上屏：每个请求自己 then 写自己的 state，
+      //   谁先回来谁先显示——不被最慢的接口（listWorlds 历史上 16s+）拖死整页。
+      const userTask = api.getUser()
+        .then((user: any) => {
+          if (user) {
+            state.userName = String((user as any).name || "");
+            state.userId = Number((user as any).id || 0);
+            const accountAvatarPath = String((user as any).avatarPath || "").trim();
+            const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
+            state.accountAvatarPath = accountAvatarPath;
+            state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
+          }
+        })
+        .catch(() => { /* 静默：下一轮 tab 切换重试 */ })
+        .finally(() => markLoading("user", false));
+      const projectsTask = api.getProjects()
+        .then((projects: ProjectItem[]) => {
+          state.projects = projects || [];
+          if (!state.projects.length) {
+            state.selectedProjectId = 0;
+          } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
+            state.selectedProjectId = state.projects[0].id;
+          }
+        })
+        .catch(() => { /* 静默 */ })
+        .finally(() => markLoading("projects", false));
+      const worldsTask = api.listWorlds(undefined, true)
+        .then((worlds: WorldItem[]) => {
+          state.worlds = worlds || [];
+          if (tab === "home") {
+            refreshRecommendedWorld();
+          }
+        })
+        .catch(() => { /* 静默 */ })
+        .finally(() => markLoading("worlds", false));
+      const sessionTask = needsSessionList
+        ? requestSessionList(undefined)
+            .then((sessions: SessionItem[]) => {
+              state.sessions = dedupeSessionsByWorld(sessions || []);
+            })
+            .catch(() => { /* 静默 */ })
+            .finally(() => markLoading("sessions", false))
+        : null;
+      await Promise.all(sessionTask ? [userTask, projectsTask, worldsTask, sessionTask] : [userTask, projectsTask, worldsTask]);
     } catch (err) {
       state.notice = `刷新页面数据失败: ${(err as Error).message}`;
+    } finally {
+      mainTabRefreshInFlight = false;
     }
   }
 
@@ -5481,51 +5519,82 @@ function createToonflowStore() {
       return;
     }
     state.loading = true;
+    // ★ 2026-11-16 分模块渐进加载：冷启动（首屏）同样不阻塞整体。
+    //   旧实现是一个 Promise.all 等 4 个接口全部回来才写 state —— 最慢的那个
+    //   （listWorlds 历史上 16s+）会把「用户信息 / 项目 / 会话列表」一起拖到 16s 后才上屏，
+    //   期间首屏只有空白。现在每个接口各自 .then() 写自己的 state，谁先回来谁先显示，
+    //   并用 mainTabLoading 标志位驱动骨架屏（替代误导性的「暂无 XX」空态）。
+    const markLoading = (k: "user" | "projects" | "worlds" | "sessions", v: boolean) => {
+      state.mainTabLoading[k] = v;
+    };
+    markLoading("user", true);
+    markLoading("projects", true);
+    markLoading("worlds", true);
+    markLoading("sessions", true);
     try {
-      const [user, projects, worlds, sessions] = await Promise.all([
-        api.getUser().catch(() => null),
-        api.getProjects().catch(() => []),
-        api.listWorlds(undefined, true).catch(() => []),
-        requestSessionList(undefined).catch(() => [] as SessionItem[]),
-      ]);
-      if (user) {
-        state.userName = String((user as any).name || "");
-        state.userId = Number((user as any).id || 0);
-        const accountAvatarPath = String((user as any).avatarPath || "").trim();
-        const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
-        state.accountAvatarPath = accountAvatarPath;
-        state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
-      } else {
-        state.userName = "";
-        state.userId = 0;
-        state.accountAvatarPath = "";
-        state.accountAvatarBgPath = "";
-      }
-      state.projects = projects || [];
-      if (!state.projects.length) {
-        state.selectedProjectId = 0;
-      } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
-        state.selectedProjectId = state.projects[0].id;
-      }
-      if (state.selectedProjectId <= 0 && state.projects.length) {
-        state.selectedProjectId = state.projects[0].id;
-      }
-      if (state.selectedProjectId > 0) {
-        const currentProject = state.projects.find((item) => item.id === state.selectedProjectId) || state.projects[0];
-        if (currentProject?.name) {
-          state.selectedProjectNameCache = currentProject.name;
-          storageSet("toonflow.selectedProjectNameCache", currentProject.name);
-        }
-      }
-      state.worlds = worlds || [];
-      refreshRecommendedWorld();
-      state.sessions = dedupeSessionsByWorld(sessions || []);
-      if (!state.worldId && state.selectedProjectId > 0) {
-        const maybeWorld = worlds.find((item) => item.projectId === state.selectedProjectId && isWorldPublished(item));
-        if (maybeWorld) {
-          state.notice = `已加载 ${maybeWorld.name}`;
-        }
-      }
+      const userTask = api.getUser()
+        .then((user: any) => {
+          if (user) {
+            state.userName = String((user as any).name || "");
+            state.userId = Number((user as any).id || 0);
+            const accountAvatarPath = String((user as any).avatarPath || "").trim();
+            const accountAvatarBgPath = String((user as any).avatarBgPath || "").trim();
+            state.accountAvatarPath = accountAvatarPath;
+            state.accountAvatarBgPath = accountAvatarBgPath || accountAvatarPath;
+          } else {
+            state.userName = "";
+            state.userId = 0;
+            state.accountAvatarPath = "";
+            state.accountAvatarBgPath = "";
+          }
+        })
+        .catch(() => null)
+        .finally(() => markLoading("user", false));
+
+      const projectsTask = api.getProjects()
+        .then((projects: ProjectItem[]) => {
+          state.projects = projects || [];
+          if (!state.projects.length) {
+            state.selectedProjectId = 0;
+          } else if (!state.projects.find((item) => item.id === state.selectedProjectId)) {
+            state.selectedProjectId = state.projects[0].id;
+          }
+          if (state.selectedProjectId <= 0 && state.projects.length) {
+            state.selectedProjectId = state.projects[0].id;
+          }
+          if (state.selectedProjectId > 0) {
+            const currentProject = state.projects.find((item) => item.id === state.selectedProjectId) || state.projects[0];
+            if (currentProject?.name) {
+              state.selectedProjectNameCache = currentProject.name;
+              storageSet("toonflow.selectedProjectNameCache", currentProject.name);
+            }
+          }
+        })
+        .catch(() => [])
+        .finally(() => markLoading("projects", false));
+
+      const worldsTask = api.listWorlds(undefined, true)
+        .then((worlds: WorldItem[]) => {
+          state.worlds = worlds || [];
+          refreshRecommendedWorld();
+          if (!state.worldId && state.selectedProjectId > 0) {
+            const maybeWorld = worlds.find((item) => item.projectId === state.selectedProjectId && isWorldPublished(item));
+            if (maybeWorld) {
+              state.notice = `已加载 ${maybeWorld.name}`;
+            }
+          }
+        })
+        .catch(() => [])
+        .finally(() => markLoading("worlds", false));
+
+      const sessionsTask = requestSessionList(undefined)
+        .then((sessions: SessionItem[]) => {
+          state.sessions = dedupeSessionsByWorld(sessions || []);
+        })
+        .catch(() => [] as SessionItem[])
+        .finally(() => markLoading("sessions", false));
+
+      await Promise.all([userTask, projectsTask, worldsTask, sessionsTask]);
       if (!state.projects.length) {
         state.notice = "当前账号暂无项目";
       } else if (!state.notice) {
