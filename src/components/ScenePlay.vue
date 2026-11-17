@@ -1542,6 +1542,12 @@ const pluginPanelFullscreen = ref(false);
  * 后端回推的最新 plugin_state 暂存到这里，优先于 activeMiniGame 推给 iframe 渲染。
  */
 const pluginLiveState = ref<{ state: any; actions: string[]; response: string } | null>(null);
+// ★ 2026-11-17 stale 镜像防护：pluginLiveState 必须绑定捕获时的 realtimeScopeKey
+//   （pluginId|故事会话Id）。小游戏会话重建（#退出 → #野外生存）时故事会话不变，
+//   但 pluginMinigameView 会 null→重建，realtimeScopeKey watch 必然触发 → 清空镜像。
+//   推送时若捕获 scope ≠ 当前 scope（异步竞态：旧 tick 响应晚到 / 旧 WS push 残留），
+//   一律丢弃镜像回退 publicState.plugin_state，防止 iframe 卡在旧 over 屏。
+let pluginLiveStateScope = "";
 
 /**
  * 处理 iframe 发来的实时推进请求（移动 / 技能 / 物品 / 翻页 / 开局 / 退出）。
@@ -1583,6 +1589,7 @@ function createRealtimeChannel(): PluginRealtimeChannel {
     events: {
       onState: (state, actions, response) => {
         // 与 HTTP res.state 同构：直接喂既有消费路径
+        pluginLiveStateScope = realtimeScopeKey.value;
         pluginLiveState.value = {
           state,
           actions: Array.isArray(actions) ? actions : [],
@@ -1604,6 +1611,11 @@ watch(realtimeScopeKey, (key) => {
   // 销毁旧通道实例并新建（destroy 是终态，实例不可复用）
   pluginRealtimeChannel.destroy();
   pluginRealtimeChannel = createRealtimeChannel();
+  // ★ 2026-11-17 会话重建时清空 tick 镜像：镜像属于旧小游戏会话，不清会把
+  //   旧 over/playing 屏一路优先推给新 iframe（stale pluginLiveState 死锁）。
+  //   触发时机即锚点：#退出 清会话 → view=null（key=""）；#野外生存 init → view 重建（key 非空）。
+  pluginLiveState.value = null;
+  pluginLiveStateScope = key;
   if (key) pluginRealtimeChannel.connect();
 }, { immediate: true });
 
@@ -1644,6 +1656,7 @@ async function handlePluginTick(tick: { action: string; params: Record<string, u
     });
     pluginTickFailStreak.value = 0;
     if (res && res.state) {
+      pluginLiveStateScope = realtimeScopeKey.value;
       pluginLiveState.value = {
         state: res.state,
         actions: Array.isArray(res.actions) ? res.actions : [],
@@ -1836,7 +1849,9 @@ function pushPluginStateToIframe() {
   // 放宽条件：有 pluginMinigameView（iframe 已挂载）时即推送，不管 gameType 是 "plugin" 还是 "field_survival"。
   if (!game || !pluginMinigameView.value) return;
   const publicState: any = game.publicState || {};
-  const live = pluginLiveState.value;
+  // ★ 2026-11-17：镜像必须属于当前 scope 才可信——旧会话的 tick 镜像
+  //   （如卡死的 over 屏）一律丢弃，回退 publicState.plugin_state。
+  const live = pluginLiveStateScope === realtimeScopeKey.value ? pluginLiveState.value : null;
   const state = live?.state ?? publicState.plugin_state;
   const actions = live?.actions ?? publicState.plugin_actions ?? [];
   const response = live?.response ?? String(publicState.plugin_response || "");
