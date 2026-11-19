@@ -6277,6 +6277,54 @@ function createToonflowStore() {
     primeStoryEditorPersistState();
   }
 
+  /**
+   * 新开局公共尾部：应用初始化结果 → 拉开场白（流式）→ 首章编排（流式）→ 收尾。
+   * startFromWorld（新建会话）与 replaySession（原地重置）共用，避免两份拷贝漂移。
+   * 调用前需已设置首启独占链标记（runtimeProcessingPending / sessionStartupPriming 等）。
+   */
+  async function runOpeningSequenceAfterInit(world: WorldItem, initResult: any, quickText = "") {
+    applyInitializedSessionDetail(world, initResult);
+    await refreshSessionStoryInfo();
+    state.sessionOpening = false;
+    state.sessionOpeningStage = "";
+
+    // 正式游玩和章节调试保持一致：先独立拿开场白，再独立拉第一章编排。
+    const introduction = normalizeSessionOrchestrationResult(await api.introduceStory(state.currentSessionId));
+    if (introduction.plan) {
+      applySessionOrchestrationResult(introduction);
+      await refreshSessionStoryInfo();
+      if (shouldStreamSessionPlanFromPlan(introduction.plan)) {
+        state.sessionRuntimeStage = "播放开场白";
+        await streamSessionIntroductionPlan(introduction, []);
+        if (state.sessionRuntimeStage === "播放开场白") {
+          state.sessionRuntimeStage = "";
+        }
+      }
+    }
+
+    const firstChapterResult = normalizeSessionOrchestrationResult(await api.orchestrateSession(state.currentSessionId));
+    if (firstChapterResult.plan) {
+      const history = conversationMessages();
+      applySessionOrchestrationResult(firstChapterResult);
+      await refreshSessionStoryInfo();
+      if (shouldStreamSessionPlanFromPlan(firstChapterResult.plan)) {
+        state.sessionRuntimeStage = "生成第一章内容";
+        await streamSessionPlan(firstChapterResult, history);
+        if (state.sessionRuntimeStage === "生成第一章内容") {
+          state.sessionRuntimeStage = "";
+        }
+      }
+    }
+    WebDebugLogUtil.log("[resolveSessionOrchestration] firstChapterResult 实时请求编排结果", firstChapterResult);
+    void refreshSessionListState();
+    state.runtimeProcessingPending = false;
+    state.sessionStartupPriming = false;
+    if (quickText.trim()) {
+      state.sendText = quickText.trim();
+      await sendMessage();
+    }
+  }
+
   async function startFromWorld(world: WorldItem, quickText = "") {
     try {
       clearPendingSessionOrchestrationPrefetch();
@@ -6326,46 +6374,7 @@ function createToonflowStore() {
         initialState: null,
         skipOpening: false,
       });
-      applyInitializedSessionDetail(world, initResult);
-      await refreshSessionStoryInfo();
-      state.sessionOpening = false;
-      state.sessionOpeningStage = "";
-
-      // 正式游玩和章节调试保持一致：先独立拿开场白，再独立拉第一章编排。
-      const introduction = normalizeSessionOrchestrationResult(await api.introduceStory(state.currentSessionId));
-      if (introduction.plan) {
-        applySessionOrchestrationResult(introduction);
-        await refreshSessionStoryInfo();
-        if (shouldStreamSessionPlanFromPlan(introduction.plan)) {
-          state.sessionRuntimeStage = "播放开场白";
-          await streamSessionIntroductionPlan(introduction, []);
-          if (state.sessionRuntimeStage === "播放开场白") {
-            state.sessionRuntimeStage = "";
-          }
-        }
-      }
-
-      const firstChapterResult = normalizeSessionOrchestrationResult(await api.orchestrateSession(state.currentSessionId));
-      if (firstChapterResult.plan) {
-        const history = conversationMessages();
-        applySessionOrchestrationResult(firstChapterResult);
-        await refreshSessionStoryInfo();
-        if (shouldStreamSessionPlanFromPlan(firstChapterResult.plan)) {
-          state.sessionRuntimeStage = "生成第一章内容";
-          await streamSessionPlan(firstChapterResult, history);
-          if (state.sessionRuntimeStage === "生成第一章内容") {
-            state.sessionRuntimeStage = "";
-          }
-        }
-      }
-      WebDebugLogUtil.log("[resolveSessionOrchestration] firstChapterResult 实时请求编排结果", firstChapterResult);
-      void refreshSessionListState();
-      state.runtimeProcessingPending = false;
-      state.sessionStartupPriming = false;
-      if (quickText.trim()) {
-        state.sendText = quickText.trim();
-        await sendMessage();
-      }
+      await runOpeningSequenceAfterInit(world, initResult, quickText);
     } catch (error) {
       const message = asUiErrorMessage(error);
       state.sessionOpenError = message;
@@ -6576,9 +6585,10 @@ function createToonflowStore() {
   }
 
   /**
-   * 重玩会话：后端重新生成角色卡等动态数据并删除旧档（返回 worldId），
-   * 然后复用 startFromWorld 完整开局链路（initStory → 开场白 → 首章编排）重新开局。
-   * 旧档已删，startFromWorld 内部的"找现有会话"查询会返回空，必然走全新开局分支。
+   * 重玩会话（原地重置，sessionId 不变）：
+   * 后端重新生成角色卡等动态数据并按首章重建运行态（保留会话行），
+   * 前端复用开局公共段（开场白 → 首章编排）直接进入新开局。
+   * 会话记录始终存在，聊过列表不会丢失该记录。
    */
   async function replaySession(sessionId: string) {
     const id = String(sessionId || "").trim();
@@ -6587,20 +6597,33 @@ function createToonflowStore() {
     if (state.currentSessionId === id) {
       clearPendingSessionOrchestrationPrefetch();
       stopOrchestrationChecker();
-      state.currentSessionId = "";
-      state.sessionDetail = null;
-      state.messages = [];
     }
     const result = await api.replaySession(id);
-    // 旧会话已删档，直接从列表移除
-    state.sessions = state.sessions.filter((item) => item.sessionId !== id);
     const worldId = Number(result?.worldId || 0);
     const world = state.worlds.find((row) => Number(row.id || 0) === worldId) || null;
     if (!world) {
       throw new Error("未找到对应故事，无法重新开局");
     }
-    await startFromWorld(world, "");
-    state.notice = "角色卡已重新生成，新开局已就绪";
+    // 复刻 startFromWorld 新开局段：切播放页 + 首启独占链标记（会话已由后端原地重置）
+    clearPendingSessionOrchestrationPrefetch();
+    resetDebugSessionState();
+    clearRuntimeRetryState();
+    state.activeTab = "play";
+    state.sessionViewMode = "live";
+    state.sessionPlaybackStartIndex = 0;
+    state.currentSessionId = id;
+    state.runtimeProcessingPending = true;
+    state.sessionStartupPriming = true;
+    state.sessionOpening = true;
+    state.sessionOpeningStage = "正在重新初始化故事...";
+    state.sessionOpenError = "";
+    state.sessionRuntimeStage = "";
+    state.sessionResumeLatestOnOpen = false;
+    state.sessionDetail = null;
+    state.messages = [];
+    state.notice = "正在重新生成角色卡并重置开局...";
+    await runOpeningSequenceAfterInit(world, result, "");
+    state.notice = "角色卡已重新生成，已重新开局";
   }
 
   async function refreshCurrentSession() {
