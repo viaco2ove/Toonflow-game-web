@@ -6575,6 +6575,34 @@ function createToonflowStore() {
     }
   }
 
+  /**
+   * 重玩会话：后端重新生成角色卡等动态数据并删除旧档（返回 worldId），
+   * 然后复用 startFromWorld 完整开局链路（initStory → 开场白 → 首章编排）重新开局。
+   * 旧档已删，startFromWorld 内部的"找现有会话"查询会返回空，必然走全新开局分支。
+   */
+  async function replaySession(sessionId: string) {
+    const id = String(sessionId || "").trim();
+    if (!id) return;
+    // 若重玩的是当前打开的会话，先停掉它的运行态，避免旧编排检测器继续跑
+    if (state.currentSessionId === id) {
+      clearPendingSessionOrchestrationPrefetch();
+      stopOrchestrationChecker();
+      state.currentSessionId = "";
+      state.sessionDetail = null;
+      state.messages = [];
+    }
+    const result = await api.replaySession(id);
+    // 旧会话已删档，直接从列表移除
+    state.sessions = state.sessions.filter((item) => item.sessionId !== id);
+    const worldId = Number(result?.worldId || 0);
+    const world = state.worlds.find((row) => Number(row.id || 0) === worldId) || null;
+    if (!world) {
+      throw new Error("未找到对应故事，无法重新开局");
+    }
+    await startFromWorld(world, "");
+    state.notice = "角色卡已重新生成，新开局已就绪";
+  }
+
   async function refreshCurrentSession() {
     if (state.debugMode || !state.currentSessionId) return;
     WebDebugLogUtil.log("[aiGame][useToonflowStore] refreshCurrentSession", {
@@ -8365,6 +8393,7 @@ function createToonflowStore() {
     applySettingsModelGroup,
     updateSettingsModelGroupInfo,
     deleteSettingsModelGroup,
+    replaySession,
     bindRecommendedGameModel,
     addManagedModelConfig,
     updateManagedModelConfig,

@@ -40,6 +40,45 @@ async function removeSession(sessionId: string, title: string) {
   }
 }
 
+// ===== 重玩：输入"重玩"二次确认后，重新生成角色卡等动态数据并重新开局 =====
+const replayDialogVisible = ref(false);
+const replayDialogSession = ref<SessionItem | null>(null);
+const replayConfirmText = ref("");
+const replayBusy = ref(false);
+
+// 只有输入"重玩"两个字才允许点确认按钮
+const replayCanConfirm = computed(() => replayConfirmText.value.trim() === "重玩");
+
+function openReplayConfirm(item: SessionItem) {
+  replayDialogSession.value = item;
+  replayConfirmText.value = "";
+  replayDialogVisible.value = true;
+}
+
+function closeReplayDialog() {
+  if (replayBusy.value) return;
+  replayDialogVisible.value = false;
+  replayDialogSession.value = null;
+  replayConfirmText.value = "";
+}
+
+async function confirmReplay() {
+  const item = replayDialogSession.value;
+  if (!item || !replayCanConfirm.value || replayBusy.value) return;
+  replayBusy.value = true;
+  try {
+    // 后端重新生成角色卡并删档后，store 内部会走 startFromWorld 自动进入新开局
+    await store.replaySession(item.sessionId);
+    replayDialogVisible.value = false;
+    replayDialogSession.value = null;
+    replayConfirmText.value = "";
+  } catch (error) {
+    store.state.notice = `重玩失败: ${error instanceof Error ? error.message : "未知错误"}`;
+  } finally {
+    replayBusy.value = false;
+  }
+}
+
 // ===== 方向2：故事已更新提示 + 进度对齐弹框 =====
 const updateDialogVisible = ref(false);
 const updateDialogSession = ref<SessionItem | null>(null);
@@ -186,6 +225,7 @@ async function smartAlign() {
             <button class="history-card-btn" type="button" @click.stop="store.continueSessionForWorld(item.worldId, item.sessionId)">继续</button>
             <button class="history-card-btn" type="button" @click.stop="store.continueSessionForWorld(item.worldId, item.sessionId, { playback: true, playbackIndex: 0 })">观看</button>
             <button class="history-card-btn" type="button" @click.stop="openWorldBookViewer(item)">世界书</button>
+            <button class="history-card-btn" type="button" @click.stop="openReplayConfirm(item)">重玩</button>
             <button class="history-card-icon-btn danger" type="button" aria-label="删除会话" @click.stop="removeSession(item.sessionId, item.title || item.worldName || '未命名会话')">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M9 4h6l1 2h4v2H4V6h4l1-2z"></path>
@@ -235,6 +275,42 @@ async function smartAlign() {
       :world-name="worldBookViewerWorldName"
       @close="worldBookViewerOpen = false"
     />
+
+    <!-- 重玩确认弹框：输入"重玩"二次确认，防止误触删档 -->
+    <div v-if="replayDialogVisible" class="modal-backdrop" @click.self="closeReplayDialog">
+      <div class="modal-panel story-update-panel">
+        <div class="modal-header story-update-header">
+          <div class="story-update-title">重玩确认</div>
+          <button class="story-update-close" type="button" :disabled="replayBusy" @click="closeReplayDialog">×</button>
+        </div>
+        <div class="modal-body story-update-body">
+          <p class="story-update-desc">
+            「{{ replayDialogSession?.title || replayDialogSession?.worldName || "未命名会话" }}」将
+            <strong>删除当前进度</strong>，重新生成角色卡等动态数据，并重新开局游玩。
+          </p>
+          <p class="story-update-hint">此操作不可恢复，请输入「重玩」以确认。</p>
+          <input
+            v-model="replayConfirmText"
+            class="input replay-confirm-input"
+            type="text"
+            placeholder="输入 重玩 以确认"
+            :disabled="replayBusy"
+            @keyup.enter="confirmReplay"
+          >
+        </div>
+        <div class="story-update-actions">
+          <button class="story-update-btn" type="button" :disabled="replayBusy" @click="closeReplayDialog">取消</button>
+          <button
+            class="story-update-btn danger"
+            type="button"
+            :disabled="!replayCanConfirm || replayBusy"
+            @click="confirmReplay"
+          >
+            {{ replayBusy ? "正在重新生成角色卡…" : "确认重玩" }}
+          </button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -335,5 +411,11 @@ async function smartAlign() {
 .story-update-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* 重玩确认输入框：占满弹窗宽度 */
+.replay-confirm-input {
+  width: 100%;
+  margin-top: 6px;
 }
 </style>

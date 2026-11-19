@@ -472,6 +472,13 @@ export class ToonflowApi {
     });
   }
 
+  // 重玩会话：后端重新生成角色卡等动态数据并删档，返回 worldId 供前端走开局链路
+  replaySession(sessionId: string) {
+    return this.post<{ worldId: number }>("/game/replaySession", {
+      sessionId,
+    });
+  }
+
   deleteMessage(sessionId: string, messageId: number) {
     return this.post<boolean>("/game/deleteMessage", {
       sessionId,
