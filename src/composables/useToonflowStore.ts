@@ -20,6 +20,7 @@ import {
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
+  ModelGroupItem,
   ModelTestResult,
   ProjectItem,
   PromptItem,
@@ -1051,6 +1052,10 @@ function createToonflowStore() {
     settingsVoiceCloneConfigs: [] as ModelConfigItem[],
     settingsVoiceConfigs: [] as VoiceModelConfig[],
     settingsAiModelMap: [] as AiModelMapItem[],
+    /** 模型组列表（设置页保存/切换用） */
+    settingsModelGroups: [] as ModelGroupItem[],
+    /** 当前应用的模型组 id（保存按钮默认覆盖对象） */
+    settingsActiveModelGroupId: null as number | null,
     settingsTextModelList: {} as AiModelListMap,
     settingsTokenUsageLogs: [] as AiTokenUsageLogItem[],
     settingsTokenUsageStats: [] as AiTokenUsageStatsItem[],
@@ -5071,12 +5076,13 @@ function createToonflowStore() {
     if (state.settingsPanelLoaded && !force) return;
     state.settingsPanelLoading = true;
     try {
-      const [configs, voiceConfigs, aiModelMap, prompts, textModelList] = await Promise.all([
+      const [configs, voiceConfigs, aiModelMap, prompts, textModelList, modelGroups] = await Promise.all([
         api.getModelConfigs().catch(() => []),
         api.getVoiceModels().catch(() => []),
         api.getAiModelMap().catch(() => []),
         api.getPrompts().catch(() => []),
         api.getAiModelList("text").catch(() => ({} as AiModelListMap)),
+        api.getModelGroups().catch(() => [] as ModelGroupItem[]),
       ]);
       state.settingsTextConfigs = configs.filter((item) => String(item.type || "").trim() === "text");
       state.settingsImageConfigs = configs.filter((item) => String(item.type || "").trim() === "image");
@@ -5086,6 +5092,7 @@ function createToonflowStore() {
         .map(normalizeVoiceModelConfig)
         .filter((item) => String(item.type || "voice").trim() === "voice");
       state.settingsAiModelMap = aiModelMap.filter((item) => GAME_MODEL_SLOTS.some((slot) => slot.key === item.key));
+      state.settingsModelGroups = modelGroups || [];
       state.settingsTextModelList = textModelList || {};
       state.storyPrompts = prompts.filter((item) => STORY_PROMPT_CODES.includes(item.code as (typeof STORY_PROMPT_CODES)[number]));
       state.settingsPanelLoaded = true;
@@ -5108,6 +5115,56 @@ function createToonflowStore() {
       clearAvatarFailureNotice();
     }
     state.notice = "模型配置已保存";
+  }
+
+  // ===== 模型组：保存 / 切换 / 重命名 / 删除 =====
+
+  /** 刷新模型组列表（供各操作后同步列表状态） */
+  async function refreshModelGroups() {
+    state.settingsModelGroups = await api.getModelGroups().catch(() => state.settingsModelGroups);
+  }
+
+  /**
+   * 保存模型组：把当前全部模型配置快照保存下来。
+   * - id 为空：另存为新组
+   * - id 有值：覆盖保存到该组（重新快照，名称/备注一并更新）
+   */
+  async function saveSettingsModelGroup(payload: { id?: number; name: string; remark?: string }) {
+    const result = await api.saveModelGroup(payload);
+    state.settingsActiveModelGroupId = result.groupId;
+    await refreshModelGroups();
+    state.notice = payload.id ? `模型组「${payload.name}」已更新保存` : `模型组「${payload.name}」已保存`;
+  }
+
+  /**
+   * 应用模型组：整体覆写当前模型配置并强刷设置面板。
+   * 部分槽位的原模型配置已被删除时，后端会剔除并在 missingSlots 中返回，这里给出提示。
+   */
+  async function applySettingsModelGroup(id: number) {
+    const result = await api.applyModelGroup(id);
+    state.settingsActiveModelGroupId = id;
+    await ensureSettingsPanelData(true);
+    const missingCount = result.missingSlots?.length || 0;
+    state.notice = missingCount > 0
+      ? `已切换到模型组「${result.groupName}」，${missingCount} 个槽位未恢复（原模型配置已删除）`
+      : `已切换到模型组「${result.groupName}」，共 ${result.appliedCount} 个槽位`;
+  }
+
+  /** 仅更新模型组名称/备注，不动快照内容 */
+  async function updateSettingsModelGroupInfo(payload: { id: number; name: string; remark?: string }) {
+    await api.updateModelGroupInfo(payload);
+    await refreshModelGroups();
+    state.notice = `模型组「${payload.name}」信息已更新`;
+  }
+
+  /** 删除模型组（只删组记录，不影响当前模型配置） */
+  async function deleteSettingsModelGroup(id: number) {
+    await api.deleteModelGroup(id);
+    if (state.settingsActiveModelGroupId === id) {
+      state.settingsActiveModelGroupId = null;
+    }
+    await refreshModelGroups();
+    state.notice = "模型组已删除";
   }
 
   async function bindRecommendedGameModel(key: string) {
@@ -8304,6 +8361,10 @@ function createToonflowStore() {
     voicePresetsForConfig,
     ensureSettingsPanelData,
     bindGameModel,
+    saveSettingsModelGroup,
+    applySettingsModelGroup,
+    updateSettingsModelGroupInfo,
+    deleteSettingsModelGroup,
     bindRecommendedGameModel,
     addManagedModelConfig,
     updateManagedModelConfig,

@@ -646,6 +646,22 @@ export interface AiModelMapItem {
   payloadMode?: "compact" | "advanced" | null;
 }
 
+// 模型组：设置页「模型配置」全部槽位配置的快照（保存/切换用）
+export interface ModelGroupItem {
+  id: number;
+  name: string;
+  remark?: string | null;
+  createTime: number;
+  updateTime: number;
+}
+
+// 应用模型组的返回：appliedCount=成功恢复的槽位数，missingSlots=原配置已失效的槽位
+export interface ApplyModelGroupResult {
+  groupName: string;
+  appliedCount: number;
+  missingSlots: { key: string; configId: number }[];
+}
+
 export interface AiModelOptionItem {
   label: string;
   value: string;

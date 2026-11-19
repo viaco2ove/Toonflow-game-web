@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useToonflowStore } from "../composables/useToonflowStore";
 import SettingsModelManagerDialog from "./SettingsModelManagerDialog.vue";
+import SettingsModelGroupBar from "./SettingsModelGroupBar.vue";
 import SettingsPluginManagerDialog from "./SettingsPluginManagerDialog.vue";
 import { storyPromptMeta } from "../utils/storyPromptCatalog";
 
@@ -340,6 +341,8 @@ watch(
 
     <section v-if="store.state.token" class="surface section-block settings-card settings-card--plain">
       <div class="section-title settings-section-title">模型配置</div>
+      <!-- 模型组操作条：可搜索下拉快速切换 + 保存当前全部模型配置为模型组 -->
+      <SettingsModelGroupBar />
       <div class="settings-model-list">
         <div v-for="row in modelRows" :key="row.key" class="settings-model-row">
           <div class="settings-model-copy">

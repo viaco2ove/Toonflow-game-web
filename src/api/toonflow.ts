@@ -5,6 +5,7 @@ import type {
   AiModelMapItem,
   AiTokenUsageLogItem,
   AiTokenUsageStatsItem,
+  ApplyModelGroupResult,
   ChapterItem,
   DebugInitResult,
   DebugRevisitResult,
@@ -19,6 +20,7 @@ import type {
   MessageItem,
   ModelConfigItem,
   ModelConfigPayload,
+  ModelGroupItem,
   ProjectItem,
   PromptItem,
   RoleAvatarTaskResult,
@@ -916,6 +918,33 @@ export class ToonflowApi {
 
   saveStoryRuntimeConfig(payload: StoryRuntimeConfig) {
     return this.post<StoryRuntimeConfig>("/setting/saveStoryRuntimeConfig", payload);
+  }
+
+  // ===== 模型组：保存/切换全部模型配置 =====
+
+  // 获取模型组列表
+  getModelGroups() {
+    return this.post<ModelGroupItem[]>("/setting/getModelGroups", {});
+  }
+
+  // 保存模型组（无 id=新建；有 id=覆盖保存当前全部模型配置到该组）
+  saveModelGroup(payload: { id?: number; name: string; remark?: string }) {
+    return this.post<{ groupId: number }>("/setting/saveModelGroup", payload);
+  }
+
+  // 仅更新模型组的名称/备注（不重新快照）
+  updateModelGroupInfo(payload: { id: number; name: string; remark?: string }) {
+    return this.post<{ groupId: number }>("/setting/updateModelGroupInfo", payload);
+  }
+
+  // 应用模型组：把组快照整体覆写到当前模型配置
+  applyModelGroup(id: number) {
+    return this.post<ApplyModelGroupResult>("/setting/applyModelGroup", { id });
+  }
+
+  // 删除模型组
+  deleteModelGroup(id: number) {
+    return this.post<string>("/setting/delModelGroup", { id });
   }
 
   getPrompts() {

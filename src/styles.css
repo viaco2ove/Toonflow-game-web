@@ -7080,3 +7080,157 @@ body.android-device .nav {
   gap: 6px;
   margin-top: 4px;
 }
+
+/* ===== 设置页 · 模型组操作条（保存/切换全部模型配置） ===== */
+
+/* 操作条整体：模型配置标题下方，下拉与保存按钮左右分布 */
+.settings-model-group-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+/* 可搜索下拉容器（下拉菜单相对它绝对定位） */
+.settings-model-group-select {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 下拉输入框 */
+.settings-model-group-input {
+  width: 100%;
+  min-height: 38px;
+  font-size: 13px;
+}
+
+/* 下拉菜单：白底卡片 + 阴影 + 限高滚动 */
+.settings-model-group-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 260px;
+  overflow: auto;
+  background: #ffffff;
+  border: 1px solid #eceff5;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(5, 14, 26, 0.12);
+  padding: 4px;
+}
+
+/* 下拉项：名称/备注 + 操作图标 */
+.settings-model-group-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-model-group-option:hover {
+  background: #f4f7ff;
+}
+
+/* 当前应用的模型组高亮 */
+.settings-model-group-option.is-active {
+  background: #eef3ff;
+}
+
+.settings-model-group-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-model-group-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-model-group-remark {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #8a94a6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 下拉项内的编辑/删除小图标按钮 */
+.settings-model-group-ops {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.settings-model-group-op {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid #eceff5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #5b6472;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-model-group-op:hover {
+  border-color: #3d63d0;
+  color: #3d63d0;
+}
+
+/* 删除按钮：确认态红底提示 */
+.settings-model-group-op--danger.is-confirm {
+  border-color: #d84a4a;
+  background: #d84a4a;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* 下拉空态 */
+.settings-model-group-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: #8a94a6;
+}
+
+/* 保存弹窗：保存方式单选组 */
+.settings-model-group-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-model-group-mode-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+/* 弹窗宽度与现有账号弹窗保持一致 */
+.settings-model-group-modal {
+  width: min(440px, 92vw);
+}
+
+/* 操作条内的保存按钮：默认 settings-picker-btn 是全宽（用于模型行），此处恢复自适应宽 */
+.settings-model-group-bar .settings-picker-btn {
+  width: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 9px 18px;
+  font-size: 13px;
+}
