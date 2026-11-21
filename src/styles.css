@@ -1070,9 +1070,27 @@ a {
   gap: 10px;
   flex-wrap: wrap;
 }
+/* 左侧组可伸展，容纳搜索框自适应宽度 */
+.world-book-toolbar-left {
+  flex: 1 1 320px;
+}
 .world-book-count {
   font-size: 13px;
   color: rgba(216, 230, 249, 0.72);
+}
+/* 世界书条目搜索框：自适应占满左侧组剩余空间，避免换行错落 */
+.world-book-search {
+  flex: 1 1 150px;
+  min-width: 130px;
+  padding: 4px 10px;
+  font-size: 13px;
+  background: rgba(12, 21, 35, 0.55);
+  border: 1px solid rgba(214, 225, 240, 0.38);
+  border-radius: 8px;
+}
+.world-book-search:focus {
+  border-color: rgba(91, 163, 255, 0.8);
+  outline: none;
 }
 .world-book-import-mode {
   display: inline-flex;

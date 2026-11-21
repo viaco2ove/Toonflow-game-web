@@ -20,6 +20,21 @@ const api = computed(() => new ToonflowApi(() => ({ baseUrl: store.state.baseUrl
 const entries = ref<WorldBookEntry[]>([]);
 const loading = ref(false);
 const expandedTitle = ref<string | null>(null); // 展开详情的条目标题，null 表示都折叠
+// 搜索关键词：按标题 + 关键词实时过滤列表（不区分大小写）
+const searchText = ref("");
+
+/** 按搜索词过滤后的条目列表；空搜索词返回全量 */
+const filteredEntries = computed(() => {
+  const keyword = searchText.value.trim().toLowerCase();
+  if (!keyword) return entries.value;
+  return entries.value.filter((entry) => {
+    // 标题命中
+    if (String(entry.title || "").toLowerCase().includes(keyword)) return true;
+    // 关键词命中（keys 里任意一个包含搜索词即可）
+    const keys = Array.isArray(entry.keys) ? entry.keys : [];
+    return keys.some((key) => String(key || "").toLowerCase().includes(keyword));
+  });
+});
 
 const CATEGORIES = ["constants", "locations", "characters", "factions", "items", "events", "world", "random"];
 const CATEGORY_LABELS: Record<string, string> = {
@@ -52,17 +67,18 @@ watch(
   ([isOpen, wid]) => {
     if (isOpen && wid) {
       expandedTitle.value = null;
+      searchText.value = ""; // 重新打开弹窗时清空搜索
       loadList();
     }
   },
   { immediate: true },
 );
 
-// 按类目分组，方便浏览
+// 按类目分组，方便浏览（基于搜索过滤后的条目）
 const groupedEntries = computed(() => {
   const groups: { category: string; label: string; items: WorldBookEntry[] }[] = [];
   for (const c of CATEGORIES) {
-    const items = entries.value.filter((e) => e.category === c);
+    const items = filteredEntries.value.filter((e) => e.category === c);
     if (items.length) groups.push({ category: c, label: CATEGORY_LABELS[c] || c, items });
   }
   return groups;
@@ -86,7 +102,16 @@ function close() {
       </div>
       <div class="modal-body world-book-body">
         <div class="world-book-toolbar">
-          <span class="world-book-count">共 {{ entries.length }} 条（只读）</span>
+          <span class="world-book-count">
+            {{ searchText.trim() ? `筛选 ${filteredEntries.length} / ${entries.length} 条（只读）` : `共 ${entries.length} 条（只读）` }}
+          </span>
+          <!-- 搜索框：按标题/关键词实时过滤 -->
+          <input
+            v-model="searchText"
+            class="input world-book-search"
+            type="text"
+            placeholder="搜索标题/关键词"
+          />
           <button class="button small" type="button" :disabled="loading" @click="loadList">
             {{ loading ? "加载中..." : "刷新" }}
           </button>
@@ -94,6 +119,10 @@ function close() {
 
         <div v-if="loading && !entries.length" class="world-book-empty">加载中...</div>
         <div v-else-if="!entries.length" class="world-book-empty">该故事暂无世界书条目</div>
+        <!-- 搜索有词但无匹配时单独提示 -->
+        <div v-else-if="searchText.trim() && !filteredEntries.length" class="world-book-empty">
+          没有匹配「{{ searchText.trim() }}」的条目
+        </div>
 
         <template v-else>
           <div v-for="group in groupedEntries" :key="group.category" class="world-book-group">

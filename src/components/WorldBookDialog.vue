@@ -20,7 +20,21 @@ const api = computed(() => new ToonflowApi(() => ({ baseUrl: store.state.baseUrl
 const entries = ref<WorldBookEntry[]>([]);
 const loading = ref(false);
 const editing = ref<Partial<WorldBookEntry> | null>(null);
-const editingIndex = ref(-1); // -1 表示新建
+// 搜索关键词：按标题 + 关键词实时过滤列表（不区分大小写）
+const searchText = ref("");
+
+/** 按搜索词过滤后的条目列表；空搜索词返回全量 */
+const filteredEntries = computed(() => {
+  const keyword = searchText.value.trim().toLowerCase();
+  if (!keyword) return entries.value;
+  return entries.value.filter((entry) => {
+    // 标题命中
+    if (String(entry.title || "").toLowerCase().includes(keyword)) return true;
+    // 关键词命中（keys 里任意一个包含搜索词即可）
+    const keys = Array.isArray(entry.keys) ? entry.keys : [];
+    return keys.some((key) => String(key || "").toLowerCase().includes(keyword));
+  });
+});
 const saving = ref(false);
 const isDragSelecting = ref(false);
 // keys/selectiveKeys 编辑时用独立 ref 暂存（与 editing.value 解耦，避免 Vue re-render 覆盖用户输入）
@@ -117,6 +131,7 @@ watch(
   ([isOpen, wid]) => {
     if (isOpen && wid) {
       editing.value = null;
+      searchText.value = ""; // 重新打开弹窗时清空搜索
       loadList();
     }
   },
@@ -125,15 +140,14 @@ watch(
 
 function startCreate() {
   editing.value = emptyEntry();
-  editingIndex.value = -1;
   const keys = (editing.value as any)?.keys;
   editingKeysText.value = keysToText(Array.isArray(keys) ? keys : []);
   editingSelectiveKeysText.value = "";
 }
 
-function startEdit(entry: WorldBookEntry, index: number) {
+// 编辑定位改为按条目 id（搜索过滤后列表下标会变，按下标回写会覆盖错误条目）
+function startEdit(entry: WorldBookEntry) {
   editing.value = JSON.parse(JSON.stringify(entry)) as WorldBookEntry;
-  editingIndex.value = index;
   const keys = (editing.value as any)?.keys;
   const selKeys = (editing.value as any)?.selectiveKeys;
   editingKeysText.value = keysToText(Array.isArray(keys) ? keys : []);
@@ -142,7 +156,6 @@ function startEdit(entry: WorldBookEntry, index: number) {
 
 function cancelEdit() {
   editing.value = null;
-  editingIndex.value = -1;
 }
 
 async function saveEntry() {
@@ -160,14 +173,17 @@ async function saveEntry() {
       selectiveKeys: parseKeyList(editingSelectiveKeysText.value),
     };
     const res = await api.value.saveWorldBookEntry(props.worldId, payload);
-    if (editingIndex.value >= 0) {
-      entries.value[editingIndex.value] = res.entry;
+    // 按返回条目的 id 回写：已存在则原位替换，否则视为新建追加
+    const existIndex = res.entry?.id
+      ? entries.value.findIndex((item) => item.id === res.entry.id)
+      : -1;
+    if (existIndex >= 0) {
+      entries.value[existIndex] = res.entry;
     } else {
       entries.value.push(res.entry);
     }
     entries.value.sort((a, b) => (a.sort || 0) - (b.sort || 0) || (a.id || 0) - (b.id || 0));
     editing.value = null;
-    editingIndex.value = -1;
     store.state.notice = "已保存";
   } catch (err) {
     store.state.notice = `保存失败: ${(err as Error).message}`;
@@ -317,7 +333,16 @@ const contentOver = computed(() => contentLen.value > MAX_RED_CONTENT_LENGTH);
             <button class="button small" type="button" :disabled="loading" @click="loadList">
               {{ loading ? "加载中..." : "刷新" }}
             </button>
-            <span class="world-book-count">共 {{ entries.length }} 条</span>
+            <!-- 搜索框：按标题/关键词实时过滤 -->
+            <input
+              v-model="searchText"
+              class="input world-book-search"
+              type="text"
+              placeholder="搜索标题/关键词"
+            />
+            <span class="world-book-count">
+              {{ searchText.trim() ? `筛选 ${filteredEntries.length} / ${entries.length} 条` : `共 ${entries.length} 条` }}
+            </span>
           </div>
           <div class="world-book-toolbar-right">
             <label class="world-book-import-mode">
@@ -337,8 +362,12 @@ const contentOver = computed(() => contentLen.value > MAX_RED_CONTENT_LENGTH);
         <div v-if="!editing">
           <div v-if="loading && !entries.length" class="world-book-empty">加载中...</div>
           <div v-else-if="!entries.length" class="world-book-empty">暂无条目，点击「新增条目」或「导入 JSON」开始</div>
+          <!-- 搜索有词但无匹配时单独提示 -->
+          <div v-else-if="searchText.trim() && !filteredEntries.length" class="world-book-empty">
+            没有匹配「{{ searchText.trim() }}」的条目
+          </div>
           <div v-else class="world-book-list">
-            <div v-for="(entry, index) in entries" :key="entry.id || index" class="world-book-item">
+            <div v-for="(entry, index) in filteredEntries" :key="entry.id || index" class="world-book-item">
               <div class="world-book-item-main">
                 <span class="world-book-item-title">{{ entry.title || "(无标题)" }}</span>
                 <span class="world-book-tag" :data-category="entry.category">{{ entry.category }}</span>
@@ -346,7 +375,7 @@ const contentOver = computed(() => contentLen.value > MAX_RED_CONTENT_LENGTH);
                 <span v-if="entry.keys.length" class="world-book-item-keys">关键词: {{ entry.keys.join("、") }}</span>
               </div>
               <div class="world-book-item-actions">
-                <button class="button small" type="button" @click="startEdit(entry, index)">编辑</button>
+                <button class="button small" type="button" @click="startEdit(entry)">编辑</button>
                 <button class="button small danger-solid" type="button" @click="removeEntry(entry)">删除</button>
               </div>
             </div>
